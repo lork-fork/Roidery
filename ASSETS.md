@@ -443,9 +443,7 @@ Generated-in-code art is original and has no file to list. This covers the defau
 | `assets/icons/waves.svg` | Lucide Icons and Contributors | https://lucide.dev (lucide-static v1.49.0; header kept in file) | ISC (`assets/icons/LICENSE-lucide.txt`) |  |
 | `assets/icons/x.svg` | Lucide Icons and Contributors | https://lucide.dev (lucide-static v1.49.0; header kept in file) | ISC; derived from Feather, also MIT (`assets/icons/LICENSE-lucide.txt`) |  |
 | `assets/icons/zoom-in.svg` | Lucide Icons and Contributors | https://lucide.dev (lucide-static v1.49.0; header kept in file) | ISC; derived from Feather, also MIT (`assets/icons/LICENSE-lucide.txt`) |  |
-| `docs/images/roidery-realistic.png` | Roidery contributors | Screenshot of Roidery itself (realistic thread view and Sequencer) | MIT OR Apache-2.0 |  |
-| `docs/images/roidery-stitch-settings.png` | Roidery contributors | Screenshot of Roidery itself (embroidery bar and Stitch Settings) | MIT OR Apache-2.0 |  |
-| `docs/images/roidery-mockup.png` | Roidery contributors | Screenshot of Roidery itself (Export Mockup dialog) | MIT OR Apache-2.0 |  |
+| `docs/images/roidery-flower.png` | Roidery contributors | Screenshot of Roidery itself (a flower digitized in Roidery, realistic view) | MIT OR Apache-2.0 |  |
 | `docs/images/dusk-poster.png` | VectorCraft contributors | Rendered by VectorCraft from `examples/dusk-poster.vectorcraft` | MIT OR Apache-2.0 |  |
 | `examples/dusk-poster.vectorcraft` | VectorCraft contributors | Original artwork built through the VectorCraft command API | MIT OR Apache-2.0 |  |
 | `examples/dusk-poster.svg` | VectorCraft contributors | SVG export of the above | MIT OR Apache-2.0 |  |

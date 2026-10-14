@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/roidery-realistic.png" alt="Roidery showing a badge design in realistic thread, with Stitch Settings and the Sequencer open" width="900">
+  <img src="docs/images/roidery-flower.png" alt="A digitized flower in Roidery's realistic view: satin petals, a circular-fill centre and tatami leaves, with the Sequencer listing each object" width="900">
 </p>
 
 Roidery turns artwork into machine embroidery. Draw shapes or open an SVG, give each object a
@@ -67,12 +67,6 @@ drawing tools are the real thing.
 - Open for editing: all of the above plus Barudan DSB, ZSK DSZ and Husqvarna Viking HUS
 - Brother and Janome thread charts built in, or import your own (GIMP palette or CSV), with
   Match to Chart
-
-<p align="center">
-  <img src="docs/images/roidery-stitch-settings.png" alt="The embroidery bar and Stitch Settings for a tatami fill" width="440">
-  &nbsp;
-  <img src="docs/images/roidery-mockup.png" alt="Export Mockup previewing a design on a T-shirt" width="440">
-</p>
 
 ## Getting started
 
