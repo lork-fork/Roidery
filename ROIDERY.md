@@ -5,9 +5,6 @@ watch it sew, and export a machine file. It is a fork of
 [VectorCraft](https://github.com/storytold/vectorcraft) (MIT OR Apache-2.0), so the drawing tools,
 interface and keyboard shortcuts are VectorCraft's, and embroidery is added on top.
 
-What's planned next (the browser version, the auto-digitizing wizard, AI placement and batch
-digitizing) is in the README's roadmap.
-
 ## What Roidery adds
 
 | Crate | Path | What it does |

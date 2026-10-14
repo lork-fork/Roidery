@@ -112,12 +112,6 @@ cargo run --release -p vectorcraft-cli -- run --in art.svg --cmd select.all \
 Every menu command can be driven from scripts, the JSON control channel or an MCP client; see
 [`docs/control-protocol.md`](docs/control-protocol.md) and [`docs/mcp.md`](docs/mcp.md).
 
-## Roadmap
-
-- A browser version (WebAssembly)
-- An auto-digitizing wizard for raster images
-- Thread types (matte cotton, shiny rayon, metallic) in the realistic view
-
 ## For developers
 
 [`ROIDERY.md`](ROIDERY.md) maps what Roidery adds to VectorCraft: the `roidery-*` crates
