@@ -100,13 +100,13 @@ fn fabric(realistic: bool) -> Color32 {
     if realistic { Color32::from_rgb(236, 233, 226) } else { Color32::from_rgb(250, 250, 248) }
 }
 
-fn shade(c: [u8; 3], f: f32) -> Color32 {
-    let m = |v: u8| -> u8 {
-        let v = f32::from(v);
-        let out = if f >= 0.0 { v + (255.0 - v) * f } else { v * (1.0 + f) };
-        out.clamp(0.0, 255.0) as u8
-    };
-    Color32::from_rgb(m(c[0]), m(c[1]), m(c[2]))
+/// Thread `c` lit by `light` (1 = its average) plus a white `sheen`, as the realistic view's
+/// shader lights it: the light and sheen show on white and black thread too.
+fn shade(c: [u8; 3], light: f64, sheen: f64) -> Color32 {
+    use roidery_mockup::shade::{base, tone};
+    let b = base(c.map(|v| f64::from(v) / 255.0));
+    let m = |v: f64| (tone(v * 0.92 * light + sheen) * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color32::from_rgb(m(b[0]), m(b[1]), m(b[2]))
 }
 
 /// Paint the current embroidery view over the canvas `rect` (nothing in the vector view), and
@@ -381,8 +381,8 @@ fn paint_stitches(app: &mut VectorcraftApp, painter: &Painter, xf: &Xf, rect: eg
                 // Shadow a little down and right, the thread body, then a sheen down its middle.
                 let off = egui::vec2(w * 0.12, w * 0.18);
                 shapes.push(Shape::line_segment([a + off, p + off], Stroke::new(w * 1.1, Color32::from_black_alpha(60))));
-                shapes.push(Shape::line_segment([a, p], Stroke::new(w, shade(rgb, -0.18))));
-                shapes.push(Shape::line_segment([a, p], Stroke::new(w * 0.4, shade(rgb, 0.22))));
+                shapes.push(Shape::line_segment([a, p], Stroke::new(w, shade(rgb, 0.88, 0.0))));
+                shapes.push(Shape::line_segment([a, p], Stroke::new(w * 0.4, shade(rgb, 1.12, 0.12))));
             } else {
                 shapes.push(Shape::line_segment([a, p], Stroke::new(1.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]))));
             }
@@ -639,8 +639,12 @@ mod tests {
 
     #[test]
     fn shading_stays_in_range() {
-        assert_eq!(shade([255, 0, 128], 0.5), Color32::from_rgb(255, 127, 191));
-        assert_eq!(shade([200, 100, 0], -1.0), Color32::from_rgb(0, 0, 0));
+        // The thread's own colour at its average light, and a sheen that shows on white and black.
+        assert_eq!(shade([0, 0, 0], 1.0, 0.0), Color32::from_rgb(9, 9, 9));
+        let (white, white_sheen) = (shade([255; 3], 0.88, 0.0), shade([255; 3], 1.12, 0.12));
+        assert!(white_sheen.r() > white.r() + 20, "{white:?} {white_sheen:?}");
+        assert!(shade([0; 3], 1.12, 0.12).r() > 30);
+        assert_eq!(shade([255, 0, 128], 9.0, 9.0).g(), shade([255, 0, 128], 9.0, 9.0).r());
     }
 
     fn app_with_art() -> VectorcraftApp {

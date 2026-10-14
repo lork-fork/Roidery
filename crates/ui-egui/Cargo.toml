@@ -13,6 +13,8 @@ wgpu = ["dep:egui-wgpu"]
 
 [dependencies]
 roidery-update = { workspace = true }
+# The realistic view's thread lighting, shared with mockups (the CPU painter's colours).
+roidery-mockup = { workspace = true }
 vectorcraft-geom = { workspace = true }
 vectorcraft-color = { workspace = true }
 vectorcraft-doc = { workspace = true }

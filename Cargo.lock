@@ -4940,6 +4940,7 @@ dependencies = [
  "image",
  "log",
  "roidery-fonts",
+ "roidery-mockup",
  "roidery-update",
  "serde",
  "serde_json",

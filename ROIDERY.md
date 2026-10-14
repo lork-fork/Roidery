@@ -80,6 +80,17 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   GPU, each stitch an instanced, shaded, twisted thread over its shadow; `install` is called
   with the wgpu render state in `apps/vectorcraft/src/main.rs` and the web app. OpenGL builds
   keep the painter fallback in `stitchview.rs`.
+- Thread lighting (`roidery-mockup`'s `shade` module, and the same sums in WGSL in
+  `thread_gpu.rs`; keep them in step). The thread colour becomes a surface reflecting 4 % to 94 %
+  of the light, so light and shade show on pure black and white. Two plies twist round each
+  thread as a helix, each lit as its own small cylinder with a darker groove between them, and
+  fine fibre streaks up close. The sheen runs along the fibres (Kajiya–Kay, as hair is shaded):
+  a white lobe that shows on black and a softer one tinted by the thread. Grooves, the thread's
+  sides and its ends (where it dives into the fabric) are darker, which is what gives white its
+  shape, and a soft shoulder replaces clipping so white keeps a highlight. Each detail fades as
+  it gets smaller than a pixel, and far out the thread is its average colour, so a colour looks
+  the same at every zoom. The instance colour's alpha byte carries the thread's gloss (128 = 1,
+  polyester and rayon), ready for a per-thread-type setting.
 - View › Density Map (`view.densityMap`, `ViewFlags::density`): a heat map of thread layers
   over the stitch views, from `StitchPreview::density` (engine; `stitch.density` gives the same
   map to scripts). The maths is in `roidery-plan`'s `review` module, with the sew-time estimate

@@ -3,13 +3,15 @@
 //! Two steps on an RGBA image (straight alpha, row-major): [`texture`] gives the fabric under
 //! the design its weave (woven, knit, piqué, terry, fleece, denim, twill or leather), and
 //! [`draw_threads`] draws each stitch as a strand of thread over a soft shadow. The thread is
-//! shaded as the realistic view on the canvas shades it (a twisted cylinder lit from the top
-//! left, with a sheen along its crest), computed here on the CPU so it runs anywhere, the web
-//! included.
+//! shaded as the realistic view on the canvas shades it ([`shade`]: two twisted plies lit from
+//! the top left, with a sheen along the fibres), computed here on the CPU so it runs anywhere,
+//! the web included.
 //!
 //! The garment itself (its outline and colour) is drawn by the caller; everything here is
 //! generated in code, with no image assets.
 #![forbid(unsafe_code)]
+
+pub mod shade;
 
 /// Largest image side, and pixel count, a mockup may have.
 pub const MAX_SIDE: u32 = 8000;
@@ -282,11 +284,9 @@ fn strand(c: &mut Canvas, s: &Segment, hw0: f64, shadow: bool, seed: f64) {
     let (w, h) = (f64::from(c.width), f64::from(c.height));
     let (x0, x1) = (x0.max(0.0).floor() as usize, x1.min(w).ceil().max(0.0) as usize);
     let (y0, y1) = (y0.max(0.0).floor() as usize, y1.min(h).ceil().max(0.0) as usize);
-    // How many pixels the half width spans: small, the shading flattens instead of shimmering.
-    let detail = smoothstep(1.5, 5.0, hw);
+    // The shadow fades out with the thread's round shape when it gets smaller than a pixel.
+    let form = shade::form(hw);
     let color = s.rgb.map(|v| f64::from(v) / 255.0);
-    let light = norm([-0.45, -0.65, 0.62]);
-    let half = norm([light[0], light[1], light[2] + 1.0]);
     for y in y0..y1 {
         for x in x0..x1 {
             let p = [x as f64 + 0.5 - a[0], y as f64 + 0.5 - a[1]];
@@ -299,33 +299,14 @@ fn strand(c: &mut Canvas, s: &Segment, hw0: f64, shadow: bool, seed: f64) {
                 continue;
             }
             if shadow {
-                let alpha = SHADOW_ALPHA * edge * (1.0 - smoothstep(0.2, 1.0, dist)) * detail;
+                let alpha = SHADOW_ALPHA * edge * (1.0 - smoothstep(0.1, 1.0, dist)) * form;
                 c.blend(x, y, [0.0; 3], alpha);
                 continue;
             }
-            // The surface normal: a cylinder across the thread, rounded at its ends.
-            let n2 = [dir[0] * q[0] + n[0] * q[1], dir[1] * q[0] + n[1] * q[1]];
-            let nz = (1.0 - q[0] * q[0] - q[1] * q[1]).max(0.0).sqrt();
-            let nrm = norm([n2[0], n2[1], nz + 1e-4]);
-            let diffuse = dot(nrm, light).max(0.0);
-            let spec = dot(nrm, half).max(0.0).powf(28.0) * 0.42 * detail;
-            // The plies twist along the thread.
-            let phase = lx / (hw * 2.4) + q[1] * 0.9 + seed;
-            let ply = 1.0 + (0.96 + 0.1 * (phase * TAU).sin() - 1.0) * detail;
-            let shade = 0.82 + (0.30 + 0.85 * diffuse - 0.82) * detail;
-            let rgb = color.map(|v| v * shade * ply + spec);
+            let rgb = shade::thread(color, shade::GLOSS, &shade::Point { along: lx, len, q, dir, hw, seed });
             c.blend(x, y, rgb, edge);
         }
     }
-}
-
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-fn norm(v: [f64; 3]) -> [f64; 3] {
-    let l = dot(v, v).sqrt().max(1e-12);
-    v.map(|x| x / l)
 }
 
 #[cfg(test)]

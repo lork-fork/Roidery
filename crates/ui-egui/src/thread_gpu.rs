@@ -1,8 +1,9 @@
 //! Roidery: the realistic view on the GPU. Each stitch is drawn as a thread: a capsule as wide
-//! as the thread, shaded as a twisted cylinder lit from the top left (diffuse light, a sheen
-//! along its crest and the plies' twist), over a soft shadow on the fabric. Stitches are uploaded
-//! once per document revision as instances; panning, zooming and the sew-out player only change
-//! a few uniforms.
+//! as the thread, shaded as two twisted plies lit from the top left with a sheen along the
+//! fibres, over a soft shadow on the fabric. The lighting is `roidery_mockup::shade`'s, in WGSL
+//! (keep the two in step): it shows on white and black thread, and a colour looks the same at
+//! every zoom. Stitches are uploaded once per document revision as instances; panning, zooming
+//! and the sew-out player only change a few uniforms.
 //!
 //! The app calls [`install`] with its wgpu render state; without it (OpenGL builds, tests) the
 //! realistic view falls back to the painter in [`crate::stitchview`].
@@ -83,36 +84,93 @@ fn vs(@builtin(vertex_index) vi: u32, i: In) -> Out {
     return o;
 }
 
+const TWIST: f32 = 0.6981317; // 40 degrees: the plies' angle to the thread's axis
+const PLIES: f32 = 2.0;
+const PI: f32 = 3.14159265;
+
+fn hash1(x: f32) -> f32 { return fract(sin(x * 127.1 + 311.7) * 43758.5453); }
+fn vnoise(x: f32) -> f32 {
+    let i = floor(x);
+    let f = x - i;
+    return mix(hash1(i), hash1(i + 1.0), f * f * (3.0 - 2.0 * f));
+}
+// Linear to 0.8, then a soft roll-off towards 1: highlights on light threads stay visible.
+fn tone(x: vec3<f32>) -> vec3<f32> {
+    let k = 0.8;
+    return select(x, k + (1.0 - k) * (1.0 - exp(-(x - k) / (1.0 - k))), x > vec3<f32>(k));
+}
+// Kajiya-Kay: a highlight that runs along the fibre tangent t, shifted along the normal.
+fn kk(t: vec3<f32>, n: vec3<f32>, h: vec3<f32>, shift: f32, e: f32) -> f32 {
+    let th = dot(normalize(t + n * shift), h);
+    return pow(sqrt(max(0.0, 1.0 - th * th)), e);
+}
+
 @fragment
 fn fs(i: Out) -> @location(0) vec4<f32> {
     let len = i.len_hw_seed.x;
     let hw = max(i.len_hw_seed.y, 1e-3);
-    // Capsule: distance from the centre segment, as a fraction of the half width.
+    let seed = i.len_hw_seed.z;
     let q = vec2<f32>(i.local.x - clamp(i.local.x, 0.0, len), i.local.y) / hw;
     let dist = length(q);
-    // Coverage from the distance to the edge in pixels, and how many pixels the thread's half
-    // width spans: small on screen, the shading flattens instead of shimmering.
     let per_px = max(fwidth(dist), 1e-4);
     let edge = clamp((1.0 - dist) / per_px + 0.5, 0.0, 1.0);
-    let detail = smoothstep(1.5, 5.0, 1.0 / per_px);
     if (edge <= 0.0) { discard; }
+    // Level of detail from the thread's half width in pixels: the round form survives far
+    // smaller than the plies, and the fibres go first. Nothing finer than a pixel is drawn.
+    let px = 1.0 / per_px;
+    let form = smoothstep(0.5, 1.5, px);
+    let ply_d = smoothstep(2.5, 6.0, px);
+    let fibre_d = smoothstep(4.0, 9.0, px);
+    let sharp = 0.25 + 0.75 * smoothstep(1.5, 6.0, px);
     if (u.size_hw_mode.w > 0.5) {
-        let a = u.shadow.z * edge * (1.0 - smoothstep(0.2, 1.0, dist)) * detail;
+        let a = u.shadow.z * edge * (1.0 - smoothstep(0.1, 1.0, dist)) * form;
         return vec4<f32>(0.0, 0.0, 0.0, a);
     }
-    // The thread's surface normal: a cylinder across, rounded at the ends.
-    let n2 = i.dir * q.x + vec2<f32>(-i.dir.y, i.dir.x) * q.y;
-    let nz = sqrt(max(0.0, 1.0 - dot(q, q)));
-    let nrm = normalize(vec3<f32>(n2, nz + 1e-4));
+    // 1. The thread as a surface: no real thread is pure black or white, and the curve keeps
+    //    mid tones where they were.
+    let base = 0.04 + pow(i.color.rgb, vec3<f32>(1.25)) * 0.90;
+    // Thread type, in the colour's spare alpha byte (128 = 1): rayon and polyester 1, cotton
+    // about 0.35, metallic about 1.6.
+    let gloss = i.color.a * 2.0;
+
+    // 2. The thread's frame on screen: along, across, and the cylinder's normal.
+    let along = vec3<f32>(i.dir, 0.0);
+    let across = vec3<f32>(-i.dir.y, i.dir.x, 0.0);
+    let nz0 = sqrt(max(0.0, 1.0 - dot(q, q)));
+    let n0 = along * q.x + across * q.y + vec3<f32>(0.0, 0.0, nz0);
+    let around = across * nz0 - vec3<f32>(0.0, 0.0, q.y);
+
+    // 3. Plies: a helix. Lines of equal phase follow the fibres, so plies lean at TWIST and
+    //    bend round the edges of the thread.
+    let phi = asin(clamp(q.y, -1.0, 1.0));
+    let t = (i.local.x * tan(TWIST) / hw - phi) * PLIES / (2.0 * PI) + seed;
+    let pn = fract(t) * 2.0 - 1.0;
+    let ply_h = sqrt(max(0.0, 1.0 - pn * pn));
+    let fibre_t = normalize(along * cos(TWIST) + around * sin(TWIST));
+    let ply_x = around * cos(TWIST) - along * sin(TWIST);
+    let nrm = normalize(n0 + ply_x * pn * 0.45 * ply_d + vec3<f32>(0.0, 0.0, 1e-4));
+
+    // 4. Fibres: fine streaks along each ply.
+    let fibre = 1.0 + (vnoise(pn * 5.0 + floor(t) * 17.0 + seed * 31.0) - 0.5) * 0.22 * fibre_d;
+
+    // 5. Diffuse: wrapped, with occlusion in the ply grooves, down the thread's sides and where
+    //    it dives into the fabric at each end.
     let light = normalize(vec3<f32>(-0.45, -0.65, 0.62));
-    let diffuse = max(dot(nrm, light), 0.0);
+    let wrap = clamp((dot(nrm, light) + 0.35) / 1.35, 0.0, 1.0);
+    let groove = mix(1.0, 0.68 + 0.32 * smoothstep(0.0, 0.8, ply_h), ply_d);
+    let rim = 0.62 + 0.38 * nz0;
+    let tuck = 0.72 + 0.28 * smoothstep(-0.8, 0.5, min(i.local.x, len - i.local.x) / hw);
+    let diffuse = base * (0.42 + 0.78 * wrap) * groove * rim * tuck * fibre;
+
+    // 6. Sheen along the fibres, as hair is shaded: a white lobe (light off the surface, so it
+    //    shows on black) and a coloured one (light through the fibre). Widened when small.
     let h = normalize(light + vec3<f32>(0.0, 0.0, 1.0));
-    let spec = pow(max(dot(nrm, h), 0.0), 28.0) * 0.42 * detail;
-    // The plies twist along the thread.
-    let phase = i.local.x / (hw * 2.4) + q.y * 0.9 + i.len_hw_seed.z;
-    let ply = mix(1.0, mix(0.86, 1.06, 0.5 + 0.5 * sin(phase * 6.2831853)), detail);
-    let shade = mix(0.82, 0.30 + 0.85 * diffuse, detail);
-    let rgb = clamp(i.color.rgb * shade * ply + vec3<f32>(spec), vec3<f32>(0.0), vec3<f32>(1.0));
+    let vis = groove * tuck * (0.6 + 0.4 * fibre);
+    let spec = (vec3<f32>(kk(fibre_t, nrm, h, 0.12, 90.0 * sharp) * 0.34)
+        + base * kk(fibre_t, nrm, h, -0.10, 24.0 * sharp) * 0.25) * gloss * vis * (0.5 + 0.5 * sharp);
+
+    // Far out, the plain average, so a colour doesn't drift with zoom.
+    let rgb = tone(mix(base * 0.92, diffuse + spec, form));
     return vec4<f32>(rgb * edge, edge);
 }
 "#;
@@ -221,7 +279,8 @@ fn instances(pv: &StitchPreview) -> (Vec<u8>, Vec<u32>) {
             for v in [ax, ay, s.x, s.y] {
                 bytes.extend_from_slice(&(v as f32).to_le_bytes());
             }
-            bytes.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            // The alpha byte carries the thread's gloss, 128 = 1 (polyester and rayon).
+            bytes.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 128]);
             // A stable pseudo-random twist phase per stitch.
             let seed = ((i as u32).wrapping_mul(2_654_435_761) >> 16) as f32 / 65_536.0;
             bytes.extend_from_slice(&seed.to_le_bytes());
@@ -274,7 +333,7 @@ fn uniform_bytes(f: &Frame, shadow: bool) -> Vec<u8> {
         if shadow { 1.0 } else { 0.0 },
         hw * 0.25,
         hw * 0.4,
-        0.22,
+        0.30,
         0.0,
     ];
     vals.iter().flat_map(|v| v.to_le_bytes()).collect()
@@ -344,7 +403,7 @@ mod tests {
         // The third instance: from the jump's end (9, 0) to (10, 0) in blue.
         let third = &bytes[2 * STRIDE as usize..];
         assert_eq!(f32::from_le_bytes([third[0], third[1], third[2], third[3]]), 9.0);
-        assert_eq!(&third[16..20], &[0, 0, 255, 255]);
+        assert_eq!(&third[16..20], &[0, 0, 255, 128]);
         assert_eq!(
             uniform_bytes(&Frame { m: [1.0; 4], offset: [0.0; 2], rect: egui::Rect::EVERYTHING, half_width: 1.0, sewn: None }, true).len() as u64,
             UNIFORM_BYTES
