@@ -15,7 +15,7 @@ use vectorcraft_geom::{Anchor, AnchorKind, BezPath, Point, SubPath};
 use crate::{Action, Tool, ToolContext};
 
 pub use anchor::AnchorTool;
-pub use curvature::CurvatureTool;
+pub use curvature::{CurvatureTool, EndCurve, curvature_close, curvature_extend, curvature_insert, curvature_move};
 pub use family::FamilyTool;
 pub use gesture::GestureTool;
 
@@ -89,6 +89,38 @@ fn candidate_paths(cx: &ToolContext) -> Vec<NodeId> {
         if !v.contains(&id) {
             v.push(id);
         }
+    }
+    v.retain(|id| cx.doc.is_editable(*id));
+    v
+}
+
+/// The selected paths the Pen and the Curvature tool edit (not guides, nor locked or hidden ones).
+pub(crate) fn editable_paths<'a>(cx: &'a ToolContext) -> impl Iterator<Item = NodeId> + 'a {
+    cx.selection
+        .objects
+        .iter()
+        .copied()
+        .filter(|&id| cx.doc.is_editable(id) && cx.doc.node(id).is_some_and(|n| matches!(n.kind, NodeKind::Path { guide: false, .. })))
+}
+
+/// The paths whose anchors show with the Pen: the selected ones, and those inside selected groups
+/// and compound paths (not guides, nor locked or hidden ones). Pen + Alt converts their anchors.
+pub(crate) fn shown_paths(cx: &ToolContext) -> Vec<NodeId> {
+    fn inside(n: &vectorcraft_doc::Node, v: &mut Vec<NodeId>) {
+        match &n.kind {
+            NodeKind::Path { guide: false, .. } => v.push(n.id),
+            // A Shape Builder group's first child is its shaper, not art.
+            NodeKind::Group { children, .. } | NodeKind::Compound { children, .. } => {
+                for c in children.iter().skip(usize::from(n.extras().shaper.is_some())) {
+                    inside(c, v);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut v = vec![];
+    for n in cx.selection.objects.iter().filter_map(|id| cx.doc.node(*id)) {
+        inside(n, &mut v);
     }
     v.retain(|id| cx.doc.is_editable(*id));
     v

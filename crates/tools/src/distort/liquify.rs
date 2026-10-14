@@ -324,7 +324,7 @@ impl Dabber {
             self.dabs.push(self.dab(b, pb));
             return;
         };
-        if self.dabs.len() > MAX_DABS {
+        if self.dabs.len() >= MAX_DABS {
             return;
         }
         let len = a.distance(b);
@@ -337,6 +337,9 @@ impl Dabber {
         }
         let mut s = self.spacing - self.carry;
         while s <= len {
+            if self.dabs.len() >= MAX_DABS {
+                return;
+            }
             let t = s / len;
             self.dabs.push(self.dab(a.lerp(b, t), pa + (pb - pa) * t));
             s += self.spacing;
@@ -833,6 +836,19 @@ mod tests {
         assert_eq!(d.len(), 11);
         assert!(d.windows(2).all(|w| (w[0].distance(w[1]) - 10.0).abs() < 1e-9));
         assert_eq!(dabs(&[Point::new(5.0, 5.0)], 10.0), vec![Point::new(5.0, 5.0)]);
+    }
+
+    #[test]
+    fn one_long_segment_stays_within_the_dab_cap() {
+        let mut h = Dabber::with(1.0, Some(1.0), true);
+        for _ in 0..MAX_DABS + 100 {
+            h.push((Point::new(3.0, 3.0), 1.0));
+        }
+        assert_eq!(h.dabs.len(), MAX_DABS);
+        let d = dabs(&[Point::new(0.0, 0.0), Point::new(1.0e9, 0.0)], 1.0);
+        assert!(d.len() <= MAX_DABS + 1, "{} dabs", d.len());
+        let d = dabs(&[Point::new(0.0, 0.0), Point::new(f64::MAX, f64::MAX)], 1.0);
+        assert!(d.len() <= MAX_DABS + 1, "{} dabs", d.len());
     }
 
     #[test]

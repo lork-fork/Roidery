@@ -167,7 +167,7 @@ pub fn whole(s: &StitchSettings) -> bool {
 
 /// The stored parts of `n`.
 pub fn slots(n: &Node) -> Slots {
-    Slots::read(n.attrs.as_ref().and_then(|a| a.stitch.as_ref()))
+    Slots::read(n.extras().attrs.as_ref().and_then(|a| a.stitch.as_ref()))
 }
 
 /// Whether a stitch type's width is the stroke weight.

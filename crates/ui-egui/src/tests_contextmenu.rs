@@ -110,6 +110,32 @@ fn right_click_on_empty_canvas_offers_the_view_and_a_dismissing_click_does_nothi
     assert_eq!(app.session.active().unwrap().doc.art_bounds(), None);
 }
 
+/// #528: right-clicking a ruler offers the document units, the current one checked, and choosing one
+/// swaps them — the same effect as Preferences ▸ Units ▸ General (`document.setUnits`).
+#[test]
+fn right_clicking_a_ruler_swaps_the_document_units() {
+    use vectorcraft_doc::Unit;
+    let mut app = app();
+    app.ui.view.rulers = true;
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx, vec![]);
+    assert_eq!(app.session.general_unit(), Unit::Points, "a new document starts in the prefs unit");
+    // Right-click on the top ruler (the band along the top, past the origin box).
+    let texts = click(&mut app, &ctx, pos2(400.0, 8.0), PointerButton::Secondary);
+    for label in ["Points", "Picas", "Inches", "Millimeters", "Feet & Inches", "Pixels"] {
+        assert!(has(&texts, label), "{label} in {texts:?}");
+    }
+    assert!(texts.iter().any(|(t, _)| t == "✓  Points"), "the current unit is checked: {texts:?}");
+    // Choosing a unit runs document.setUnits and closes the menu.
+    let mm = texts.iter().find(|(t, _)| t.trim_start_matches(['✓', ' ']) == "Millimeters").map(|(_, r)| r.center()).expect("Millimeters");
+    let texts = click(&mut app, &ctx, mm, PointerButton::Primary);
+    assert_eq!(app.session.general_unit(), Unit::Millimeters, "the ruler's unit changed");
+    assert!(!has(&texts, "Inches"), "the menu closed");
+    // The left ruler offers the same menu, now checking the new unit.
+    let texts = click(&mut app, &ctx, pos2(8.0, 300.0), PointerButton::Secondary);
+    assert!(texts.iter().any(|(t, _)| t == "✓  Millimeters"), "the left ruler reflects the current unit: {texts:?}");
+}
+
 fn labels(items: &[Item]) -> Vec<&'static str> {
     items
         .iter()

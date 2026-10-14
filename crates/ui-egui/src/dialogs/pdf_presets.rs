@@ -102,10 +102,19 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             details(ui, &t, preset, builtin);
         });
     });
-    if let Some(a) = act
-        && let Err(e) = run(app, d, a, &preset.name)
-    {
-        app.status(e);
+    if let Some(a) = act {
+        let r = match a {
+            // Their file dialogs, shown off the UI thread, import into or export from the dialog
+            // as it is then.
+            Action::Import | Action::Export => {
+                let (current, export) = (preset.name.clone(), matches!(a, Action::Export));
+                crate::picks::in_dialog(app, d, move |app, d| run(app, d, if export { Action::Export } else { Action::Import }, &current))
+            }
+            a => run(app, d, a, &preset.name),
+        };
+        if let Err(e) = r {
+            app.status(e);
+        }
     }
     false
 }
@@ -169,7 +178,7 @@ fn run(app: &mut VectorcraftApp, d: &mut Dialog, act: Action, current: &str) -> 
                 return Ok(());
             }
             let pick = crate::FilePick { filters: vec![("PDF presets", vectorcraft_engine::cmd::pdfcmds::PRESET_EXTS)], ..Default::default() };
-            let path = app.services.pick_open.as_mut().and_then(|f| f(&pick)).ok_or("cancelled")?;
+            let path = crate::picks::open(app, &pick).ok_or("cancelled")?;
             let r = app.run("pdf.preset.import", json!({ "path": path }))?;
             if let Some(first) = r["imported"].get(0).and_then(Value::as_str) {
                 select(d, first);

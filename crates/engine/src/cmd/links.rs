@@ -16,13 +16,17 @@
 //! selects one (`links.goTo`), Embed keeps a linked file's pixels in the document
 //! (`links.embed`) and Unembed writes an embedded image to a file it then links to
 //! (`links.unembed`).
+//!
+//! Placed documents ([`PlacedDocument`], VectorCraft documents placed with Link) link to their
+//! files the same way: checking, updating, relinking and finding them on open work alike, and they
+//! are listed. Embed (Break Link) turns one into an editable copy of its art.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use serde_json::{Value, json};
 use vectorcraft_doc::links::{Align, Preserve, hash_bytes};
-use vectorcraft_doc::{Appearance, Document, ImageBlob, ImageObject, LinkInfo, Node, NodeId, NodeKind, PlacementOptions};
+use vectorcraft_doc::{Appearance, Document, ImageBlob, ImageObject, LinkInfo, Node, NodeId, NodeKind, PlacedDocument, PlacementOptions};
 use vectorcraft_geom::{Affine, Rect, shapes};
 
 use super::fileio::{self, RasterImage, absolute_path, file_created, file_stamp, read_file, write_file};
@@ -35,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Check Links",
             [],
             None,
-            "{ids?: [image ids] (default: every linked image)} where each linked file is and whether it changed since it was read → {links: [{name, path, status: ok|modified|missing, ids, found?: path (found away from its path: relative to the document, or by name in its folder), preview: true (showing the low-resolution preview, not the file)}], missing, modified}",
+            "{ids?: [image or placed document ids] (default: every linked image and placed document)} where each linked file is and whether it changed since it was read → {links: [{name, path, status: ok|modified|missing, ids, found?: path (found away from its path: relative to the document, or by name in its folder), preview: true (showing the low-resolution preview, not the file)}], missing, modified}",
             has_doc,
             check
         ),
@@ -44,16 +48,25 @@ pub fn specs() -> Vec<CommandSpec> {
             "Update Links",
             [],
             None,
-            "{ids?: [image ids] (default: the linked images whose file was modified or is showing its preview)} read their linked files again; each image keeps its bounds. One undo step → {updated: [ids], missing: [ids]}",
+            "{ids?: [image or placed document ids] (default: the linked images whose file was modified or is showing its preview, and placed documents whose file was modified)} read their linked files again; each keeps its bounds. One undo step → {updated: [ids], missing: [ids]}",
             has_doc,
             update
+        ),
+        cmd!(
+            "links.updateChanged",
+            "Update Changed Links",
+            [],
+            None,
+            "{} read again the active document's linked files that changed on disk since they were last seen (size or modification time), whatever Preferences → File Handling → Update Links says; the desktop app looks every two seconds and follows that preference. Files seen for the first time are only remembered. One undo step → {updated: [ids], ask: [], modified: []}",
+            has_doc,
+            crate::link_watch::update_changed
         ),
         cmd!(
             "links.relink",
             "Relink",
             [],
             None,
-            "{ids?: [image ids] (default: the selected images; with folder and nothing selected, every missing link), path | folder} link images to the file at path, or each to the file of its link's name in folder; embedded images become linked; each keeps its bounds. One undo step → {relinked: [ids], notFound: [file names]}",
+            "{ids?: [image or placed document ids] (default: the selected ones; with folder and nothing selected, every missing link), path | folder, copy?: false (with path, for images of a saved document: copy the file into the document's folder and link to the copy; the names Name.png, Name 2.png … Name 99.png are tried in turn until one is free, which gets the copy, or is a file with the same contents, which is used)} link images (or placed documents, each showing the same artboard of the new file) to the file at path, or each to the file of its link's name in folder; embedded images become linked; each keeps its bounds. One undo step → {relinked: [ids], notFound: [file names], copied?: [{from, to}], kept?: [{from, to}] (with copy)}",
             has_doc,
             relink
         ),
@@ -62,7 +75,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Links",
             [],
             None,
-            "{show?: all (default)|missing|modified|embedded, sort?: name|kind (file format)|status (missing, modified, ok, embedded); default: stacking order, top first} every image object in the layers, as the Links panel lists them → {links: [{id, name, linked, status: ok|modified|missing|embedded, format, pixelWidth, pixelHeight, path?, found?: path (found away from its path), page?, preview?: true (showing the saved preview)}], missing, modified, embedded}",
+            "{show?: all (default)|missing|modified|embedded, sort?: name|kind (file format)|status (missing, modified, ok, embedded); default: stacking order; top first} every image object and placed document in the layers, as the Links panel lists them → {links: [{id, name, linked, status: ok|modified|missing|embedded, format, pixelWidth, pixelHeight, path?, found?: path (found away from its path), page?, preview?: true (showing the saved preview), note?: said of an image too large to draw, document?: true (a placed document: pageWidth and pageHeight in pt instead of pixels)}], missing, modified, embedded}",
             has_doc,
             list
         ),
@@ -71,7 +84,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Go To Link",
             [],
             None,
-            "{id?} select image `id` (default: the first selected image); the Links panel scrolls it into view → {id, bounds: [x0, y0, x1, y1]}",
+            "{id?} select image or placed document `id` (default: the first selected one); the Links panel scrolls it into view → {id, bounds: [x0, y0, x1, y1]}",
             has_doc,
             go_to
         ),
@@ -80,7 +93,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Embed Image",
             [],
             None,
-            "{ids?: [image ids] (default: the selected linked images)} keep the linked files' pixels in the document and drop the links (an image whose file can't be found and that shows the saved preview stays linked: relink it first). One undo step → {embedded: [ids], missing: [ids]}",
+            "{ids?: [image or placed document ids] (default: the selected linked ones)} break the links (the Links panel's Break Link): images keep the linked files' pixels in the document; a placed document becomes an editable copy of its art, as placing its file without link gives (its symbols, patterns, swatches and images joining the document). An image whose file can't be found and that shows the saved preview, or a placed document whose file can't be read or changed, stays linked: relink or update it first. One undo step → {embedded: [ids], missing: [ids]}",
             has_doc,
             embed
         ),
@@ -98,7 +111,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Link Info",
             [],
             None,
-            "{id?} an image's Link Info (default: the one selected) → image.info's fields (id, name, linked, link, colorMode, pixelWidth, pixelHeight, width, height) and status: ok|modified|missing|embedded, format, ppi: [x, y] (the file's), effectivePpi: [x, y] (at its placed size), scale: [x%, y%] (of its 100% size), rotation (degrees, counter-clockwise), placement: {preserve, align, clip}; linked images also fileName, location (its folder), page?, fileSize? (bytes), modified?, created? (ms since the Unix epoch)",
+            "{id?} an image's or placed document's Link Info (default: the one selected) → image.info's fields (id, name, linked, link, colorMode, pixelWidth, pixelHeight, width, height) and status: ok|modified|missing|embedded, format, ppi: [x, y] (the file's), effectivePpi: [x, y] (at its placed size), scale: [x%, y%] (of its 100% size), rotation (degrees, counter-clockwise), placement: {preserve, align, clip}; linked images also fileName, location (its folder), page?, fileSize? (bytes), modified?, created? (ms since the Unix epoch); a placed document has document: true, pageWidth and pageHeight (pt) instead of pixels, ppi and colorMode, and its scale is of its artboard's 100% size",
             has_doc,
             info
         ),
@@ -107,7 +120,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Placement Options",
             [],
             None,
-            "{ids?: [image ids] (default: the selected images), preserve?: transforms|bounds (default)|fileDimensions|fit|fill, align?: topLeft|top|topRight|left|center (default)|right|bottomLeft|bottom|bottomRight (where the new art sits; not for bounds), clip?: false (clip it to the old bounds where it is larger)} how a file read again (links.relink, links.update) takes each image's place: transforms keeps its scale (relative to each file's 100% size), rotation and position; bounds stretches it into the old bounds; fileDimensions puts it at 100%, unrotated; fit and fill scale it proportionally to fit inside or cover the old bounds. Without options → {placement} of the first image; else one undo step → {ids, placement}",
+            "{ids?: [image or placed document ids] (default: the selected ones), preserve?: transforms|bounds (default)|fileDimensions|fit|fill, align?: topLeft|top|topRight|left|center (default)|right|bottomLeft|bottom|bottomRight (where the new art sits; not for bounds), clip?: false (clip it to the old bounds where it is larger)} how a file read again (links.relink, links.update) takes each image's place: transforms keeps its scale (relative to each file's 100% size), rotation and position; bounds stretches it into the old bounds; fileDimensions puts it at 100%, unrotated; fit and fill scale it proportionally to fit inside or cover the old bounds. Without options → {placement} of the first image; else one undo step → {ids, placement}",
             has_doc,
             placement_options
         ),
@@ -134,22 +147,39 @@ impl Status {
     }
 }
 
-/// The image objects that show one linked file as one content (same path, same image).
+/// The image objects that show one linked file as one content (same path, same image), or the
+/// placed documents that show one artboard of it.
 struct Group {
     link: LinkInfo,
     key: String,
     /// The objects in the layers (images in symbols and patterns share the content, not an id).
     ids: Vec<NodeId>,
+    /// Placed documents: whether the art's bounds (not the artboard) are shown.
+    document: Option<bool>,
 }
 
-/// The linked images of `d` by file and content: those in the layers (only `ids` when given), then,
-/// without `ids`, the ones only symbols and patterns show.
+/// The linked object `n` as (link, content key, placed document's bounding).
+fn linked(n: &Node) -> Option<(&LinkInfo, &str, Option<bool>)> {
+    match &n.kind {
+        NodeKind::Image(im) => Some((im.link.as_ref()?, &im.key, None)),
+        NodeKind::PlacedDocument(p) => Some((&p.link, &p.key, Some(p.bounding))),
+        _ => None,
+    }
+}
+
+/// Every linked file of `d` with the ids of the objects showing it (for [`crate::link_watch`]).
+pub(crate) fn linked_groups(d: &Document) -> Vec<(String, Vec<u64>)> {
+    groups(d, None).into_iter().filter(|g| !g.ids.is_empty()).map(|g| (g.link.path, ids_json(&g.ids))).collect()
+}
+
+/// The linked images and placed documents of `d` by file and content: those in the layers (only `ids` when
+/// given), then, without `ids`, the ones only symbols and patterns show.
 fn groups(d: &Document, ids: Option<&[NodeId]>) -> Vec<Group> {
     let mut out: Vec<Group> = vec![];
-    let mut index: BTreeMap<(String, String), usize> = BTreeMap::new();
-    let mut add = |link: &LinkInfo, key: &str, id: Option<NodeId>| {
-        let i = *index.entry((link.path.clone(), key.to_string())).or_insert_with(|| {
-            out.push(Group { link: link.clone(), key: key.to_string(), ids: vec![] });
+    let mut index: BTreeMap<(String, String, bool), usize> = BTreeMap::new();
+    let mut add = |link: &LinkInfo, key: &str, document: Option<bool>, id: Option<NodeId>| {
+        let i = *index.entry((link.path.clone(), key.to_string(), document.is_some())).or_insert_with(|| {
+            out.push(Group { link: link.clone(), key: key.to_string(), ids: vec![], document });
             out.len() - 1
         });
         if let (Some(id), Some(g)) = (id, out.get_mut(i)) {
@@ -157,19 +187,19 @@ fn groups(d: &Document, ids: Option<&[NodeId]>) -> Vec<Group> {
         }
     };
     d.walk(|n| {
-        if let NodeKind::Image(im) = &n.kind
-            && let Some(l) = &im.link
+        if let Some((l, key, document)) = linked(n)
             && ids.is_none_or(|ids| ids.contains(&n.id))
         {
-            add(l, &im.key, Some(n.id));
+            add(l, key, document, Some(n.id));
         }
     });
     if ids.is_none() {
         d.visit_images(|_, im| {
             if let Some(l) = &im.link {
-                add(l, &im.key, None);
+                add(l, &im.key, None, None);
             }
         });
+        d.visit_placed(|_, p| add(&p.link, &p.key, Some(p.bounding), None));
     }
     out
 }
@@ -238,7 +268,7 @@ fn probe(g: &Group, dir: Option<&Path>) -> (Status, Option<Found>) {
     let same = match &l.hash {
         Some(h) => *h == hash_bytes(&bytes),
         // Linked before links kept a hash: the image the file decodes to.
-        None => fileio::raster_image(&bytes).is_ok_and(|img| img.key == g.key),
+        None => g.document.is_none() && fileio::raster_image(&bytes).is_ok_and(|img| img.key == g.key),
     };
     f.bytes = Some(bytes);
     (if same { Status::Ok } else { Status::Modified }, Some(f))
@@ -254,10 +284,22 @@ fn previewing(d: &Document, key: &str) -> bool {
     d.images.get(key).is_none_or(ImageBlob::is_proxy)
 }
 
+/// Does group `g` of `d` show something other than its file: an image its preview, a placed
+/// document nothing (its file's bytes are gone)?
+fn stale(d: &Document, g: &Group) -> bool {
+    match g.document {
+        None => previewing(d, &g.key),
+        Some(_) => !d.images.contains_key(&g.key),
+    }
+}
+
 /// A linked file of a document (File → Package): its path, name and bytes.
 pub(crate) struct LinkedFile {
     pub path: String,
     pub name: String,
+    /// The file actually read, which may be next to the current document after a move.
+    /// Nested links must be resolved against this folder, not the obsolete original path.
+    pub found_path: Option<String>,
     /// Read from where the file is found, else the pixels the document holds when they are the
     /// file's own; `None` when neither.
     pub bytes: Option<Vec<u8>>,
@@ -272,11 +314,22 @@ pub(crate) fn linked_files(d: &Document, doc_path: Option<&str>) -> Vec<LinkedFi
         .filter(|g| seen.insert(g.link.path.clone()))
         .map(|g| {
             let own = |b: &&ImageBlob| !b.is_proxy() && fileio::format_for_name(g.link.name()).is_some_and(|f| f.mime == b.mime);
-            let bytes = locate(&g.link, folder(doc_path))
-                .and_then(|mut f| f.read().ok())
-                .or_else(|| d.images.get(&g.key).filter(own).map(|b| b.bytes.to_vec()));
-            LinkedFile { path: g.link.path.clone(), name: g.link.name().to_string(), bytes }
+            let found = locate(&g.link, folder(doc_path));
+            let found_path = found.as_ref().map(|f| f.path.clone());
+            let bytes = found.and_then(|mut f| f.read().ok()).or_else(|| d.images.get(&g.key).filter(own).map(|b| b.bytes.to_vec()));
+            LinkedFile { path: g.link.path.clone(), name: g.link.name().to_string(), found_path, bytes }
         })
+        .collect()
+}
+
+/// The linked files of the open document `st` that `links.findFiles` looks for, each with the
+/// objects in the layers that show it: the files of objects `ids` whatever their status, else the
+/// files that can't be found.
+pub(crate) fn files_to_find(st: &crate::DocState, ids: Option<&[NodeId]>) -> Vec<(LinkInfo, Vec<NodeId>)> {
+    groups(&st.doc, ids)
+        .into_iter()
+        .filter(|g| !g.ids.is_empty() && (ids.is_some() || probe(g, folder(st.path.as_deref())).0 == Status::Missing))
+        .map(|g| (g.link, g.ids))
         .collect()
 }
 
@@ -301,6 +354,51 @@ fn read_image(f: &mut Found, base: &LinkInfo) -> Result<FileRead> {
     Ok((f.link(&bytes, base), fileio::raster_image(&bytes)?))
 }
 
+/// A linked file read for the objects that show it.
+enum Read {
+    Image(FileRead),
+    /// A VectorCraft document read for placed documents: the link to it and what they show.
+    Document(LinkInfo, super::place::document::Source),
+}
+
+/// The file at `f` read for group `g`: its image, or the artboard `g` shows.
+fn read_for(f: &mut Found, g: &Group, cmd: &str) -> Result<Read> {
+    let Some(bounding) = g.document else { return read_image(f, &g.link).map(Read::Image) };
+    let bytes = f.read()?;
+    let page = g.link.page.unwrap_or(1);
+    let src = super::place::document::source(&f.path, &bytes, Some(&f.path), page, bounding, cmd)?;
+    Ok(Read::Document(f.link(&bytes, &g.link), src))
+}
+
+/// Objects `ids` show what was read (see [`install`], [`install_document`]).
+fn install_read(d: &mut Document, ids: &[NodeId], read: Read, keep_bounds: bool) -> Result<()> {
+    match read {
+        Read::Image(r) => install(d, ids, r, keep_bounds),
+        Read::Document(link, src) => install_document(d, ids, &link, &src, keep_bounds),
+    }
+}
+
+/// Placed documents `ids` show `src`, read from the file `link` points at, each placed as its
+/// Placement Options say (`keep_bounds`: in its bounds, whatever they say).
+fn install_document(d: &mut Document, ids: &[NodeId], link: &LinkInfo, src: &super::place::document::Source, keep_bounds: bool) -> Result<()> {
+    let mut clips = vec![];
+    let (w, h) = (src.frame.width(), src.frame.height());
+    for id in ids {
+        let Some(NodeKind::PlacedDocument(p)) = d.node(*id).map(|n| &n.kind) else { continue };
+        let o = if keep_bounds { PlacementOptions { preserve: Preserve::Bounds, ..p.placement } } else { p.placement };
+        let (xf, clip) = placed_xf(p.xf, (p.width, p.height), (1.0, 1.0), (w, h), (1.0, 1.0), o);
+        if let Some(n) = d.node_mut(*id)
+            && let NodeKind::PlacedDocument(p) = &mut n.kind
+        {
+            let p: &mut PlacedDocument = p;
+            (p.key, p.width, p.height, p.xf, p.link) = (src.key.clone(), w, h, xf, link.clone());
+        }
+        clips.extend(clip.map(|c| (*id, c)));
+    }
+    super::place::document::store(d, src);
+    clips.into_iter().try_for_each(|(id, clip)| clip_image(d, id, clip))
+}
+
 /// Points per pixel of the file image `key` of `d` shows, at the resolution it declares (72 ppi
 /// when it declares none, or when only its preview is loaded).
 fn file_pt(d: &Document, key: &str) -> (f64, f64) {
@@ -318,9 +416,10 @@ type Clip = (Affine, (f64, f64));
 
 /// The transform an image placed with `xf` showing `old` pixels (`old_pt`: points per pixel at
 /// 100%) gives a new file of `new` pixels (`new_pt`), as Placement Options `o` say; and the clip
-/// when `o.clip` and the new art overflows the old bounds.
-fn placed_xf(xf: Affine, old: (u32, u32), old_pt: (f64, f64), new: (u32, u32), new_pt: (f64, f64), o: PlacementOptions) -> (Affine, Option<Clip>) {
-    let (ow, oh, nw, nh) = (old.0 as f64, old.1 as f64, new.0.max(1) as f64, new.1.max(1) as f64);
+/// when `o.clip` and the new art overflows the old bounds. (A placed document's "pixels" are points,
+/// one point each.)
+fn placed_xf(xf: Affine, old: (f64, f64), old_pt: (f64, f64), new: (f64, f64), new_pt: (f64, f64), o: PlacementOptions) -> (Affine, Option<Clip>) {
+    let (ow, oh, nw, nh) = (old.0, old.1, new.0.max(1e-9), new.1.max(1e-9));
     let [a, b, c, d, ..] = xf.as_coeffs();
     // The bounds' frame: the transform without its scale (rotation, reflection and position).
     let (su, sv) = (a.hypot(b), c.hypot(d));
@@ -388,7 +487,8 @@ fn install(d: &mut Document, ids: &[NodeId], (link, img): FileRead, keep_bounds:
     for id in ids {
         let Some(NodeKind::Image(im)) = d.node(*id).map(|n| &n.kind) else { continue };
         let o = if keep_bounds { PlacementOptions { preserve: Preserve::Bounds, ..im.placement } } else { im.placement };
-        let (xf, clip) = placed_xf(im.xf, (im.width, im.height), file_pt(d, &im.key), (img.width, img.height), new_pt, o);
+        let size = |w: u32, h: u32| (w as f64, h as f64);
+        let (xf, clip) = placed_xf(im.xf, size(im.width, im.height), file_pt(d, &im.key), size(img.width, img.height), new_pt, o);
         if let Some(n) = d.node_mut(*id)
             && let NodeKind::Image(im) = &mut n.kind
         {
@@ -429,18 +529,45 @@ impl Resolved {
 
 /// The linked files of document `d`, just read from `doc_path`: those found unchanged are read
 /// again (their images had the preview), modified ones are read again when `update`, links found
-/// away from their path take the new path. Nothing here is an undo step.
+/// away from their path take the new path. A link nothing is known of whose image shows a preview
+/// (a file another app wrote kept only that) was never read: its file is read now, into the
+/// image's bounds, which isn't a change to report. Nothing here is an undo step.
 pub fn resolve(d: &mut Document, doc_path: Option<&str>, update: bool) -> Resolved {
     let mut out = Resolved::default();
     for g in groups(d, None) {
         let row = rows(std::iter::once(&g));
+        let unread = g.document.is_none() && g.link.hash.is_none() && g.link.size.is_none() && previewing(d, &g.key);
         match probe(&g, folder(doc_path)) {
             (Status::Missing, _) => out.missing.extend(row),
-            (Status::Modified, Some(mut f)) if update => match read_image(&mut f, &g.link).and_then(|read| install(d, &g.ids, read, false)) {
-                Ok(()) => out.updated.extend(row),
-                Err(_) => out.missing.extend(row),
-            },
+            (Status::Modified, Some(mut f)) if update || unread => {
+                match read_for(&mut f, &g, "document.open").and_then(|read| install_read(d, &g.ids, read, unread)) {
+                    Ok(()) if unread => {}
+                    Ok(()) => out.updated.extend(row),
+                    Err(_) => out.missing.extend(row),
+                }
+            }
             (Status::Modified, _) => out.modified.extend(row),
+            // A placed document keeps its file's bytes: only lost ones are read again.
+            (Status::Ok, Some(mut f)) if g.document.is_some() => {
+                let read = if stale(d, &g) { Some(read_for(&mut f, &g, "document.open")) } else { None };
+                match read {
+                    Some(Ok(read)) => {
+                        if install_read(d, &g.ids, read, true).is_err() {
+                            out.missing.extend(row);
+                        }
+                    }
+                    Some(Err(_)) => out.missing.extend(row),
+                    None => {
+                        let link = match f.bytes.take() {
+                            Some(b) => f.link(&b, &g.link),
+                            None => LinkInfo { path: f.path.clone(), ..g.link.clone() },
+                        };
+                        if link != g.link {
+                            set_links(d, &g.ids, &link);
+                        }
+                    }
+                }
+            }
             (Status::Ok, Some(mut f)) => {
                 let preview = previewing(d, &g.key);
                 // Read when the images show the preview, or when the file's details changed.
@@ -471,15 +598,56 @@ pub fn resolve(d: &mut Document, doc_path: Option<&str>, update: bool) -> Resolv
     out
 }
 
-/// Image objects `ids` link to `link`.
+/// The link of linked object `n` (a linked image or a placed document) to change.
+fn link_mut(n: &mut Node) -> Option<&mut LinkInfo> {
+    match &mut n.kind {
+        NodeKind::Image(im) => im.link.as_mut(),
+        NodeKind::PlacedDocument(p) => Some(&mut p.link),
+        _ => None,
+    }
+}
+
+/// Linked image objects (or placed documents) `ids` link to `link`.
 fn set_links(d: &mut Document, ids: &[NodeId], link: &LinkInfo) {
     for id in ids {
-        if let Some(n) = d.node_mut(*id)
-            && let NodeKind::Image(im) = &mut n.kind
-        {
-            im.link = Some(link.clone());
+        if let Some(l) = d.node_mut(*id).and_then(link_mut) {
+            *l = link.clone();
         }
     }
+}
+
+/// Placed documents of the document saved at `path` (document `saved` of `s`) in the other open
+/// documents: read again from the new file, each as one Update Links step of its document.
+pub(crate) fn refresh_placed(s: &mut Session, saved: u64, path: &str) {
+    let path = absolute_path(path);
+    let targets: Vec<(usize, Vec<u64>)> = s
+        .documents()
+        .iter()
+        .enumerate()
+        .filter(|(_, st)| st.uid != saved)
+        .filter_map(|(i, st)| {
+            let mut ids = vec![];
+            st.doc.walk(|n| {
+                if let NodeKind::PlacedDocument(p) = &n.kind
+                    && p.link.path == path
+                {
+                    ids.push(n.id.0);
+                }
+            });
+            (!ids.is_empty()).then_some((i, ids))
+        })
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+    // Each document is updated as the active one, without switching tools.
+    let back = s.active;
+    for (i, ids) in targets {
+        s.active = Some(i);
+        // A file that can't be read leaves what its objects show: links.check reports it.
+        let _ = update(s, &json!({ "ids": ids }));
+    }
+    s.active = back;
 }
 
 // ---------- relative paths ----------
@@ -509,9 +677,7 @@ pub fn with_relative_paths(d: &Document, dest: &str) -> Option<Document> {
     let dir = Path::new(&dest).parent()?;
     let mut changes = vec![];
     d.walk(|n| {
-        if let NodeKind::Image(im) = &n.kind
-            && let Some(l) = &im.link
-        {
+        if let Some((l, _, _)) = linked(n) {
             let r = relative_path(Path::new(&l.path), dir);
             if r != l.relative {
                 changes.push((n.id, r));
@@ -523,10 +689,7 @@ pub fn with_relative_paths(d: &Document, dest: &str) -> Option<Document> {
     }
     let mut d = d.clone();
     for (id, r) in changes {
-        if let Some(n) = d.node_mut(id)
-            && let NodeKind::Image(im) = &mut n.kind
-            && let Some(l) = &mut im.link
-        {
+        if let Some(l) = d.node_mut(id).and_then(link_mut) {
             l.relative = r;
         }
     }
@@ -548,7 +711,7 @@ fn check(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(f) = found.filter(|f| f.path != g.link.path) {
             row["found"] = json!(f.path);
         }
-        if previewing(&st.doc, &g.key) {
+        if stale(&st.doc, g) {
             row["preview"] = json!(true);
         }
         links.push(row);
@@ -564,9 +727,9 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
         match probe(&g, folder(st.path.as_deref())) {
             (Status::Missing, _) | (_, None) => missing.extend(ids_json(&g.ids)),
             // Unchanged and showing the file: nothing to read unless asked for by id.
-            (Status::Ok, Some(_)) if ids.is_none() && !previewing(&st.doc, &g.key) => {}
-            // Unreadable as an image counts as missing.
-            (_, Some(mut f)) => match read_image(&mut f, &g.link) {
+            (Status::Ok, Some(_)) if ids.is_none() && !stale(&st.doc, &g) => {}
+            // Unreadable as an image (or a document) counts as missing.
+            (_, Some(mut f)) => match read_for(&mut f, &g, "links.update") {
                 Ok(read) => reads.push((g.ids, read)),
                 Err(_) => missing.extend(ids_json(&g.ids)),
             },
@@ -574,7 +737,7 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let updated: Vec<u64> = reads.iter().flat_map(|(ids, _)| ids_json(ids)).collect();
     if !reads.is_empty() {
-        s.edit("Update Links", |d, _| reads.into_iter().try_for_each(|(ids, read)| install(d, &ids, read, false)))?;
+        s.edit("Update Links", |d, _| reads.into_iter().try_for_each(|(ids, read)| install_read(d, &ids, read, false)))?;
     }
     Ok(json!({ "updated": updated, "missing": missing }))
 }
@@ -583,7 +746,23 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "links.relink";
     let st = s.doc()?;
     let folder_param = str_param(p, "folder");
-    let image = |id: &NodeId| st.doc.node(*id).and_then(|n| if let NodeKind::Image(im) = &n.kind { Some(im) } else { None });
+    // With copy: the saved document's folder, which the file is copied into.
+    let copy_to = match (bool_or(p, "copy", false), str_param(p, "path")) {
+        (false, _) => None,
+        (true, None) => return Err(bad(C, "copy needs path: the file to copy into the document's folder")),
+        (true, Some(_)) => {
+            let doc = st.path.as_deref().map(absolute_path).ok_or_else(|| bad(C, "save the document first: copy puts the file in its folder"))?;
+            Some(Path::new(&doc).parent().map(Path::to_path_buf).ok_or_else(|| bad(C, format!("{doc} has no folder")))?)
+        }
+    };
+    // An image or a placed document, with its link.
+    let image = |id: &NodeId| {
+        st.doc.node(*id).and_then(|n| match &n.kind {
+            NodeKind::Image(im) => Some(im.link.as_ref()),
+            NodeKind::PlacedDocument(p) => Some(Some(&p.link)),
+            _ => None,
+        })
+    };
     let ids: Vec<NodeId> = match ids_param(p, "ids") {
         Some(ids) => ids,
         None => {
@@ -599,10 +778,13 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     if let Some(id) = ids.iter().find(|id| image(id).is_none()) {
-        return Err(bad(C, format!("object {} is not an image", id.0)));
+        return Err(bad(C, format!("object {} is not an image or a linked file", id.0)));
     }
     if ids.is_empty() {
         return Err(bad(C, "select the images to relink, or pass ids"));
+    }
+    if copy_to.is_some() && ids.iter().any(|id| matches!(st.doc.node(*id).map(|n| &n.kind), Some(NodeKind::PlacedDocument(_)))) {
+        return Err(bad(C, "copy takes images only: relink placed documents where their files are"));
     }
     // (ids, the file) per file to read.
     let mut files: Vec<(Vec<NodeId>, String)> = vec![];
@@ -611,7 +793,7 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
         (Some(path), _) => files.push((ids, absolute_path(path))),
         (None, Some(dir)) => {
             for id in ids {
-                let Some(link) = image(&id).and_then(|im| im.link.as_ref()) else { continue };
+                let Some(link) = image(&id).flatten() else { continue };
                 let path = absolute_path(&Path::new(dir).join(link.name()).to_string_lossy());
                 match files.iter_mut().find(|(_, p)| *p == path) {
                     Some((ids, _)) => ids.push(id),
@@ -623,18 +805,94 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
         (None, None) => return Err(bad(C, "give path (a file) or folder")),
     }
     let mut reads = vec![];
+    let (mut copied, mut kept) = (vec![], vec![]);
     for (ids, path) in files {
         let bytes = read_file(&path)?;
-        let img = fileio::raster_image(&bytes).map_err(|e| bad(C, format!("{path}: {e}")))?;
-        reads.push((ids, (link_info(&path, &bytes), img)));
+        // Images show the file; placed documents each show their artboard of it.
+        let mut images = vec![];
+        let mut documents: Vec<((u32, bool), Vec<NodeId>)> = vec![];
+        for id in ids {
+            match st.doc.node(id).map(|n| &n.kind) {
+                Some(NodeKind::PlacedDocument(pl)) => {
+                    let k = (pl.page(), pl.bounding);
+                    match documents.iter_mut().find(|(e, _)| *e == k) {
+                        Some((_, ids)) => ids.push(id),
+                        None => documents.push((k, vec![id])),
+                    }
+                }
+                _ => images.push(id),
+            }
+        }
+        // Read before it is copied: a file that can't be shown isn't copied.
+        let img = if images.is_empty() { None } else { Some(fileio::raster_image(&bytes).map_err(|e| bad(C, format!("{path}: {e}")))?) };
+        let mut sources = vec![];
+        for ((page, bounding), ids) in documents {
+            sources.push((page, ids, super::place::document::source(&path, &bytes, Some(&path), page, bounding, C)?));
+        }
+        let to = match &copy_to {
+            Some(dir) => {
+                let (to, new) = copy_into_folder(&path, &bytes, dir)?;
+                let pair = json!({ "from": path, "to": to });
+                if new {
+                    copied.push(pair)
+                } else {
+                    kept.push(pair)
+                }
+                to
+            }
+            None => path,
+        };
+        let link = link_info(&to, &bytes);
+        if let Some(img) = img {
+            reads.push((images, Read::Image((link.clone(), img))));
+        }
+        for (page, ids, src) in sources {
+            reads.push((ids, Read::Document(LinkInfo { page: Some(page), ..link.clone() }, src)));
+        }
     }
     let relinked: Vec<u64> = reads.iter().flat_map(|(ids, _)| ids_json(ids)).collect();
     if !reads.is_empty() {
-        s.edit("Relink", |d, _| reads.into_iter().try_for_each(|(ids, read)| install(d, &ids, read, false)))?;
+        s.edit("Relink", |d, _| reads.into_iter().try_for_each(|(ids, read)| install_read(d, &ids, read, false)))?;
     }
     not_found.sort();
     not_found.dedup();
-    Ok(json!({ "relinked": relinked, "notFound": not_found }))
+    let mut out = json!({ "relinked": relinked, "notFound": not_found });
+    if copy_to.is_some() {
+        out["copied"] = json!(copied);
+        out["kept"] = json!(kept);
+    }
+    Ok(out)
+}
+
+/// `links.relink {copy}`: put the file at `from` (`bytes`, as just read) into the folder `dir`,
+/// never replacing a file there ([`fileio::copy_new`]) → where it is now, and whether it was
+/// copied (`false`: a file there with the same contents, of its name or a numbered one, is used).
+#[cfg(not(target_arch = "wasm32"))]
+fn copy_into_folder(from: &str, bytes: &[u8], dir: &Path) -> Result<(String, bool)> {
+    use std::io::Write as _;
+    let source = Path::new(from);
+    let name = source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    // Each name it takes is checked against the automation roots in force.
+    let create = |to: &Path| {
+        crate::file_access::check_write(&to.to_string_lossy()).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
+        vectorcraft_format::write_new_with(to, |f| f.write_all(bytes))
+    };
+    // A file there that automation may not read isn't taken for the same file.
+    let same = |to: &Path, m: &std::fs::Metadata| {
+        m.len() == bytes.len() as u64 && crate::file_access::check_read(&to.to_string_lossy()).is_ok() && std::fs::read(to).is_ok_and(|b| b == bytes)
+    };
+    match fileio::copy_new(source, dir, create, same) {
+        Ok(Some(fileio::Placed::Copied(to))) => Ok((to.to_string_lossy().into_owned(), true)),
+        Ok(Some(fileio::Placed::Kept(to))) => Ok((to.to_string_lossy().into_owned(), false)),
+        Ok(None) => Err(EngineError::Other(format!("every numbered name for {name} is taken in the document's folder"))),
+        Err(e) => Err(EngineError::Other(format!("{}: {e}", dir.display()))),
+    }
+}
+
+/// The web has no file system: nothing is copied.
+#[cfg(target_arch = "wasm32")]
+fn copy_into_folder(_: &str, _: &[u8], _: &Path) -> Result<(String, bool)> {
+    Err(bad("links.relink", "copying a file isn't available on the web"))
 }
 
 // ---------- the Links panel ----------
@@ -652,18 +910,6 @@ fn selected_images(st: &crate::DocState, keep: impl Fn(&ImageObject) -> bool) ->
     st.selection.objects.iter().copied().filter(|id| image_of(&st.doc, *id).is_some_and(&keep)).collect()
 }
 
-/// `ids` (else the selected images `keep` accepts), checked to be images; an error when none.
-fn images_param(st: &crate::DocState, p: &Value, cmd: &str, keep: impl Fn(&ImageObject) -> bool) -> Result<Vec<NodeId>> {
-    let ids = ids_param(p, "ids").unwrap_or_else(|| selected_images(st, keep));
-    if let Some(id) = ids.iter().find(|id| image_of(&st.doc, **id).is_none()) {
-        return Err(bad(cmd, format!("object {} is not an image", id.0)));
-    }
-    if ids.is_empty() {
-        return Err(bad(cmd, "select the images, or pass ids"));
-    }
-    Ok(ids)
-}
-
 /// `id`, else the first selected image.
 fn image_param(st: &crate::DocState, p: &Value, cmd: &str) -> Result<NodeId> {
     let id = id_param(p, "id").or_else(|| selected_images(st, |_| true).first().copied()).ok_or_else(|| bad(cmd, "select an image, or pass id"))?;
@@ -674,6 +920,35 @@ fn image_param(st: &crate::DocState, p: &Value, cmd: &str) -> Result<NodeId> {
     }
 }
 
+/// The Placement Options of image or placed document `n`.
+fn placement_mut(n: &mut Node) -> Option<&mut PlacementOptions> {
+    match &mut n.kind {
+        NodeKind::Image(im) => Some(&mut im.placement),
+        NodeKind::PlacedDocument(p) => Some(&mut p.placement),
+        _ => None,
+    }
+}
+
+/// The Placement Options of image or placed document `id` of `d`.
+fn placement_of(d: &Document, id: NodeId) -> Option<PlacementOptions> {
+    match &d.node(id)?.kind {
+        NodeKind::Image(im) => Some(im.placement),
+        NodeKind::PlacedDocument(p) => Some(p.placement),
+        _ => None,
+    }
+}
+
+/// `id`, else the first selected image or placed document.
+fn linked_param(st: &crate::DocState, p: &Value, cmd: &str) -> Result<NodeId> {
+    let first = || st.selection.objects.iter().copied().find(|id| placement_of(&st.doc, *id).is_some());
+    let id = id_param(p, "id").or_else(first).ok_or_else(|| bad(cmd, "select an image, or pass id"))?;
+    match placement_of(&st.doc, id) {
+        Some(_) => Ok(id),
+        None if st.doc.node(id).is_none() => Err(crate::EngineError::NoNode(id)),
+        None => Err(bad(cmd, format!("object {} is not an image or a linked file", id.0))),
+    }
+}
+
 /// Per linked image in the layers of `st`: its file's status, where it was found when away from
 /// its path, and whether the image shows its preview (each file probed once).
 fn statuses(st: &crate::DocState) -> BTreeMap<NodeId, (Status, Option<String>, bool)> {
@@ -681,7 +956,7 @@ fn statuses(st: &crate::DocState) -> BTreeMap<NodeId, (Status, Option<String>, b
     for g in groups(&st.doc, None).iter().filter(|g| !g.ids.is_empty()) {
         let (status, found) = probe(g, folder(st.path.as_deref()));
         let found = found.map(|f| f.path).filter(|p| *p != g.link.path);
-        let preview = previewing(&st.doc, &g.key);
+        let preview = stale(&st.doc, g);
         out.extend(g.ids.iter().map(|id| (*id, (status, found.clone(), preview))));
     }
     out
@@ -694,6 +969,12 @@ fn format_label(d: &Document, im: &ImageObject) -> &'static str {
         .and_then(|l| fileio::format_for_name(l.name()))
         .or_else(|| d.images.get(&im.key).and_then(|b| fileio::FORMATS.iter().find(|f| f.raster && f.mime == b.mime)))
         .map_or("Image", |f| f.label)
+}
+
+/// A placed document's `links.list` fields: `format`, `document: true` and its artboard's size
+/// (`pageWidth`, `pageHeight`, pt) instead of pixels.
+fn document_row(p: &PlacedDocument) -> Value {
+    json!({ "format": "VectorCraft", "document": true, "pageWidth": p.width, "pageHeight": p.height })
 }
 
 /// Sort rank of a `links.list` status: missing, modified, ok, embedded.
@@ -709,17 +990,17 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, format!("show `{show}`: all, missing, modified or embedded")));
     }
     let statuses = statuses(st);
-    let mut images = vec![];
+    let mut objects = vec![];
     st.doc.walk(|n| {
-        if let NodeKind::Image(im) = &n.kind {
-            images.push((n, im));
+        if matches!(n.kind, NodeKind::Image(_) | NodeKind::PlacedDocument(_)) {
+            objects.push(n);
         }
     });
     // Top first, as the Layers panel lists them.
-    images.reverse();
+    objects.reverse();
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut rows = vec![];
-    for (n, im) in images {
+    for n in objects {
         let (status, found, preview) = match statuses.get(&n.id) {
             Some((s, f, p)) => (s.as_str(), f.as_deref(), *p),
             None => ("embedded", None, false),
@@ -728,17 +1009,28 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
         if show != "all" && show != status {
             continue;
         }
-        let name = im.link.as_ref().map_or_else(|| n.display_name(), |l| l.name().to_string());
-        let mut row = json!({
-            "id": n.id.0,
-            "name": name,
-            "linked": im.link.is_some(),
-            "status": status,
-            "format": format_label(&st.doc, im),
-            "pixelWidth": im.width,
-            "pixelHeight": im.height,
-        });
-        if let Some(l) = &im.link {
+        let (link, mut row) = match &n.kind {
+            NodeKind::Image(im) => {
+                let mut row = json!({ "format": format_label(&st.doc, im), "pixelWidth": im.width, "pixelHeight": im.height });
+                // Only an image that could be past the decode allowance (at 16 bytes a pixel, the
+                // most a decoder gives) has its header read for this.
+                let large = im.width as u64 * im.height as u64 > fileio::MAX_RASTER_ALLOC / 16;
+                if let Some(note) = st.doc.images.get(&im.key).filter(|_| large).and_then(|b| fileio::too_large_note(&b.bytes)) {
+                    row["note"] = json!(note);
+                }
+                (im.link.as_ref(), row)
+            }
+            NodeKind::PlacedDocument(p) => (Some(&p.link), document_row(p)),
+            _ => continue,
+        };
+        let name = link.map_or_else(|| n.display_name(), |l| l.name().to_string());
+        if let Some(o) = row.as_object_mut() {
+            o.insert("id".into(), json!(n.id.0));
+            o.insert("name".into(), json!(name));
+            o.insert("linked".into(), json!(link.is_some()));
+            o.insert("status".into(), json!(status));
+        }
+        if let Some(l) = link {
             row["path"] = json!(l.path);
             if let Some(page) = l.page {
                 row["page"] = json!(page);
@@ -766,7 +1058,7 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn go_to(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let id = image_param(st, p, "links.goTo")?;
+    let id = linked_param(st, p, "links.goTo")?;
     let b = st.doc.node(id).and_then(Node::geometric_bounds).unwrap_or_default();
     s.select(|_, sel| sel.set([id]))?;
     Ok(json!({ "id": id.0, "bounds": [b.x0, b.y0, b.x1, b.y1] }))
@@ -775,9 +1067,29 @@ fn go_to(s: &mut Session, p: &Value) -> Result<Value> {
 fn embed(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "links.embed";
     let st = s.doc()?;
-    let ids = images_param(st, p, C, |im| im.link.is_some())?;
+    let kind = |id: &NodeId| st.doc.node(*id).map(|n| &n.kind);
+    let linked = |id: &NodeId| match kind(id) {
+        Some(NodeKind::Image(im)) => im.link.is_some(),
+        Some(NodeKind::PlacedDocument(_)) => true,
+        _ => false,
+    };
+    let ids = ids_param(p, "ids").unwrap_or_else(|| st.selection.objects.iter().copied().filter(linked).collect());
+    if let Some(id) = ids.iter().find(|id| !matches!(kind(id), Some(NodeKind::Image(_) | NodeKind::PlacedDocument(_)))) {
+        return Err(bad(C, format!("object {} is not an image or a placed document", id.0)));
+    }
+    if ids.is_empty() {
+        return Err(bad(C, "select the linked images or placed documents, or pass ids"));
+    }
+    // Placed documents become editable copies of their art: those whose file can be read.
+    let (mut documents, mut missing) = (vec![], vec![]);
+    for id in ids.iter().copied() {
+        let Some(NodeKind::PlacedDocument(p)) = kind(&id) else { continue };
+        let readable = st.doc.images.get(&p.key).is_some_and(|b| vectorcraft_doc::placed_document::full_bytes(p, b).is_some());
+        if readable { documents.push(id) } else { missing.push(id) }
+    }
+    let ids: Vec<NodeId> = ids.into_iter().filter(|id| matches!(kind(id), Some(NodeKind::Image(_)))).collect();
     // Images showing their preview take their file's pixels first.
-    let (mut done, mut missing, mut reads) = (vec![], vec![], vec![]);
+    let (mut done, mut reads) = (vec![], vec![]);
     for g in groups(&st.doc, Some(&ids)) {
         if !previewing(&st.doc, &g.key) {
             done.extend(g.ids);
@@ -794,21 +1106,20 @@ fn embed(s: &mut Session, p: &Value) -> Result<Value> {
             _ => missing.extend(g.ids),
         }
     }
-    if !done.is_empty() {
+    if !done.is_empty() || !documents.is_empty() {
         s.edit("Embed", |d, _| {
             for (ids, read) in reads {
                 install(d, &ids, read, true)?;
             }
             for id in &done {
-                if let Some(n) = d.node_mut(*id)
-                    && let NodeKind::Image(im) = &mut n.kind
-                {
+                if let Some(Node { kind: NodeKind::Image(im), .. }) = d.node_mut(*id) {
                     im.link = None;
                 }
             }
-            Ok(())
+            documents.iter().try_for_each(|id| super::place::document::expand(d, *id, C))
         })?;
     }
+    done.extend(documents);
     Ok(json!({ "embedded": ids_json(&done), "missing": ids_json(&missing) }))
 }
 
@@ -862,41 +1173,77 @@ fn placement_json(o: PlacementOptions) -> Value {
     json!({ "preserve": o.preserve.id(), "align": o.align.id(), "clip": o.clip })
 }
 
+/// Link Info's fields of the linked file `l` (of object `id` of `st`) into `out`.
+fn file_fields(st: &crate::DocState, id: NodeId, l: &LinkInfo, out: &mut Value) {
+    let status = groups(&st.doc, Some(&[id])).first().map_or(Status::Missing, |g| probe(g, folder(st.path.as_deref())).0);
+    let stamp = file_stamp(&l.path);
+    let folder_len = l.path.len().saturating_sub(l.name().len());
+    out["status"] = json!(status.as_str());
+    out["path"] = json!(l.path);
+    out["fileName"] = json!(l.name());
+    out["location"] = json!(l.path.get(..folder_len).unwrap_or_default().trim_end_matches(['/', '\\']));
+    for (k, v) in [
+        ("page", l.page.map(u64::from)),
+        ("fileSize", stamp.map(|s| s.0).or(l.size)),
+        ("modified", stamp.and_then(|s| s.1).or(l.modified)),
+        ("created", file_created(&l.path)),
+    ] {
+        if let Some(v) = v {
+            out[k] = json!(v);
+        }
+    }
+}
+
+/// Scale (% of 100%, given points per unit at 100%) and counter-clockwise rotation of `xf`.
+fn scale_rotation(xf: Affine, (px, py): (f64, f64)) -> (Value, Value) {
+    let [a, b, c, d, ..] = xf.as_coeffs();
+    // Counter-clockwise on the page (y points down). Adding 0 turns -0 into 0.
+    (json!([a.hypot(b) / px * 100.0, c.hypot(d) / py * 100.0]), json!((-b).atan2(a).to_degrees() + 0.0))
+}
+
+/// Link Info of placed document `id`.
+fn placed_info(st: &crate::DocState, id: NodeId) -> Result<Value> {
+    let n = st.doc.node(id).ok_or(crate::EngineError::NoNode(id))?;
+    let NodeKind::PlacedDocument(pl) = &n.kind else { return Err(bad("links.info", format!("object {} is not a placed document", id.0))) };
+    let size = n.geometric_bounds().unwrap_or_default();
+    let (scale, rotation) = scale_rotation(pl.xf, (1.0, 1.0));
+    let mut out = document_row(pl);
+    let fields = [
+        ("id", json!(id.0)),
+        ("name", json!(n.display_name())),
+        ("linked", json!(true)),
+        ("link", json!(pl.link.path)),
+        ("width", json!(size.width())),
+        ("height", json!(size.height())),
+        ("scale", scale),
+        ("rotation", rotation),
+        ("placement", placement_json(pl.placement)),
+    ];
+    if let Some(o) = out.as_object_mut() {
+        o.extend(fields.into_iter().map(|(k, v)| (k.to_string(), v)));
+    }
+    file_fields(st, id, &pl.link, &mut out);
+    Ok(out)
+}
+
 fn info(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "links.info";
-    let id = image_param(s.doc()?, p, C)?;
+    let id = linked_param(s.doc()?, p, C)?;
+    if image_of(&s.doc()?.doc, id).is_none() {
+        return placed_info(s.doc()?, id);
+    }
     let mut out = super::place::image_info(s, &json!({ "id": id.0 }))?;
     let st = s.doc()?;
     let im = image_of(&st.doc, id).ok_or_else(|| bad(C, format!("object {} is not an image", id.0)))?;
     let (px, py) = file_pt(&st.doc, &im.key);
-    let [a, b, c, d, ..] = im.xf.as_coeffs();
     out["effectivePpi"] = out["ppi"].take();
     out["ppi"] = json!([72.0 / px, 72.0 / py]);
-    out["scale"] = json!([a.hypot(b) / px * 100.0, c.hypot(d) / py * 100.0]);
-    // Counter-clockwise on the page (y points down).
-    // Adding 0 turns -0 into 0.
-    out["rotation"] = json!((-b).atan2(a).to_degrees() + 0.0);
+    (out["scale"], out["rotation"]) = scale_rotation(im.xf, (px, py));
     out["format"] = json!(format_label(&st.doc, im));
     out["placement"] = placement_json(im.placement);
     out["status"] = json!("embedded");
     if let Some(l) = &im.link {
-        let status = groups(&st.doc, Some(&[id])).first().map_or(Status::Missing, |g| probe(g, folder(st.path.as_deref())).0);
-        let stamp = file_stamp(&l.path);
-        let folder_len = l.path.len().saturating_sub(l.name().len());
-        out["status"] = json!(status.as_str());
-        out["path"] = json!(l.path);
-        out["fileName"] = json!(l.name());
-        out["location"] = json!(l.path.get(..folder_len).unwrap_or_default().trim_end_matches(['/', '\\']));
-        for (k, v) in [
-            ("page", l.page.map(u64::from)),
-            ("fileSize", stamp.map(|s| s.0).or(l.size)),
-            ("modified", stamp.and_then(|s| s.1).or(l.modified)),
-            ("created", file_created(&l.path)),
-        ] {
-            if let Some(v) = v {
-                out[k] = json!(v);
-            }
-        }
+        file_fields(st, id, l, &mut out);
     }
     Ok(out)
 }
@@ -904,7 +1251,13 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
 fn placement_options(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "links.placementOptions";
     let st = s.doc()?;
-    let ids = images_param(st, p, C, |_| true)?;
+    let ids = ids_param(p, "ids").unwrap_or_else(|| st.selection.objects.iter().copied().filter(|id| placement_of(&st.doc, *id).is_some()).collect());
+    if let Some(id) = ids.iter().find(|id| placement_of(&st.doc, **id).is_none()) {
+        return Err(bad(C, format!("object {} is not an image or a linked file", id.0)));
+    }
+    if ids.is_empty() {
+        return Err(bad(C, "select the images, or pass ids"));
+    }
     let choice = |k: &str| -> Result<Option<&str>> {
         match p.get(k) {
             None | Some(Value::Null) => Ok(None),
@@ -918,7 +1271,7 @@ fn placement_options(s: &mut Session, p: &Value) -> Result<Value> {
         None | Some(Value::Null) => None,
         Some(v) => Some(v.as_bool().ok_or_else(|| bad(C, "clip must be true or false"))?),
     };
-    let first = ids.first().and_then(|id| image_of(&st.doc, *id)).map(|im| im.placement).unwrap_or_default();
+    let first = ids.first().and_then(|id| placement_of(&st.doc, *id)).unwrap_or_default();
     if preserve.is_none() && align.is_none() && clip.is_none() {
         return Ok(json!({ "placement": placement_json(first) }));
     }
@@ -929,10 +1282,8 @@ fn placement_options(s: &mut Session, p: &Value) -> Result<Value> {
     };
     s.edit("Placement Options", |d, _| {
         for id in &ids {
-            if let Some(n) = d.node_mut(*id)
-                && let NodeKind::Image(im) = &mut n.kind
-            {
-                set(&mut im.placement);
+            if let Some(o) = d.node_mut(*id).and_then(placement_mut) {
+                set(o);
             }
         }
         Ok(())

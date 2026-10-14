@@ -34,7 +34,7 @@ mod ps;
 mod scene;
 mod tiff;
 
-pub use import::{Imported, family_style, import};
+pub use import::{Imported, ai_alone, family_style, import, import_with, is_loss, layered_ai};
 pub use print::{PrintJob, PrintPage, print};
 
 use vectorcraft_doc::Document;
@@ -375,6 +375,19 @@ pub fn sections(bytes: &[u8]) -> Option<(&[u8], Option<&[u8]>)> {
         Some(_) => Some(part(20)?),
     };
     Some((ps, tiff))
+}
+
+/// The Windows metafile preview behind an EPS file's binary header, if it has one.
+pub fn metafile_preview(bytes: &[u8]) -> Option<&[u8]> {
+    if !bytes.starts_with(&DOS_MAGIC) {
+        return None;
+    }
+    let word = |at: usize| bytes.get(at..at + 4).and_then(|b| <[u8; 4]>::try_from(b).ok()).map(|b| u32::from_le_bytes(b) as usize);
+    let (start, len) = (word(12)?, word(16)?);
+    if start == 0 || len == 0 {
+        return None;
+    }
+    bytes.get(start..start.checked_add(len)?)
 }
 
 /// The native document an EPS file written by [`export`] carries, if any.

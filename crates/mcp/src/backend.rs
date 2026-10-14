@@ -1,6 +1,6 @@
 //! Where MCP tool calls end up: a control-channel method call.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -24,6 +24,12 @@ pub struct Remote {
     next_id: u64,
 }
 
+/// Longest accepted control-channel reply line (bytes, without the newline). The app answers
+/// small JSON objects except for images, which reach tens of megabytes; anything longer is refused
+/// and the connection dropped, so a faulty endpoint can't make the server buffer without bound
+/// (#1727).
+const MAX_REPLY_BYTES: usize = 256 * 1024 * 1024;
+
 impl Remote {
     /// Connect to `addr` (e.g. `127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
@@ -34,6 +40,11 @@ impl Remote {
 
     pub fn addr(&self) -> &str {
         &self.addr
+    }
+
+    #[cfg(test)]
+    pub(crate) fn connection_probe(&self) -> TcpStream {
+        self.conn.as_ref().unwrap().1.try_clone().unwrap()
     }
 
     fn reconnect(&mut self) -> std::io::Result<()> {
@@ -55,41 +66,76 @@ impl Remote {
         Err(last)
     }
 
-    fn roundtrip(&mut self, line: &str) -> std::io::Result<String> {
+    fn prepare_connection(&mut self) -> std::io::Result<()> {
+        if let Some((_, stream)) = self.conn.as_ref() {
+            stream.set_nonblocking(true)?;
+            let probe = stream.peek(&mut [0]);
+            stream.set_nonblocking(false)?;
+            match probe {
+                // Closed by the app, or holding bytes nobody asked for (an app that explains why it
+                // closes): either way no reply to the next request can be read from it.
+                Ok(_) => self.conn = None,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => self.conn = None,
+            }
+        }
         if self.conn.is_none() {
             self.reconnect()?;
         }
+        Ok(())
+    }
+
+    fn roundtrip(&mut self, line: &str) -> std::io::Result<String> {
         let Some((reader, writer)) = self.conn.as_mut() else {
             return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected to the app"));
         };
         writer.write_all(line.as_bytes())?;
         writer.write_all(b"\n")?;
         writer.flush()?;
-        let mut reply = String::new();
-        if reader.read_line(&mut reply)? == 0 {
+        let mut buf = Vec::new();
+        if !crate::server::read_line_capped(reader, &mut buf, MAX_REPLY_BYTES)? {
             return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "control channel closed"));
         }
-        Ok(reply)
+        if buf.len() > MAX_REPLY_BYTES {
+            // A faulty endpoint's endless line is refused rather than buffered: the connection is
+            // dropped and the call reports uncertainty, as for any reply that never arrived whole.
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("control reply longer than {MAX_REPLY_BYTES} bytes")));
+        }
+        String::from_utf8(buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 }
 
 impl Backend for Remote {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.prepare_connection().map_err(|e| {
+            self.conn = None;
+            format!("VectorCraft app at {} is not reachable: {e}; `{method}`: nothing was sent", self.addr)
+        })?;
         let id = self.next_id;
         self.next_id += 1;
         let line = json!({"id": id, "method": method, "params": params}).to_string();
-        // One retry with a fresh connection (the app may have restarted).
-        let reply = match self.roundtrip(&line) {
-            Ok(r) => r,
-            Err(_) => {
-                self.conn = None;
-                self.roundtrip(&line).map_err(|e| {
-                    self.conn = None;
-                    format!("VectorCraft app at {} is not reachable: {e}", self.addr)
-                })?
-            }
-        };
+        let reply = self.roundtrip(&line).map_err(|e| {
+            self.conn = None;
+            format!("VectorCraft app at {}: `{method}` failed: {e}; operation may have completed; inspect state before retrying", self.addr)
+        })?;
         let v: Value = serde_json::from_str(reply.trim()).map_err(|e| format!("bad reply from app: {e}"))?;
+        if v.get("id").is_none() && v.get("ok").and_then(Value::as_bool) == Some(false) {
+            // The app's refusals carry no id (too many connections, a line it would not read):
+            // it ran nothing and closes the connection, so the next call starts a fresh one.
+            self.conn = None;
+            let why = v.get("error").and_then(Value::as_str).unwrap_or("unknown error");
+            return Err(format!("VectorCraft app at {} refused `{method}`: {why}; nothing was run", self.addr));
+        }
+        if v.get("id") != Some(&json!(id)) {
+            // Not the answer to this call: the stream is desynchronised (or the endpoint faulty),
+            // so the connection is dropped and the next call starts a fresh one. The operation may
+            // still have completed, as with any reply that never arrived whole (#1728).
+            self.conn = None;
+            return Err(format!(
+                "VectorCraft app at {}: reply id mismatch (expected {id}); connection dropped; operation may have completed; inspect state before retrying",
+                self.addr
+            ));
+        }
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
         } else {

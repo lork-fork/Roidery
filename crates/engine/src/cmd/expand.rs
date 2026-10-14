@@ -1,6 +1,7 @@
 //! Object → Expand: live shapes, type and effects (Object), strokes (Stroke) and gradient fills
-//! (Fill) into plain art in one undo step. A linear or radial gradient fill becomes a gradient mesh,
-//! or solid strips / concentric ellipses, inside a clip group shaped like the object; a freeform
+//! (Fill) into plain art in one undo step; blends and repeats become groups of their steps and instances. Placed documents (Object) become editable copies of the
+//! art they show, their resources joining the document. A linear or radial gradient fill becomes a
+//! gradient mesh, or solid strips / concentric ellipses, inside a clip group shaped like the object; a freeform
 //! gradient becomes a mesh shaped like the object. Create Gradient Mesh shares the sampling.
 
 use std::sync::Arc;
@@ -36,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Expand…",
             ["Object"],
             None,
-            "{object?: true (type → outlines, live shapes → paths, effects baked, blends → groups of their steps, envelopes → their distorted content), fill?: true (gradient fills → `gradient` art), stroke?: true (strokes → filled outlines), gradient?: \"objects\" (default: `steps` solid strips, concentric ellipses for radial gradients) | \"mesh\" (a gradient mesh), both in a clip group shaped like the object (freeform gradients always become a mesh shaped like it), steps?: 1..1000 (255)} one undo step → {ids}",
+            "{object?: true (type → outlines, live shapes → paths, effects baked, blends → groups of their steps, repeats → groups of their instances, envelopes → their distorted content, placed documents → editable copies of their art, as placing the file without link gives, its symbols, patterns, swatches and images joining the document), fill?: true (gradient fills → `gradient` art), stroke?: true (strokes → filled outlines), gradient?: \"objects\" (default: `steps` solid strips, concentric ellipses for radial gradients) | \"mesh\" (a gradient mesh); both in a clip group shaped like the object (freeform gradients always become a mesh shaped like it), steps?: 1..1000 (255)} one undo step → {ids}",
             has_selection,
             expand
         ),
@@ -53,6 +54,21 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
     ]
+}
+
+/// Every placed document in `roots` of `d` (at any depth) replaced by an editable copy of the art it
+/// shows, keeping its id and place; the resources the art uses join `d` (a name `d` uses for
+/// something else gets a free variant).
+fn expand_placed_under(d: &mut Document, roots: &[NodeId]) -> Result<()> {
+    let mut ids = vec![];
+    for n in roots.iter().filter_map(|r| d.node(*r)) {
+        n.walk(&mut |c| {
+            if matches!(c.kind, NodeKind::PlacedDocument(_)) {
+                ids.push(c.id);
+            }
+        });
+    }
+    ids.into_iter().try_for_each(|id| super::place::document::expand(d, id, C))
 }
 
 /// Expand Gradient To.
@@ -88,6 +104,10 @@ struct Expandable {
     envelope: bool,
     /// Live blends (Object expands them into groups of their steps).
     blends: bool,
+    /// Placed documents (Object expands them into the art they show).
+    placed: bool,
+    /// Repeats (Object expands them into groups of their instances).
+    repeats: bool,
 }
 
 impl Expandable {
@@ -101,6 +121,8 @@ impl Expandable {
                 e.effects |= !c.appearance.effects.is_empty();
                 e.envelope |= matches!(c.kind, NodeKind::Envelope { .. });
                 e.blends |= matches!(c.kind, NodeKind::Blend { .. });
+                e.placed |= matches!(c.kind, NodeKind::PlacedDocument(_));
+                e.repeats |= matches!(c.kind, NodeKind::Repeat(_));
                 e.stroke |= shape && !c.appearance.stroke_paint().is_none();
                 e.fill |= match &c.kind {
                     NodeKind::Text(t) => t.runs.iter().any(|r| matches!(r.style.fill, Paint::Gradient(_))),
@@ -112,7 +134,7 @@ impl Expandable {
     }
 
     fn object(&self) -> bool {
-        self.text || self.live || self.effects || self.envelope || self.blends
+        self.text || self.live || self.effects || self.envelope || self.blends || self.placed || self.repeats
     }
 }
 
@@ -135,10 +157,20 @@ fn expand(s: &mut Session, p: &Value) -> Result<Value> {
     let from = s.doc()?.history.undo.len();
     let rev0 = s.doc()?.revision;
     let e = Expandable::of(&s.doc()?.doc, &selected_roots(s)?);
+    // Placed documents first: their art (type, strokes, gradients) expands below.
+    if object && e.placed {
+        let roots = selected_roots(s)?;
+        s.edit("Expand", |d, _| expand_placed_under(d, &roots))?;
+    }
     // Blends first: what their steps hold (type, effects, strokes, gradients) expands below.
     if object && e.blends {
         let roots = selected_roots(s)?;
         s.edit("Expand", |d, _| super::live::expand_blends(d, &roots).map(|_| ()))?;
+    }
+    // Repeats too: their instances are copies of art that expands below.
+    if object && e.repeats {
+        let roots = selected_roots(s)?;
+        s.edit("Expand", |d, _| super::patterncmds::expand_repeats(d, &roots).map(|_| ()))?;
     }
     if object && e.effects {
         let _ = run_raw(s, "effect.expandAppearance", &json!({}));

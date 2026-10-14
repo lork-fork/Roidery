@@ -1,7 +1,8 @@
 //! `vectorcraft-cli perf`: the performance budgets (plan §4) measured on a synthetic document.
 //!
-//! Each row is the median of several runs. Timings are wall-clock: on a busy machine (load
-//! average above the core count) they are noise, and the report says so.
+//! Each row is the median of several runs. Timings are wall-clock: on a busy machine (a load
+//! average above three quarters of the cores, or on Windows more than three quarters of the
+//! cores busy over a second) they are noise, and the report says so.
 
 use std::time::Instant;
 
@@ -61,6 +62,7 @@ fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
 }
 
 /// 1-minute load average (macOS / Linux), if available.
+#[cfg(not(windows))]
 fn load_average() -> Option<f64> {
     let out = std::process::Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok().filter(|o| o.status.success());
     let text = match out {
@@ -70,18 +72,235 @@ fn load_average() -> Option<f64> {
     text.split_whitespace().map(|t| t.trim_matches(|c| c == '{' || c == '}')).find_map(|t| t.parse().ok())
 }
 
+/// The cores busy on average over one second (Windows), if available: the share of the
+/// processors' time that `GetSystemTimes` reports as kernel or user time but not as idle time,
+/// times `cores`. A load average also counts the threads waiting for a core.
+#[cfg(windows)]
+fn busy_cores(cores: usize) -> Option<f64> {
+    let times = || winsafe::GetSystemTimes().ok().map(|(idle, kernel, user)| [idle, kernel, user].map(u64::from));
+    let before = times()?;
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    busy_share(before, times()?).map(|share| share * cores as f64)
+}
+
+/// The share of the processors' time between two `[idle, kernel, user]` readings of
+/// `GetSystemTimes` that was busy (kernel time includes idle time). It is None when no time
+/// passed, a time went back, or the idle time exceeds the kernel and user time.
+#[cfg(any(windows, test))]
+fn busy_share([idle0, kernel0, user0]: [u64; 3], [idle1, kernel1, user1]: [u64; 3]) -> Option<f64> {
+    let total = kernel1.checked_sub(kernel0)?.checked_add(user1.checked_sub(user0)?)?;
+    let busy = total.checked_sub(idle1.checked_sub(idle0)?)?;
+    (total > 0).then(|| busy as f64 / total as f64)
+}
+
+/// Milliseconds per pointer move of a Direct Selection drag of a handle, then of a segment, of a
+/// 5,000-anchor wave of smooth anchors added on top of the synthetic `n`-path document.
+fn edit_drags(n: usize) -> Result<(f64, f64), String> {
+    use vectorcraft_engine::tools::{Mods, PointerEvent, PointerKind};
+    use vectorcraft_geom::{Anchor, PathData, SubPath, Vec2};
+    let mut doc = synthetic(n)?;
+    let l = doc.layers.first().map(|l| l.id);
+    let id = doc.alloc_id();
+    // Anchors 2 pt apart, up and down by 20 pt, their handles 0.6 pt long.
+    let anchor = |i: usize| {
+        let p = Point::new(i as f64 * 2.0, if i.is_multiple_of(2) { 500.0 } else { 520.0 });
+        Anchor::smooth(p, p + Vec2::new(0.6, 0.0))
+    };
+    let path = PathData::single(SubPath::new((0..5000).map(anchor).collect(), false));
+    doc.insert(l, usize::MAX, Node::path(id, path, Appearance::default_art())).map_err(|e| e.to_string())?;
+    let mut s = vectorcraft_engine::Session::new();
+    s.add_document(doc, None);
+    let view = vectorcraft_engine::ViewInfo { zoom: 8.0, ..Default::default() };
+    let err = |e: vectorcraft_engine::EngineError| e.to_string();
+    let mut drag = |down: Point| -> Result<f64, String> {
+        let ev = |kind, y: f64| PointerEvent { kind, pos: down + Vec2::new(0.0, y), mods: Mods::default(), pressure: 1.0 };
+        s.execute("select.anchors", &json!({"id": id.0, "anchors": [[0, 400]]})).map_err(err)?;
+        s.select_tool("directSelection", view).map_err(err)?;
+        let undo = s.doc().map_err(err)?.history.undo.len();
+        s.pointer(&ev(PointerKind::Down, 0.0), view).map_err(err)?;
+        let mut y = 0.0;
+        let ms = median_ms(9, || {
+            y += 3.0;
+            // A failed move shows as the missing undo step below.
+            let _ = s.pointer(&ev(PointerKind::Drag, y), view);
+        });
+        s.pointer(&ev(PointerKind::Up, y), view).map_err(err)?;
+        if s.doc().map_err(err)?.history.undo.len() != undo + 1 {
+            return Err(format!("the drag from {down:?} made no undo step"));
+        }
+        Ok(ms)
+    };
+    // Anchor 400 is at (800, 500): its outgoing handle's end, then its segment to anchor 401.
+    let handle = drag(Point::new(800.6, 500.0))?;
+    let segment = drag(Point::new(801.0, 510.0))?;
+    Ok((handle, segment))
+}
+
+/// Resident memory of this process in MB (`ps`), if available.
+#[cfg(not(windows))]
+fn rss_mb() -> Option<f64> {
+    let pid = std::process::id().to_string();
+    let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid]).output().ok().filter(|o| o.status.success())?;
+    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().ok().map(|kb| kb / 1024.0)
+}
+
+/// The working set of this process in MB (`GetProcessMemoryInfo`), if available: its pages that
+/// are in physical memory, the figure `ps` reports as resident memory elsewhere.
+#[cfg(windows)]
+fn rss_mb() -> Option<f64> {
+    let counters = winsafe::HPROCESS::GetCurrentProcess().GetProcessMemoryInfo().ok()?;
+    Some(counters.WorkingSetSize as f64 / (1024.0 * 1024.0))
+}
+
+/// `--deep`: tracked rows (no budget yet) for work the budgets above don't reach: editing a whole
+/// selection, live effects, every Pathfinder operation, typing in a long story, and memory.
+fn deep(n: usize) -> Result<(), String> {
+    let err = |e: vectorcraft_engine::EngineError| e.to_string();
+    let mut rows: Vec<(String, f64)> = vec![];
+    let mut mem: Vec<(String, f64)> = vec![];
+    let mut note = |what: &str| {
+        if let Some(m) = rss_mb() {
+            mem.push((what.to_string(), m));
+        }
+    };
+    note("start");
+    // Editing every object of an n-path document.
+    let mut s = vectorcraft_engine::Session::new();
+    s.add_document(synthetic(n)?, None);
+    note("document built");
+    rows.push((format!("select all, {n} paths"), median_ms(3, || drop(s.execute("select.all", &json!({}))))));
+    rows.push((format!("nudge the selection ({n} paths)"), median_ms(5, || drop(s.execute("object.move", &json!({"dx": 1, "dy": 0}))))));
+    rows.push((format!("undo a nudge ({n} paths)"), median_ms(5, || drop(s.execute("edit.undo", &json!({}))))));
+    rows.push((format!("redo a nudge ({n} paths)"), median_ms(5, || drop(s.execute("edit.redo", &json!({}))))));
+    // Dragging the whole selection with the Selection tool: one pointer move (the preview).
+    {
+        use vectorcraft_engine::tools::{Mods, PointerEvent, PointerKind};
+        use vectorcraft_geom::Vec2;
+        let view = vectorcraft_engine::ViewInfo { zoom: 1.0, ..Default::default() };
+        let first = s.doc().map_err(err)?.selection.objects.first().copied();
+        let at = first.and_then(|id| s.doc().ok()?.doc.node(id)?.geometric_bounds()).map(|b| b.center());
+        if let Some(down) = at {
+            let ev = |kind, dx: f64| PointerEvent { kind, pos: down + Vec2::new(dx, 0.0), mods: Mods::default(), pressure: 1.0 };
+            s.select_tool("selection", view).map_err(err)?;
+            s.pointer(&ev(PointerKind::Down, 0.0), view).map_err(err)?;
+            let mut dx = 0.0;
+            rows.push((
+                format!("drag the selection, per move ({n} paths)"),
+                median_ms(5, || {
+                    dx += 2.0;
+                    let _ = s.pointer(&ev(PointerKind::Drag, dx), view);
+                }),
+            ));
+            s.pointer(&ev(PointerKind::Up, dx), view).map_err(err)?;
+        }
+    }
+    for _ in 0..40 {
+        s.execute("object.move", &json!({"dx": 1, "dy": 0})).map_err(err)?;
+    }
+    note("after 45 whole-selection edits");
+    drop(s);
+    // Live effects on 2,000 paths: render a page whose every object has the effect.
+    let opts = RenderOptions::default();
+    for (fx, params) in [("path.offsetPath", json!({"offset": 3})), ("distort.roughen", json!({"size": 5, "relative": true}))] {
+        let mut s = vectorcraft_engine::Session::new();
+        s.add_document(synthetic(2000)?, None);
+        s.execute("select.all", &json!({})).map_err(err)?;
+        s.execute("effect.apply", &json!({"effect": fx, "params": params})).map_err(err)?;
+        let doc = s.doc().map_err(err)?.doc.clone();
+        let mut r = Renderer::new();
+        r.render(&doc, 2880, 1800, Affine::scale(1.6), &opts);
+        rows.push((format!("render, 2,000 paths with {fx} (warm)"), median_ms(5, || drop(r.render(&doc, 2880, 1800, Affine::scale(1.6), &opts)))));
+    }
+    note("after live effects");
+    // Every Pathfinder operation on 300 overlapping paths.
+    for op in ["unite", "intersect", "exclude", "minusFront", "minusBack", "divide", "trim", "merge", "crop", "outline"] {
+        let ms = median_ms(1, || {
+            let mut s = vectorcraft_engine::Session::new();
+            if let Ok(d) = synthetic(300) {
+                s.add_document(d, None);
+                let _ = s.execute("select.all", &json!({})).and_then(|_| s.execute(&format!("object.pathfinder.{op}"), &json!({})));
+            }
+        });
+        rows.push((format!("Pathfinder {op}, 300 paths"), ms));
+    }
+    note("after Pathfinder");
+    // Typing one character in the middle of a 20,000-character area-type story.
+    let mut s = vectorcraft_engine::Session::new();
+    s.add_document(Document::new(1600.0, 1200.0), None);
+    let text: String = (0..2000).map(|i| if i % 12 == 11 { "paragraph.\n" } else { "lorem ips " }).collect();
+    let id = s.execute("text.create", &json!({"x": 20, "y": 20, "text": text, "size": 10, "area": {"width": 1500, "height": 1100}})).map_err(err)?;
+    let id = id.get("id").cloned().unwrap_or(json!(0));
+    let mut at = 10_000;
+    rows.push((
+        "type one character, 20,000-character area text".into(),
+        median_ms(9, || {
+            at += 1;
+            let _ = s.execute("text.editRange", &json!({"id": id, "start": at, "end": at, "insert": "x"}));
+        }),
+    ));
+    note("after typing");
+    // Four embedded 24 MP photos drawn at fit page by three renderers, as the app's canvas, render
+    // worker and a panel each draw them.
+    {
+        let art = synthetic(3000)?;
+        let mut d = Document::new(1600.0, 1200.0);
+        let l = d.layers.first().map(|l| l.id);
+        for i in 0..4u32 {
+            let photo = Renderer::new().render(&art, 6000, 4000, Affine::scale(3.75 + f64::from(i) * 0.1), &opts).to_png()?;
+            let key = format!("photo {i}");
+            d.images.insert(key.clone(), vectorcraft_doc::ImageBlob::new("image/png", photo));
+            let xf = Affine::translate((f64::from(i % 2) * 800.0, f64::from(i / 2) * 600.0)) * Affine::scale(800.0 / 6000.0);
+            let image = vectorcraft_doc::ImageObject { key, width: 6000, height: 4000, xf, link: None, placement: Default::default() };
+            let id = d.alloc_id();
+            d.insert(l, usize::MAX, Node::new(id, vectorcraft_doc::NodeKind::Image(Box::new(image)))).map_err(|e| e.to_string())?;
+        }
+        note("4 embedded 24 MP photos");
+        let mut renderers = [Renderer::new(), Renderer::new(), Renderer::new()];
+        let ms = median_ms(1, || {
+            for r in &mut renderers {
+                r.render(&d, 2880, 1800, Affine::scale(1.6), &opts);
+            }
+        });
+        rows.push(("render 4 embedded 24 MP photos with 3 renderers (cold)".into(), ms));
+        note("after rendering the photos with 3 renderers");
+    }
+    // Output hashes, to compare builds: the SVG export and a save → open → save round trip.
+    let fnv = |b: &[u8]| b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3));
+    let doc = synthetic(n)?;
+    let svg = vectorcraft_svg::export(&doc, &vectorcraft_svg::ExportOptions::default());
+    let saved = vectorcraft_format::save_file(&doc);
+    let reopened = vectorcraft_format::load(&saved).map_err(|e| e.to_string())?;
+    outln!("  output hash: SVG export {:016x}, save→open→save {:016x}", fnv(svg.as_bytes()), fnv(&vectorcraft_format::save_file(&reopened)));
+    outln!("  tracked (no budget yet)");
+    for (name, ms) in &rows {
+        outln!("  {name:<52} {ms:>10.2} ms");
+    }
+    // `rss_mb` reads the working set on Windows.
+    let memory = if cfg!(windows) { "working set" } else { "memory" };
+    for (what, mb) in &mem {
+        outln!("  {:<52} {mb:>8.0} MB", format!("{memory} {what}"));
+    }
+    Ok(())
+}
+
 pub fn run(args: &[String]) -> Result<(), String> {
     let mut n = 50_000usize;
+    let mut want_deep = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--deep" => want_deep = true,
             "--paths" => n = it.next().and_then(|v| v.parse().ok()).ok_or("--paths needs a number")?,
             other => return Err(format!("unknown perf option `{other}`")),
         }
     }
     let cores = std::thread::available_parallelism().map_or(1, |c| c.get());
-    let load = load_average();
-    outln!("VectorCraft performance budgets — {n} paths, {cores} cores, load average {}", load.map_or("?".into(), |l| format!("{l:.1}")));
+    // The figure is the 1-minute load average, or on Windows the cores busy over one second.
+    #[cfg(not(windows))]
+    let (load, label) = (load_average(), "load average");
+    #[cfg(windows)]
+    let (load, label) = (busy_cores(cores), "cores busy");
+    outln!("VectorCraft performance budgets — {n} paths, {cores} cores, {label} {}", load.map_or("?".into(), |l| format!("{l:.1}")));
     let noisy = load.is_some_and(|l| l > cores as f64 * 0.75);
     if noisy {
         outln!("WARNING: the machine is busy; wall-clock timings below are not trustworthy.");
@@ -145,8 +364,20 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
     });
     rows.push(("Pathfinder Unite, 1,000 paths", unite, 150.0));
+
+    // Path editing: one pointer move of a Direct Selection drag (the tool event and the preview it
+    // applies), on a 5,000-anchor path among the synthetic paths.
+    let (handle, segment) = edit_drags(n).unwrap_or_else(|e| {
+        failed = Some(e);
+        (0.0, 0.0)
+    });
+    rows.push(("handle drag, 5,000-anchor path (per move)", handle, 8.0));
+    rows.push(("segment drag, 5,000-anchor path (per move)", segment, 8.0));
     if let Some(e) = failed {
         return Err(e);
+    }
+    if want_deep {
+        deep(n)?;
     }
 
     let mut over = 0;
@@ -163,5 +394,40 @@ pub fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         _ => Err(format!("{over} budget(s) exceeded")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn busy_share_leaves_out_idle_time() {
+        // In one second four processors log 40,000,000 ticks of 100 ns of kernel and user time,
+        // 10,000,000 of them idle.
+        assert_eq!(busy_share([7, 100, 50], [10_000_007, 25_000_100, 15_000_050]), Some(0.75));
+        // There is no share when no time passed, a time went back, or the idle time exceeds the
+        // kernel and user time.
+        assert_eq!(busy_share([7, 100, 50], [7, 100, 50]), None);
+        assert_eq!(busy_share([7, 100, 50], [8, 99, 60]), None);
+        assert_eq!(busy_share([0, 0, 0], [30, 10, 10]), None);
+    }
+
+    /// On Windows `busy_cores` gives a number between 0 and the cores.
+    #[cfg(windows)]
+    #[test]
+    fn windows_reads_how_many_cores_are_busy() {
+        let cores = std::thread::available_parallelism().map_or(1, |c| c.get());
+        let busy = busy_cores(cores);
+        assert!(busy.is_some_and(|b| (0.0..=cores as f64).contains(&b)), "{busy:?} of {cores}");
+    }
+
+    /// On Windows `rss_mb` gives this process's working set: more than 0 MB and less than
+    /// 10,000 MB.
+    #[cfg(windows)]
+    #[test]
+    fn windows_reads_the_working_set() {
+        let mb = rss_mb();
+        assert!(mb.is_some_and(|mb| mb > 0.0 && mb < 10_000.0), "{mb:?}");
     }
 }

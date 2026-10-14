@@ -2,7 +2,9 @@
 //! four components. A JPEG whose Decode array inverts its samples (Adobe's CMYK JPEGs, the
 //! convention JPEG readers and the PDF writer take a CMYK JPEG to follow) is kept as it is; any
 //! other is decoded, its Decode array applied, and stored as a CMYK TIFF
-//! ([`ImageBlob::cmyk_tiff`]). Every other image is read as RGB by the interpreter.
+//! ([`ImageBlob::cmyk_tiff`]). A mask (`/SMask`, `/Mask`) doesn't change that: the importer
+//! carries it as the image's opacity mask ([`has_mask`]). Every other image is read as RGB by the
+//! interpreter.
 
 use hayro_syntax::Filter;
 use hayro_syntax::object::stream::ImageDecodeParams;
@@ -11,7 +13,6 @@ use vectorcraft_doc::ImageBlob;
 use vectorcraft_doc::cmyk::{Inks, MAX_CMYK_PIXELS, jpeg_components};
 
 /// A CMYK image read as RGB: why.
-pub(crate) const MASKED: &str = "CMYK images with a mask were imported in RGB";
 pub(crate) const UNREAD: &str = "CMYK images whose samples couldn't be read in CMYK were imported in RGB";
 
 /// The Decode array of a JPEG kept as it is.
@@ -57,9 +58,6 @@ pub(crate) fn cmyk(st: &Stream<'_>, width: u32, height: u32) -> Result<Option<Im
     if !cmyk_space(d) {
         return Ok(None);
     }
-    if d.contains_key(b"SMask") || d.contains_key(b"Mask") {
-        return Err(MASKED);
-    }
     let ranges = decode_ranges(d);
     let filters = st.filters();
     if ranges == INVERTED && matches!(filters.as_slice(), [Filter::DctDecode]) {
@@ -90,4 +88,10 @@ pub(crate) fn cmyk(st: &Stream<'_>, width: u32, height: u32) -> Result<Option<Im
         .flat_map(|px| px.chunks_exact(size).zip(ranges).map(|(s, (lo, hi))| ((lo + value(s) * (hi - lo)).clamp(0.0, 1.0) * 255.0).round() as u8))
         .collect();
     Inks::new(width, height, inks).and_then(|i| ImageBlob::cmyk_tiff(&i)).map(Some).ok_or(UNREAD)
+}
+
+/// Does the image carry its own transparency (a soft mask, a stencil mask or a colour key)?
+pub(crate) fn has_mask(st: &Stream<'_>) -> bool {
+    let d = st.dict();
+    d.contains_key(b"SMask") || d.contains_key(b"Mask") || d.get::<u8>(b"SMaskInData").is_some_and(|v| v != 0)
 }

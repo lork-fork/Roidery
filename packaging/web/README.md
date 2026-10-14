@@ -50,6 +50,19 @@ location /roidery/ {
 
 Local test: `python3 -m http.server 8765` inside the folder, then open http://localhost:8765/.
 
+## Fonts folder
+
+Builds made with craft-fonts (`CRAFT_FONTS_DIR`, all releases) have a `fonts/` folder beside the
+wasm: the Arabic fonts the app fetches instead of embedding (about 8 MB, each next to its OFL
+licence). Serve it with the rest of the site. Noto Sans Arabic is fetched before the app starts;
+the other families load in the background and appear in the font menus as they arrive.
+
+- Serve `.ttf` as `font/ttf` (the browser checks each file's SHA-256, so a wrong type or a
+  rewritten file makes the app skip that font and log `web font …` in the console).
+- The folder names are the files' SHA-256 prefixes, so `fonts/*` can be cached forever
+  (`Cache-Control: public, max-age=31536000, immutable`); `_headers` and `.htaccess` do this.
+- Without the folder the app still runs, but Arabic text shows as boxes.
+
 ## Embedding in a page (iframe)
 
 ```html

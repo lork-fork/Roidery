@@ -359,7 +359,8 @@ fn add_text(app: &mut VectorcraftApp, d: &Dialog, height: f64) -> DialogResult {
     let bounds = app.session.active().and_then(|st| st.doc.node(vectorcraft_doc::NodeId(id))?.geometric_bounds());
     if let Some(b) = bounds {
         let (dx, dy) = (centre.x - b.center().x, centre.y - b.center().y);
-        app.run("object.move", json!({"dx": dx, "dy": dy, "ids": [id]}))?;
+        app.run("select.set", json!({"ids": [id]}))?;
+        app.run("object.move", json!({"dx": dx, "dy": dy}))?;
     }
     Ok(r)
 }

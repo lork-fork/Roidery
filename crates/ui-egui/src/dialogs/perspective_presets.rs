@@ -150,10 +150,19 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         });
     });
     let name = preset.name.clone();
-    if let Some(a) = act
-        && let Err(e) = run(app, d, a, &name)
-    {
-        app.status(e);
+    if let Some(a) = act {
+        let r = match a {
+            // Their file dialogs, shown off the UI thread, import into or export from the dialog
+            // as it is then.
+            Action::Import | Action::Export => {
+                let (current, export) = (name.clone(), matches!(a, Action::Export));
+                crate::picks::in_dialog(app, d, move |app, d| run(app, d, if export { Action::Export } else { Action::Import }, &current))
+            }
+            a => run(app, d, a, &name),
+        };
+        if let Err(e) = r {
+            app.status(e);
+        }
     }
     false
 }
@@ -187,7 +196,7 @@ pub(super) fn run(app: &mut VectorcraftApp, d: &mut Dialog, act: Action, current
                 return Ok(());
             }
             let pick = crate::FilePick { filters: vec![("Perspective grid presets", PRESET_EXTS)], ..Default::default() };
-            let path = app.services.pick_open.as_mut().and_then(|f| f(&pick)).ok_or("cancelled")?;
+            let path = crate::picks::open(app, &pick).ok_or("cancelled")?;
             let r = app.run("perspective.presets.import", json!({ "path": path }))?;
             if let Some(first) = r["imported"].get(0).and_then(Value::as_str) {
                 select(d, first);
@@ -207,11 +216,6 @@ pub fn slot_preset(app: &VectorcraftApp, id: &str) -> Option<String> {
     let (kind, n) = id.strip_prefix(SLOT)?.split_once('.')?;
     let (kind, n): (u8, usize) = (kind.parse().ok()?, n.parse().ok()?);
     app.session.prefs.perspective_presets.iter().filter(|p| p.kind == kind).nth(n.checked_sub(1)?).map(|p| p.name.clone())
-}
-
-/// How many saved presets the slots list (the native menu is rebuilt when this changes).
-pub fn listed_slots(app: &VectorcraftApp) -> usize {
-    (1..=3u8).map(|k| app.session.prefs.perspective_presets.iter().filter(|p| p.kind == k).count().min(SLOTS)).sum()
 }
 
 /// View → Perspective Grid → One/Two/Three Point Perspective (`kind` 1–3): the built-in views of

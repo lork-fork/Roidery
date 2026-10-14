@@ -51,9 +51,10 @@ fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             if let Some(i) = widgets::dropdown(ui, "layers-row-size", shown, &labels, 110.0) {
                 d.fields.insert("rowSize".into(), json!(SIZES.get(i).map_or("other", |s| s.0)));
             }
-            let mut v = d.f64("otherSize", f64::from(ROW_MEDIUM));
-            if ui.add_enabled(d.str("rowSize") == "other", egui::DragValue::new(&mut v).range(12.0..=100.0).suffix(" pt")).changed() {
-                d.fields.insert("otherSize".into(), json!(v.round()));
+            let v = d.f64("otherSize", f64::from(ROW_MEDIUM));
+            let other = d.str("rowSize") == "other";
+            if let Some(v) = ui.add_enabled_ui(other, |ui| widgets::range_field(ui, "otherSize", v, 12.0..=100.0, " pt", 0, 60.0)).inner {
+                d.fields.insert("otherSize".into(), json!(v));
             }
         });
         ui.end_row();

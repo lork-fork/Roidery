@@ -171,3 +171,94 @@ fn cmd_a_on_the_canvas_selects_all_objects() {
     a.menu("select.all");
     assert_eq!(a.selected(), 2, "so does the menu's Select All");
 }
+
+/// The copied texts of a frame's output.
+fn copied(out: &egui::FullOutput) -> Vec<String> {
+    out.platform_output.commands.iter().filter_map(|c| if let egui::OutputCommand::CopyText(t) = c { Some(t.clone()) } else { None }).collect()
+}
+
+/// #516: Ctrl/Cmd+C, X and V in a focused field (the window's own clipboard keys, which egui sends
+/// as Copy, Cut and Paste events) edit the field's text, never the art.
+#[test]
+fn the_clipboard_keys_in_a_focused_field_edit_its_text() {
+    let mut a = App::new();
+    a.app.run("window.panel", json!({"panel": "color"})).unwrap();
+    for _ in 0..3 {
+        a.frame(vec![]);
+    }
+    for text in ["37 pt", "FFFFFF"] {
+        let (id, rect) = a.field(text);
+        a.frame(vec![Event::PointerMoved(rect.center()), click(rect.center(), true)]);
+        a.frame(vec![click(rect.center(), false)]);
+        a.frame(vec![press(Key::A, Modifiers::COMMAND)]);
+        assert!(a.ctx.memory(|m| m.has_focus(id)), "{text}: the field has the keyboard");
+        let out = a.frame(vec![Event::Copy]);
+        assert_eq!(copied(&out), [text], "Copy copies the field's text");
+        assert!(a.app.session.clipboard.is_empty(), "{text}: no art copied");
+        let out = a.frame(vec![Event::Cut]);
+        assert_eq!(copied(&out), [text], "Cut cuts the field's text");
+        a.frame(vec![Event::Paste("12".into())]);
+        assert_eq!(a.ctx.data(|d| d.get_temp::<String>(id)).as_deref(), Some("12"), "Paste pastes into the field");
+        assert_eq!(a.selected(), 1, "{text}: the art stays");
+        a.frame(vec![press(Key::Escape, Modifiers::NONE)]);
+    }
+}
+
+/// The centre of the text `label` painted last (in the topmost layer) in a frame's output; with
+/// `title`, the first one painted (the menu bar's).
+fn text_at(out: &egui::FullOutput, label: &str, title: bool) -> Pos2 {
+    let mut shapes: Box<dyn Iterator<Item = _>> = if title { Box::new(out.shapes.iter()) } else { Box::new(out.shapes.iter().rev()) };
+    shapes
+        .find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.text().trim() == label => Some(Rect::from_min_size(t.pos, t.galley.size()).center()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no {label:?} painted"))
+}
+
+/// A click on `at` → the frame after it.
+fn click_at(a: &mut App, at: Pos2) -> egui::FullOutput {
+    a.frame(vec![Event::PointerMoved(at), click(at, true)]);
+    a.frame(vec![click(at, false)]);
+    a.frame(vec![])
+}
+
+/// The in-window menus' Select › All, Edit › Copy and Edit › Paste act on the text field that had the keyboard
+/// when the menu was opened (the click on the menu took it), and give it the keyboard back.
+#[test]
+fn the_in_window_edit_menu_acts_on_the_field_it_was_opened_from() {
+    let mut a = App::new();
+    // Text on the system clipboard.
+    a.app.services.clipboard_read = Some(Box::new(|| Some("42 pt".into())));
+    let (id, rect) = a.field("37 pt");
+    a.frame(vec![Event::PointerMoved(rect.center()), click(rect.center(), true)]);
+    a.frame(vec![click(rect.center(), false)]);
+    let out = a.frame(vec![press(Key::End, Modifiers::NONE)]);
+    let (edit, select) = (text_at(&out, "Edit", true), text_at(&out, "Select", true));
+    let menu = |a: &mut App, title: Pos2, item: &str| {
+        let out = click_at(a, title);
+        assert!(!a.ctx.text_edit_focused(), "the menu took the keyboard");
+        click_at(a, text_at(&out, item, false))
+    };
+    menu(&mut a, select, "All");
+    assert!(a.ctx.memory(|m| m.has_focus(id)), "the field has the keyboard back");
+    assert_eq!(a.field_selection(id), Some((0, 5)), "Select All selected the field's text");
+    assert_eq!(a.selected(), 1, "not the art");
+    a.frame(vec![press(Key::End, Modifiers::NONE)]);
+    a.frame(vec![press(Key::A, Modifiers::COMMAND)]);
+    a.frame(vec![]);
+    let out = menu(&mut a, edit, "Copy");
+    assert_eq!(copied(&out), ["37 pt"], "Copy copied the field's text");
+    assert!(a.app.session.clipboard.is_empty(), "no art copied");
+    // Art on the app's clipboard (Paste is enabled): the field still takes the text.
+    a.app.run("edit.copy", json!({})).unwrap();
+    a.frame(vec![press(Key::A, Modifiers::COMMAND)]);
+    menu(&mut a, edit, "Paste");
+    assert_eq!(a.ctx.data(|d| d.get_temp::<String>(id)).as_deref(), Some("42 pt"), "Paste pasted into the field");
+    assert_eq!(a.selected(), 1, "nothing pasted on the canvas");
+    // With no field focused, the menu's Select All selects the art.
+    a.frame(vec![press(Key::Escape, Modifiers::NONE)]);
+    a.frame(vec![]);
+    menu(&mut a, select, "All");
+    assert_eq!(a.selected(), 2);
+}

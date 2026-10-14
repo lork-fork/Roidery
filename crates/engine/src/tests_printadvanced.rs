@@ -84,11 +84,11 @@ fn a_flattener_preset_flattens_transparency_before_printing() {
         any
     };
     assert!(transparent(doc(&s)));
-    let none = super::cmd::printadvanced::prepare("file.print", doc(&s), &settings(json!({})), &saved).unwrap();
+    let none = super::cmd::printadvanced::prepare("file.print", doc(&s), &settings(json!({})), &saved, false).unwrap();
     assert!(none.is_none(), "transparency prints live without a preset");
     for name in ["High Resolution", "low"] {
         let set = settings(json!({"advanced": {"flattenerPreset": name}}));
-        let flat = super::cmd::printadvanced::prepare("file.print", doc(&s), &set, &saved).unwrap().unwrap();
+        let flat = super::cmd::printadvanced::prepare("file.print", doc(&s), &set, &saved, false).unwrap().unwrap();
         assert!(!transparent(&flat), "{name}: flattened");
     }
     // A saved preset by name; an unknown one is refused by preview and print alike.
@@ -105,7 +105,7 @@ fn print_as_bitmap_prints_an_image_of_each_artboard() {
     s.execute("artboard.new", &json!({"x": 300, "y": 0, "width": 200, "height": 100})).unwrap();
     let saved = s.prefs.flattener_presets.clone();
     let set = settings(json!({"advanced": {"printAsBitmap": true}}));
-    let bitmap = super::cmd::printadvanced::prepare("file.print", doc(&s), &set, &saved).unwrap().unwrap();
+    let bitmap = super::cmd::printadvanced::prepare("file.print", doc(&s), &set, &saved, false).unwrap().unwrap();
     let mut kinds = vec![];
     bitmap.walk(|n| kinds.push(matches!(n.kind, NodeKind::Image(_))));
     assert_eq!(kinds.iter().filter(|k| **k).count(), 1, "one image: the empty artboard gets none");
@@ -127,5 +127,33 @@ fn print_as_bitmap_prints_an_image_of_each_artboard() {
     let pv = s.execute("print.preview", &seps).unwrap();
     assert!(pv["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("Print as Bitmap")));
     let set = settings(seps["settings"].clone());
-    assert!(super::cmd::printadvanced::prepare("file.print", doc(&s), &set, &saved).unwrap().is_none());
+    assert!(super::cmd::printadvanced::prepare("file.print", doc(&s), &set, &saved, false).unwrap().is_none());
+}
+
+/// Appearance of Black › Printing / Exporting (#394): Print as Bitmap draws pure CMYK black as RGB
+/// black when `rich_black` is on.
+#[test]
+fn print_as_bitmap_honours_rich_black() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 20, "height": 20, "colorMode": "cmyk"})).unwrap();
+    s.execute("paint.setStroke", &json!({"none": true})).unwrap();
+    s.execute("paint.setFill", &json!({"color": {"c": 0, "m": 0, "y": 0, "k": 1}})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 20, "height": 20})).unwrap();
+    let set = settings(json!({"advanced": {"printAsBitmap": true}}));
+    let saved = s.prefs.flattener_presets.clone();
+    let centre = |prepared: &Document| {
+        let mut key = None;
+        prepared.walk(|n| {
+            if let NodeKind::Image(im) = &n.kind {
+                key = Some(im.key.clone());
+            }
+        });
+        let bytes = &prepared.images[key.as_ref().expect("bitmap image")].bytes;
+        let img = image::load_from_memory(bytes).unwrap().to_rgba8();
+        img.get_pixel(img.width() / 2, img.height() / 2).0
+    };
+    let accurate = centre(&super::cmd::printadvanced::prepare("file.print", doc(&s), &set, &saved, false).unwrap().unwrap());
+    assert!(accurate[0] > 10, "accurate: dark grey, {accurate:?}");
+    let rich = centre(&super::cmd::printadvanced::prepare("file.print", doc(&s), &set, &saved, true).unwrap().unwrap());
+    assert_eq!(rich, [0, 0, 0, 255], "rich: RGB black");
 }

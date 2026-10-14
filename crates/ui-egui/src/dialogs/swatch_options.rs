@@ -258,7 +258,10 @@ fn hex_field(ui: &mut egui::Ui, hex: &str) -> Option<Color> {
         .stroke(egui::Stroke::new(1.0, if editing { t.accent } else { t.input_border }))
         .corner_radius(2)
         .inner_margin(egui::Margin::symmetric(6, 4))
-        .show(ui, |ui| ui.add(egui::TextEdit::singleline(&mut buf).id(id).frame(egui::Frame::NONE).desired_width(70.0).char_limit(7)))
+        .show(ui, |ui| {
+            crate::theme::strong_selected_text(ui);
+            ui.add(egui::TextEdit::singleline(&mut buf).id(id).frame(egui::Frame::NONE).desired_width(70.0).char_limit(7))
+        })
         .inner;
     ui.data_mut(|m| m.insert_temp(id, buf.clone()));
     (resp.lost_focus() && buf != hex).then(|| parse_hex(&buf)).flatten()

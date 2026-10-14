@@ -7,26 +7,56 @@
 //! Web (wasm32) builds embed only the UI font, BIZ UDPGothic Regular (~4.7 MB): the browser has no
 //! system fonts, and all four fonts (~24 MB) would push the `.wasm` past static hosts' per-file
 //! limits (Cloudflare Pages: 25 MiB).
+//!
+//! It also writes `WEB_FONTS`: the faces listed in `web-fonts.txt`, which web builds fetch from
+//! `fonts/<sha16>/` beside the wasm instead of embedding (`cargo xtask web-fonts` copies them
+//! there; `apps/vectorcraft-web/src/fonts.rs` fetches them). A list line the manifest lacks is left
+//! out with a warning, never an error, and never costs the desktop its fonts.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+#[path = "build/web_fonts.rs"]
+mod web_fonts;
+
 fn main() {
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_DIR");
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_REQUIRED");
-    let mut src = String::from("pub static CRAFT_FONTS: &[CraftFont] = &[\n");
-    if let Some(dir) = std::env::var_os("CRAFT_FONTS_DIR").map(PathBuf::from) {
+    println!("cargo::rerun-if-changed=web-fonts.txt");
+    println!("cargo::rerun-if-changed=build/web_fonts.rs");
+    let required = std::env::var_os("CRAFT_FONTS_REQUIRED").is_some();
+    let (mut fonts, mut web) = (String::new(), String::new());
+    if let Some(dir) = std::env::var_os("CRAFT_FONTS_DIR").filter(|d| !d.is_empty()).map(PathBuf::from) {
         let dir = from_workspace(dir);
         match craft_fonts(&dir) {
-            Ok(entries) => src.push_str(&entries),
-            Err(e) if std::env::var_os("CRAFT_FONTS_REQUIRED").is_some() => {
-                println!("cargo::error=CRAFT_FONTS_DIR={}: {e}", dir.display());
-            }
+            Ok(entries) => fonts = entries,
+            Err(e) if required => println!("cargo::error=CRAFT_FONTS_DIR={}: {e}", dir.display()),
             Err(e) => println!("cargo::warning=building without craft-fonts: CRAFT_FONTS_DIR={}: {e}", dir.display()),
         }
+        // Separately: a bad web list must not cost the desktop build its craft fonts. A listed face
+        // the checkout lacks (an older craft-fonts pin) is left out with a warning, never an error,
+        // so the apps don't depend on which craft-fonts commit CI pins: that build just fetches
+        // fewer fonts.
+        match web_font_entries(&dir) {
+            Ok((entries, missing)) => {
+                web = entries;
+                if !missing.is_empty() {
+                    let msg = format!("{} not in CRAFT_FONTS_DIR={} (an older craft-fonts?)", missing.join(", "), dir.display());
+                    println!("cargo::warning=web build won't fetch: {msg}");
+                }
+            }
+            Err(e) if required => println!("cargo::error=web-fonts.txt: {e}"),
+            Err(e) => println!("cargo::warning=web build fetches no craft fonts: web-fonts.txt: {e}"),
+        }
     }
-    src.push_str("];\n");
+    let src = format!("pub static CRAFT_FONTS: &[CraftFont] = &[\n{fonts}];\npub static WEB_FONTS: &[WebFont] = &[\n{web}];\n");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_default()).join("craft_fonts.rs");
+    // Unchanged output keeps its mtime. Rewritten just before this crate compiles, it can read as
+    // newer than that compile where cargo's recorded times lose their sub-second part (ecryptfs
+    // home directories), and the next build would compile this crate and everything above it again.
+    if std::fs::read_to_string(&out).is_ok_and(|old| old == src) {
+        return;
+    }
     if let Err(e) = std::fs::write(&out, src) {
         println!("cargo::error=writing {}: {e}", out.display());
     }
@@ -71,4 +101,38 @@ fn craft_fonts(dir: &Path) -> Result<String, String> {
         );
     }
     Ok(out)
+}
+
+/// One `WebFont { .. }` initialiser per `web-fonts.txt` line, from its craft-fonts manifest row, and
+/// the listed faces the manifest lacks (an older craft-fonts checkout), which are left out.
+fn web_font_entries(dir: &Path) -> Result<(String, Vec<String>), String> {
+    let list_path = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default()).join("web-fonts.txt");
+    let list = std::fs::read_to_string(&list_path).map_err(|e| format!("{}: {e}", list_path.display()))?;
+    let manifest_path = dir.join("fonts/manifest.txt");
+    // WEB_FONTS follows the manifest (URLs and hashes), on every target.
+    println!("cargo::rerun-if-changed={}", manifest_path.display());
+    let manifest = std::fs::read_to_string(&manifest_path).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    let rows: Vec<Vec<&str>> =
+        manifest.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(|l| l.split(" | ").map(str::trim).collect()).collect();
+    let (mut out, mut missing) = (String::new(), Vec::new());
+    for e in web_fonts::parse_list(&list)? {
+        let Some(row) = rows.iter().find(|r| r.first() == Some(&e.family) && r.get(1) == Some(&e.style)) else {
+            missing.push(format!("{} {}", e.family, e.style));
+            continue;
+        };
+        let (Some(file), Some(sha)) = (row.get(2), row.get(6)) else {
+            return Err(format!("malformed manifest row for {} {}", e.family, e.style));
+        };
+        let integrity = web_fonts::sri(sha).ok_or_else(|| format!("bad sha256 for {} {}", e.family, e.style))?;
+        let _ = writeln!(
+            out,
+            "    WebFont {{ family: {:?}, style: {:?}, startup: {}, url: {:?}, integrity: {:?} }},",
+            e.family,
+            e.style,
+            e.startup,
+            web_fonts::url(sha, file),
+            integrity,
+        );
+    }
+    Ok((out, missing))
 }

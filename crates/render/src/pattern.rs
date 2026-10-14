@@ -1,20 +1,24 @@
 //! Pattern fills and the pattern-editing preview.
 //!
 //! A pattern paint is drawn as a repeating image: the tiling's rectangular super-tile
-//! ([`PatternDef::period`]) is rasterized once at the current device scale (rounded to a power of
-//! two, so it is re-rasterized only when the zoom changes by more than 2×) and used as an image
-//! paint with `Extend::Repeat`, with the paint transform mapping pixels → pattern space →
-//! document. Tiles are cached per pattern name (and ink plane, see [`crate::ink`]) and invalidated
-//! when the definition changes (art `Arc` identity, tile, tile type, overlap) — the pattern's
-//! "revision".
+//! ([`PatternDef::period`]) is rasterized at the device scale it is painted at, rounded up to a
+//! power of two and capped ([`raster_scale`]), and used as an image paint with `Extend::Repeat`,
+//! with the paint transform mapping pixels → pattern space → document. Tiles are cached per
+//! pattern name and raster scale (and ink plane, see [`crate::ink`]) within
+//! [`lru::PATTERN_BUDGET`]. A tile is used while the pattern's definition is the one it was
+//! rasterized from (art `Arc` identity, tile, tile type, overlap): the pattern's "revision", and,
+//! when its art shows more than itself (a symbol, another pattern, an image, type, a brush), while
+//! what the document holds of those is what it held then ([`Deps`]), and while the color settings
+//! are the ones it was drawn through.
 //!
 //! Pattern editing mode (`Document::pattern_edit`) draws only the temporary tile layer, with
 //! dimmed copies of it at the neighbouring tile positions and the tile edge.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Weak};
 
+use vectorcraft_color::cms::Cms;
 use vectorcraft_doc::pattern::{Overlap, PatternDef, TileType};
 use vectorcraft_doc::{Document, Node};
 use vectorcraft_geom::{Affine, Rect, Shape};
@@ -22,26 +26,81 @@ use vello_cpu::peniko::{Extend, ImageQuality, ImageSampler};
 use vello_cpu::{Pixmap, RenderContext};
 
 use crate::ink::Ink;
+use crate::lru::{self, FrameCache};
 use crate::{Frame, RenderOptions, Rendered, Renderer};
 
 /// Largest super-tile raster side (pixels).
 const MAX_TILE_PX: f64 = 2048.0;
 
+/// What a tile is kept under: the pattern's name and the bits of its raster scale
+/// ([`raster_scale`]).
+type TileKey = (String, u64);
+
+/// What a tile was drawn from besides its pattern's own art, for art that shows more than itself:
+/// the art of every pattern and symbol and the pixels of every image in the document, the
+/// document's other data (which holds its brushes), and the fonts. Editing a symbol leaves the art
+/// of a pattern that shows it as it was, so the art alone kept the tile from before (#1723). Held
+/// weakly: a weak reference keeps the allocation, so no other value gets one of these addresses
+/// while the tile is kept.
+struct Deps {
+    art: Vec<Weak<Node>>,
+    pixels: Vec<Weak<Vec<u8>>>,
+    /// shortcut: any change to the document's other data draws the tile again, not only a brush
+    /// edit; compare the brush library alone if that ever costs a frame.
+    unknown: Weak<vectorcraft_brush::serde_json::Map<String, vectorcraft_brush::serde_json::Value>>,
+    fonts: u64,
+}
+
+impl Deps {
+    fn art(doc: &Document) -> impl Iterator<Item = &Arc<Node>> {
+        doc.patterns.iter().flat_map(|p| &p.art).chain(doc.symbols.iter().map(|s| &s.art))
+    }
+
+    fn pixels(doc: &Document) -> impl Iterator<Item = &Arc<Vec<u8>>> {
+        doc.images.values().flat_map(|b| std::iter::once(&b.bytes).chain(&b.proxy))
+    }
+
+    fn of(doc: &Document) -> Self {
+        Self {
+            art: Self::art(doc).map(Arc::downgrade).collect(),
+            pixels: Self::pixels(doc).map(Arc::downgrade).collect(),
+            unknown: vectorcraft_doc::Shared::downgrade(&doc.unknown),
+            fonts: vectorcraft_text::FontDb::global().generation(),
+        }
+    }
+
+    /// Does `doc` hold what the tile was drawn from?
+    fn current(&self, doc: &Document) -> bool {
+        self.fonts == vectorcraft_text::FontDb::global().generation()
+            && std::ptr::eq(self.unknown.as_ptr(), &*doc.unknown)
+            && self.art.iter().map(Weak::as_ptr).eq(Self::art(doc).map(Arc::as_ptr))
+            && self.pixels.iter().map(Weak::as_ptr).eq(Self::pixels(doc).map(Arc::as_ptr))
+    }
+}
+
 struct TileEntry {
     art: Vec<Arc<Node>>,
+    /// `None` for art that shows only itself.
+    deps: Option<Deps>,
+    /// The color settings the tile was drawn through, held weakly as [`Deps`] holds its values.
+    cms: Weak<Cms>,
     params: (Rect, TileType, Overlap),
-    scale: f64,
     sx: f64,
     sy: f64,
     pixmap: Arc<Pixmap>,
 }
 
-#[derive(Default)]
 struct PatternCache {
-    /// Per ink ([`Ink`] as index).
-    tiles: [HashMap<String, TileEntry>; 3],
+    /// Per ink ([`Ink`] as index), each within [`lru::PATTERN_BUDGET`], least recently used first out.
+    tiles: [FrameCache<TileKey, TileEntry>; 4],
     renderer: Option<Box<Renderer>>,
     depth: u32,
+}
+
+impl Default for PatternCache {
+    fn default() -> Self {
+        Self { tiles: std::array::from_fn(|_| FrameCache::new(lru::PATTERN_BUDGET, usize::MAX)), renderer: None, depth: 0 }
+    }
 }
 
 thread_local! {
@@ -50,6 +109,19 @@ thread_local! {
 
 fn same_art(a: &[Arc<Node>], b: &[Arc<Node>]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| Arc::ptr_eq(x, y))
+}
+
+/// Hash what pattern `def`'s tiling is drawn from, as the tile cache checks it: its name, the
+/// addresses of its art, its tile, tile type and overlap.
+pub(crate) fn hash_tiling(def: &PatternDef, h: &mut impl Hasher) {
+    def.name.hash(h);
+    def.art.iter().for_each(|a| (Arc::as_ptr(a) as usize).hash(h));
+    [def.tile.x0, def.tile.y0, def.tile.x1, def.tile.y1].map(f64::to_bits).hash(h);
+    std::mem::discriminant(&def.tile_type).hash(h);
+    if let TileType::BrickByRow { offset } | TileType::BrickByColumn { offset } = def.tile_type {
+        offset.to_bits().hash(h);
+    }
+    (def.overlap.right_in_front, def.overlap.bottom_in_front).hash(h);
 }
 
 /// Power-of-two raster scale for a pattern seen at device scale `s`, capped so the super-tile
@@ -69,6 +141,8 @@ fn rasterize(r: &mut Renderer, doc: &Document, def: &PatternDef, region: Rect, w
     let view = Affine::scale_non_uniform(w as f64 / region.width().max(1e-9), h as f64 / region.height().max(1e-9))
         * Affine::translate(-region.origin().to_vec2());
     let opts = RenderOptions::default();
+    r.check_symbols(doc);
+    let symbols = doc.symbol_boxes().quick();
     r.stamp += 1;
     let px_rect = Rect::new(0.0, 0.0, w as f64, h as f64);
     for o in def.offsets_covering(region) {
@@ -76,6 +150,7 @@ fn rasterize(r: &mut Renderer, doc: &Document, def: &PatternDef, region: Rect, w
         let frame = Frame {
             mt: false,
             doc,
+            symbols: &symbols,
             view: v,
             visible: v.inverse().transform_rect_bbox(px_rect),
             px: 1.0 / v.determinant().abs().sqrt().max(1e-12),
@@ -86,10 +161,7 @@ fn rasterize(r: &mut Renderer, doc: &Document, def: &PatternDef, region: Rect, w
             r.draw_arc(&mut ctx, &frame, a);
         }
     }
-    ctx.flush();
-    let mut pm = Pixmap::new(w, h);
-    ctx.render(&mut pm, &mut r.resources);
-    pm
+    r.finish(&mut ctx, r.raster)
 }
 
 /// Run `f` with the shared off-screen renderer (None when nested too deep: a pattern whose art
@@ -136,10 +208,20 @@ pub(crate) fn set_pattern_paint(ctx: &mut RenderContext, name: &str, xf: Affine,
     let (pw, ph) = def.period();
     let scale = raster_scale(s, (pw, ph));
     let params = (def.tile, def.tile_type, def.overlap);
+    let key = (name.to_string(), scale.to_bits());
+    let cms = vectorcraft_color::cms::active();
     let hit = CACHE.with(|c| {
-        c.borrow().tiles[ink as usize]
-            .get(name)
-            .filter(|e| e.scale == scale && e.params == params && same_art(&e.art, &def.art))
+        let mut c = c.borrow_mut();
+        let tiles = &mut c.tiles[ink as usize];
+        let t = tiles.tick();
+        tiles
+            .get(&key, t)
+            .filter(|e| {
+                e.params == params
+                    && same_art(&e.art, &def.art)
+                    && std::ptr::eq(e.cms.as_ptr(), Arc::as_ptr(&cms))
+                    && e.deps.as_ref().is_none_or(|d| d.current(doc))
+            })
             .map(|e| (e.pixmap.clone(), e.sx, e.sy))
     });
     let (pm, sx, sy) = match hit {
@@ -153,13 +235,12 @@ pub(crate) fn set_pattern_paint(ctx: &mut RenderContext, name: &str, xf: Affine,
             };
             let pm = Arc::new(pm);
             let (sx, sy) = (w as f64 / pw, h as f64 / ph);
+            let deps = crate::fx::Reads::of_all(def.art.iter().map(|a| &**a)).any().then(|| Deps::of(doc));
             CACHE.with(|c| {
                 let mut c = c.borrow_mut();
                 let tiles = &mut c.tiles[ink as usize];
-                if tiles.len() > 64 {
-                    tiles.clear();
-                }
-                tiles.insert(name.to_string(), TileEntry { art: def.art.clone(), params, scale, sx, sy, pixmap: pm.clone() });
+                let (t, bytes) = (tiles.tick(), size_of::<TileEntry>() + w as usize * h as usize * 4);
+                tiles.insert(key, TileEntry { art: def.art.clone(), deps, cms: Arc::downgrade(&cms), params, sx, sy, pixmap: pm.clone() }, bytes, t);
             });
             (pm, sx, sy)
         }
@@ -257,6 +338,58 @@ mod tests {
         p[0] > 200 && p[1] > 200 && p[2] > 200
     }
 
+    /// #1536: a raster effect drawn after a pattern fill is the same as without the pattern (the
+    /// pattern's paint transform must not resample the effect's raster).
+    #[test]
+    fn effects_after_a_pattern_fill_keep_their_place_and_size() {
+        let fx = |id: &str, params: serde_json::Value| vectorcraft_doc::Effect { id: id.into(), params, visible: true };
+        for effect in [
+            fx("blur.gaussian", serde_json::json!({"radius": 4.0})),
+            fx("stylize.dropShadow", serde_json::json!({"x": 6, "y": 6, "blur": 3, "opacity": 100})),
+        ] {
+            let make = |with_pattern: bool| {
+                let mut d = doc_with_pattern(TileType::Grid);
+                let l = d.layers[0].id;
+                let filled = d.children(Some(l)).unwrap()[0].id;
+                d.remove(filled).unwrap();
+                if with_pattern {
+                    let id = d.alloc_id();
+                    let n = Node::path(
+                        id,
+                        shapes::rectangle(Rect::new(0.0, 0.0, 80.0, 80.0)),
+                        Appearance::basic(pattern_paint("Checks"), Paint::None, 0.0),
+                    );
+                    d.insert(Some(l), 0, n).unwrap();
+                }
+                let id = d.alloc_id();
+                let mut n = Node::path(
+                    id,
+                    shapes::ellipse(Rect::new(120.0, 110.0, 180.0, 170.0)),
+                    Appearance::basic(Paint::solid(Color::rgb(0.5, 0.5, 0.5)), Paint::None, 0.0),
+                );
+                n.appearance.effects.push(effect.clone());
+                let at = d.children(Some(l)).map_or(0, Vec::len);
+                d.insert(Some(l), at, n).unwrap();
+                d
+            };
+            // Supersampled, as raster exports draw.
+            let one = |d: &Document| {
+                let mut r = Renderer::new();
+                r.render(
+                    d,
+                    200,
+                    200,
+                    Affine::IDENTITY,
+                    &RenderOptions { background: Some([255, 255, 255, 255]), supersample: true, ..Default::default() },
+                )
+            };
+            let (with, without) = (one(&make(true)), one(&make(false)));
+            for (x, y) in [(150, 140), (125, 140), (176, 160), (150, 172), (184, 176)] {
+                assert_eq!(with.pixel(x, y), without.pixel(x, y), "{} at ({x}, {y})", effect.id);
+            }
+        }
+    }
+
     #[test]
     fn pattern_fill_is_periodic() {
         let d = doc_with_pattern(TileType::Grid);
@@ -308,6 +441,114 @@ mod tests {
         vectorcraft_doc::pattern::transform_pattern_paints(d2.node_mut(id).unwrap(), Affine::translate((10.0, 0.0)));
         let r = render(&d2, 1.0);
         assert!(is_white(r.pixel(5, 5)) && is_red(r.pixel(15, 5)));
+    }
+
+    /// `doc_with_pattern(TileType::Grid)` with a 40×40 square on top of its rectangle, filled with
+    /// the same pattern scaled by `s`, as Transform Pattern Tiles leaves it.
+    fn doc_with_two_scales(s: f64) -> Document {
+        let mut d = doc_with_pattern(TileType::Grid);
+        let square = shapes::rectangle(Rect::new(120.0, 120.0, 160.0, 160.0));
+        let mut n = Node::path(d.alloc_id(), square, Appearance::basic(pattern_paint("Checks"), Paint::None, 0.0));
+        vectorcraft_doc::pattern::transform_pattern_paints(&mut n, Affine::scale(s));
+        let l = d.layers[0].id;
+        d.insert(Some(l), 1, n).unwrap();
+        d
+    }
+
+    /// `d` drawn by `r` at `scale`.
+    fn frame(r: &mut Renderer, d: &Document, scale: f64) -> Rendered {
+        let px = (200.0 * scale) as u32;
+        r.render(d, px, px, Affine::scale(scale), &RenderOptions { background: Some([255, 255, 255, 255]), ..Default::default() })
+    }
+
+    /// The tiles rasterized on this thread so far: the tile renderer counts a frame for each.
+    fn tiles_rasterized() -> u64 {
+        CACHE.with(|c| c.borrow().renderer.as_ref().map_or(0, |r| r.stamp))
+    }
+
+    #[test]
+    fn objects_at_two_pattern_scales_keep_their_tiles_between_frames() {
+        // At 100% the rectangle's tile is rasterized at scale 1, and the square's tile is
+        // rasterized at 0.25, or at 2 when its tiles are scaled to 101%.
+        for s in [0.25, 1.01] {
+            let d = doc_with_two_scales(s);
+            let mut r = Renderer::new();
+            let start = tiles_rasterized();
+            let first = frame(&mut r, &d, 1.0).pixels;
+            assert_eq!(tiles_rasterized() - start, 2, "tiles scaled by {s}: a tile for each object");
+            for _ in 0..3 {
+                assert!(frame(&mut r, &d, 1.0).pixels == first, "tiles scaled by {s}");
+            }
+            assert_eq!(tiles_rasterized() - start, 2, "tiles scaled by {s}: later frames draw both objects from their tiles");
+            // After a frame at 200%, the next frame at 100% draws from the tiles made at 100%.
+            frame(&mut r, &d, 2.0);
+            let zoomed = tiles_rasterized();
+            assert!(frame(&mut r, &d, 1.0).pixels == first, "tiles scaled by {s}");
+            assert_eq!(tiles_rasterized(), zoomed, "tiles scaled by {s}: back at 100%");
+        }
+    }
+
+    #[test]
+    fn kept_tiles_draw_what_a_new_renderer_draws() {
+        // A new renderer on a thread of its own starts with no tiles.
+        let fresh = |d: &Document, zoom: f64| {
+            let d = d.clone();
+            std::thread::spawn(move || frame(&mut Renderer::new(), &d, zoom).pixels).join().unwrap()
+        };
+        let mut d = doc_with_two_scales(0.25);
+        let mut r = Renderer::new();
+        // Pixel (130, 130) is red in the square's tiles and clear in the rectangle's, (133, 133) is
+        // clear in both, and (103, 103), outside the square, is red in the rectangle's.
+        let first = frame(&mut r, &d, 1.0);
+        assert!(is_red(first.pixel(130, 130)) && is_white(first.pixel(133, 133)) && is_red(first.pixel(103, 103)));
+        for zoom in [1.0, 2.0, 1.0, 0.5, 2.0, 1.0] {
+            assert!(frame(&mut r, &d, zoom).pixels == fresh(&d, zoom), "zoom {zoom}");
+        }
+        // Change the tile type as Pattern Options does.
+        d.patterns[0].tile_type = TileType::BrickByRow { offset: 0.5 };
+        for zoom in [2.0, 1.0] {
+            assert!(frame(&mut r, &d, zoom).pixels == fresh(&d, zoom), "brick, zoom {zoom}");
+        }
+        // Replace the art as Done Editing Pattern does.
+        let blue = Appearance::basic(Paint::solid(Color::rgb(0.0, 0.0, 1.0)), Paint::None, 0.0);
+        d.patterns[0].art = vec![Arc::new(Node::path(NodeId(901), shapes::rectangle(Rect::new(0.0, 0.0, 10.0, 10.0)), blue))];
+        for zoom in [1.0, 2.0] {
+            assert!(frame(&mut r, &d, zoom).pixels == fresh(&d, zoom), "new art, zoom {zoom}");
+        }
+    }
+
+    #[test]
+    fn kept_tiles_stay_within_the_budget() {
+        // The rectangle's tile is 20 pixels a side per 100% of zoom, and the square's tile is 5
+        // pixels a side per 100% of zoom. The budget holds the rectangle's tile at 400% and both
+        // tiles at 200%; the tiles drawn from 100% to 400% need more.
+        let d = doc_with_two_scales(0.25);
+        let tile = |side: usize| size_of::<TileEntry>() + side * side * 4;
+        let budget = tile(80) + tile(40) + tile(10);
+        CACHE.with(|c| c.borrow_mut().tiles[Ink::Display as usize] = FrameCache::new(budget, usize::MAX));
+        let kept = || {
+            CACHE.with(|c| {
+                let c = c.borrow();
+                let tiles = &c.tiles[Ink::Display as usize];
+                (tiles.len(), tiles.bytes())
+            })
+        };
+        let mut r = Renderer::new();
+        for zoom in [1.0, 2.0, 4.0] {
+            frame(&mut r, &d, zoom);
+            let drawn = tiles_rasterized();
+            frame(&mut r, &d, zoom);
+            assert_eq!(tiles_rasterized(), drawn, "zoom {zoom}: the next frame draws from the tiles just made");
+            let (len, bytes) = kept();
+            assert!(len >= 2 && bytes <= budget, "zoom {zoom}: {len} tiles, {bytes} bytes");
+        }
+        // Tiles were rasterized at five scales (0.25, 0.5, 1, 2 and 4); the cache dropped the least
+        // recently used tiles first.
+        assert!(kept().0 < 5, "{:?}", kept());
+        let before = tiles_rasterized();
+        frame(&mut r, &d, 1.0);
+        assert!(tiles_rasterized() > before, "a tile of 100% was dropped");
+        assert!(kept().1 <= budget, "{:?}", kept());
     }
 
     #[test]

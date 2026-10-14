@@ -7,6 +7,8 @@ use std::cmp::Ordering;
 
 use egui::RichText;
 
+use crate::VectorcraftApp;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Contributor {
     pub login: &'static str,
@@ -85,11 +87,14 @@ impl SortKey {
         SortKey::LastCommit,
     ];
 
-    /// Menu label and table header, in the UI language (the short count headers stay as they are).
+    /// Menu label and table header, in the UI language (the symbolic count headers stay as they are).
     pub fn label(self) -> (&'static str, &'static str) {
         match self {
             SortKey::Name => (tl!("Name (A–Z)"), tl!("Name")),
-            SortKey::Prs => (tl!("Merged PRs"), "PRs"),
+            SortKey::Prs => {
+                let header = "PRs";
+                (tl!("Merged PRs"), tl!(header))
+            }
             SortKey::Commits => (tl!("Commits"), tl!("Commits")),
             SortKey::LinesAdded => (tl!("Lines added"), "+LOC"),
             SortKey::LinesDeleted => (tl!("Lines deleted"), "−LOC"),
@@ -123,18 +128,24 @@ impl Contributor {
 
     /// One line with everything we know, for tooltips.
     pub fn summary(&self) -> String {
-        format!(
-            "@{}: {} PRs, {} commits, +{} / −{} lines (Δ {}), +{} / −{} binary assets, {} – {}",
-            self.login,
-            self.prs,
-            self.commits,
-            group(self.lines_added),
-            group(self.lines_deleted),
-            signed(self.lines_delta()),
-            self.binary_added,
-            self.binary_deleted,
-            day(self.first_commit),
-            day(self.last_commit),
+        let lang = crate::i18n::current();
+        let template = "@{login}: {prs}, {commits}, +{added} / −{deleted} lines (Δ {delta}), +{binary_added} / −{binary_deleted} binary assets, {first} – {last}";
+        let prs = crate::i18n::trn(lang, self.prs, "{n} PR", "{n} PRs");
+        let commits = crate::i18n::trn(lang, self.commits, "{n} commit", "{n} commits");
+        crate::i18n::fmt(
+            tl!(template),
+            &[
+                ("login", self.login),
+                ("prs", &prs),
+                ("commits", &commits),
+                ("added", &group(self.lines_added)),
+                ("deleted", &group(self.lines_deleted)),
+                ("delta", &signed(self.lines_delta())),
+                ("binary_added", &self.binary_added.to_string()),
+                ("binary_deleted", &self.binary_deleted.to_string()),
+                ("first", day(self.first_commit)),
+                ("last", day(self.last_commit)),
+            ],
         )
     }
 }
@@ -214,7 +225,7 @@ impl Default for View {
 }
 
 /// About ▸ Contributors: a name toggle, a sort, and the list as a grab bag or a table.
-pub fn contributors_ui(ui: &mut egui::Ui) {
+pub fn contributors_ui(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     let id = egui::Id::new("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
@@ -254,14 +265,14 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
         if list.is_empty() {
             ui.label(tl!("No contributor data was built into this copy."));
         } else if v.table {
-            table(ui, &list, &mut v);
+            table(app, ui, &list, &mut v);
         } else {
             ui.horizontal_wrapped(|ui| {
                 for (i, c) in list.iter().enumerate() {
                     if i > 0 {
                         ui.label(RichText::new("·").weak());
                     }
-                    ui.hyperlink_to(c.name(v.names), format!("https://github.com/{}", c.login)).on_hover_text(c.summary());
+                    link(app, ui, c, v.names);
                 }
             });
         }
@@ -269,7 +280,16 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     ui.data_mut(|d| d.insert_temp(id, v));
 }
 
-fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
+fn link(app: &mut VectorcraftApp, ui: &mut egui::Ui, c: &Contributor, names: NameMode) -> egui::Response {
+    let url = format!("https://github.com/{}", c.login);
+    let r = ui.add(egui::Link::new(c.name(names))).on_hover_text(c.summary());
+    if r.clicked() {
+        app.open_url(&url);
+    }
+    r
+}
+
+fn table(app: &mut VectorcraftApp, ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
     egui::Grid::new("credits_table").striped(true).num_columns(SortKey::ALL.len()).show(ui, |ui| {
         for k in SortKey::ALL {
             let arrow = if v.key == k { if v.ascending { " ▲" } else { " ▼" } } else { "" };
@@ -284,7 +304,7 @@ fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
         }
         ui.end_row();
         for c in list {
-            ui.hyperlink_to(c.name(v.names), format!("https://github.com/{}", c.login)).on_hover_text(c.summary());
+            link(app, ui, c, v.names);
             ui.label(group(c.prs));
             ui.label(group(c.commits));
             ui.label(group(c.lines_added));

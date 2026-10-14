@@ -232,12 +232,11 @@ fn halftone(s: &mut Session, p: &Value) -> Result<Value> {
         let gid = d.alloc_id();
         let mut g = Node::group(gid, children);
         g.name = Some("Vector Halftone".into());
-        let (par, idx, _) = d.position(top).ok_or(EngineError::NoNode(top))?;
-        d.insert(par, idx + 1, g)?;
-        if !keep {
-            for r in &roots {
-                d.remove(*r)?;
-            }
+        if keep {
+            let (par, idx, _) = d.position(top).ok_or(EngineError::NoNode(top))?;
+            d.insert(par, idx + 1, g)?;
+        } else {
+            d.wrap(&roots, |_| g)?;
         }
         sel.set([gid]);
         Ok(gid)

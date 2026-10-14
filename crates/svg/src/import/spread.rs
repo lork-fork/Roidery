@@ -2,7 +2,7 @@
 //! repeated (every other period mirrored, for reflect) as many times as the painted area needs,
 //! and the gradient stretched over those periods.
 
-use vectorcraft_color::{GradientGeom, GradientKind, GradientStop};
+use vectorcraft_color::{Gradient, GradientGeom, GradientKind, GradientStop};
 use vectorcraft_geom::{Point, Rect};
 
 /// Most periods a gradient is expanded to.
@@ -80,17 +80,9 @@ fn whole_period(stops: &[GradientStop]) -> Vec<GradientStop> {
 
 /// A period mirrored: the stops in reverse, each midpoint measured from the other side.
 fn mirror(period: &[GradientStop]) -> Vec<GradientStop> {
-    let rev: Vec<&GradientStop> = period.iter().rev().collect();
-    rev.iter()
-        .enumerate()
-        .map(|(i, s)| GradientStop {
-            offset: 1.0 - s.offset,
-            // The midpoint from this stop to the next one is the mirror of the one the next stop
-            // had towards this one.
-            midpoint: rev.get(i + 1).map_or(0.5, |next| 1.0 - next.midpoint),
-            ..(*s).clone()
-        })
-        .collect()
+    let mut g = Gradient { kind: GradientKind::Linear, stops: period.to_vec() };
+    g.reverse();
+    g.stops
 }
 
 #[cfg(test)]

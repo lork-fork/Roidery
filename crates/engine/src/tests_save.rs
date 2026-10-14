@@ -261,6 +261,37 @@ fn the_saved_view_round_trips_without_dirtying() {
 }
 
 #[test]
+fn open_layers_rows_round_trip_without_dirtying() {
+    let d = dir("open-rows");
+    let mut s = session();
+    let layer = s.doc().unwrap().doc.layers[0].id;
+    let a = s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap()["id"].as_u64().unwrap();
+    s.execute("select.set", &json!({"ids": [a]})).unwrap();
+    let g = NodeId(s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap());
+    // A document starts with its top-level layers open, and a file keeps nothing for that.
+    assert!(s.doc().unwrap().layers_open.contains(layer) && !s.doc().unwrap().layers_open.contains(g));
+    let native = path(&d, "rows.vectorcraft");
+    s.execute("document.save", &json!({"path": native})).unwrap();
+    let bytes = std::fs::read(&native).unwrap();
+    assert_eq!(vectorcraft_format::load(&bytes).unwrap().layers_open, None);
+    // Opening the group and closing the layer is view state: not an edit, kept by the file.
+    let st = s.doc_mut().unwrap();
+    st.layers_open.set(g, true);
+    st.layers_open.set(layer, false);
+    assert!(!s.doc().unwrap().is_dirty());
+    s.execute("document.save", &json!({"path": native})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.layers_open, None, "only the written file carries it");
+    let mut again = session();
+    again.execute("document.open", &json!({"path": native})).unwrap();
+    let open = &again.doc().unwrap().layers_open;
+    assert!(open.contains(g) && !open.contains(layer));
+    // Older files (none saved) open with the top-level layers open.
+    let doc = vectorcraft_format::load(&vectorcraft_format::save(&vectorcraft_doc::Document::new(5.0, 5.0), false)).unwrap();
+    assert_eq!(doc.layers_open, None);
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
 fn save_plans_suggest_names_and_folders() {
     let mut s = session();
     s.execute("file.info", &json!({"title": "Map"})).unwrap();

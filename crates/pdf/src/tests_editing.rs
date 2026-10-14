@@ -88,3 +88,57 @@ fn pdf_a_carries_no_editing_data() {
     assert!(matches!(s.check(), Err(PdfError::BadSetting(m)) if m.contains("editing")));
     assert!(matches!(s.check_values(), Err(PdfError::BadSetting(_))));
 }
+
+/// A tiny PDF made of the given objects (numbered from 1), with the cross-reference table written.
+fn raw_pdf(objects: &[String]) -> Vec<u8> {
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for at in offsets {
+        out.extend_from_slice(format!("{at:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    out
+}
+
+#[test]
+fn a_name_tree_node_shared_by_many_kids_is_searched_once() {
+    // Objects 4..=15 are a chain of name tree nodes, each listing the next one ten times and
+    // holding no attachment. Walking every path would take 10^12 steps; the editing file sits in
+    // the leaf (object 16) listed after the chain.
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 3 0 R >> >>".to_string(),
+        "<< /Type /Pages /Kids [19 0 R] /Count 1 >>".to_string(),
+        "<< /Kids [4 0 R 16 0 R] >>".to_string(),
+    ];
+    for node in 4..=14 {
+        objects.push(format!("<< /Kids [{}] >>", format!("{} 0 R ", node + 1).repeat(10)));
+    }
+    objects.push("<< /Names [] >>".to_string());
+    objects.push("<< /Names [(a) 17 0 R] >>".to_string());
+    objects.push(format!("<< /Type /Filespec /UF ({EDITING_FILE}) /EF << /F 18 0 R >> >>"));
+    objects.push("<< /Length 5 >>\nstream\nhello\nendstream".to_string());
+    objects.push("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>".to_string());
+    let e = editing(&raw_pdf(&objects)).unwrap();
+    assert_eq!((e.data.as_slice(), e.intact), (&b"hello"[..], true));
+}
+
+#[test]
+fn direct_name_tree_kids_are_all_searched() {
+    // Direct kids report the object holding them as their id; none of them may be taken as seen.
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 3 0 R >> >>".to_string(),
+        "<< /Type /Pages /Kids [6 0 R] /Count 1 >>".to_string(),
+        "<< /Kids [<< /Names [] >> << /Kids [<< /Names [] >> << /Names [(a) 4 0 R] >>] >>] >>".to_string(),
+        format!("<< /Type /Filespec /UF ({EDITING_FILE}) /EF << /F 5 0 R >> >>"),
+        "<< /Length 5 >>\nstream\nhello\nendstream".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>".to_string(),
+    ];
+    let e = editing(&raw_pdf(&objects)).unwrap();
+    assert_eq!(e.data, b"hello");
+}

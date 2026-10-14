@@ -27,6 +27,13 @@ fn multiply(d: &mut Document) -> Node {
     n
 }
 
+/// A Multiply rectangle of color `c` at `r`.
+fn multiply_in(d: &mut Document, r: Rect, c: [f32; 3]) -> Node {
+    let mut n = rect(d, r, c);
+    n.blend = Blend::Multiply;
+    n
+}
+
 /// The backdrop, then `top` (built by `make`), in a 100 × 100 document.
 fn doc(make: impl FnOnce(&mut Document) -> Node) -> Document {
     let mut d = Document::new(100.0, 100.0);
@@ -138,7 +145,7 @@ fn a_masked_object_blends_with_the_backdrop() {
         let mut g = group(d, vec![m], 1.0, Blend::Normal, false);
         // A 50% grey mask over the whole group.
         let art = rect(d, Rect::new(0.0, 0.0, 100.0, 100.0), [0.5; 3]);
-        g.mask = Some(Box::new(vectorcraft_doc::OpacityMask::new(art, true)));
+        g.extras_mut().mask = Some(Box::new(vectorcraft_doc::OpacityMask::new(art, true)));
         g
     });
     assert_near(render(&d).pixel(50, 50), lerp(B, blend_rgb(Blend::Multiply, B, S), 0.5), "masked multiply");
@@ -217,4 +224,167 @@ fn copying_the_backdrop_changes_nothing_without_blending() {
     let (a, b) = (render(&plain).pixels, render(&flattened).pixels);
     let worst = a.iter().zip(&b).map(|(x, y)| (*x as i32 - *y as i32).abs()).max().unwrap();
     assert!(worst <= 1, "differs by {worst}/255");
+}
+
+/// A 300 × 300 page: the backdrop with a 60% stripe over its right half, then nine objects that
+/// do not overlap. Each object copies its backdrop or is drawn between objects that do. Object `i`
+/// is on the page when `with(i)` is true.
+fn objects_apart(with: impl Fn(usize) -> bool) -> Document {
+    let mut d = Document::new(300.0, 300.0);
+    let below = rect(&mut d, Rect::new(0.0, 0.0, 300.0, 300.0), B);
+    let mut stripe = rect(&mut d, Rect::new(150.0, 0.0, 300.0, 300.0), [0.1, 0.3, 0.9]);
+    stripe.opacity = 0.6;
+    let cell = |x: f64, y: f64| Rect::new(x, y, x + 50.0, y + 50.0);
+    let mut objects = vec![];
+    // Objects 0 and 1 are a 50% group and a 70% Screen group, each holding a Multiply child.
+    let m = multiply_in(&mut d, cell(10.0, 10.0), S);
+    objects.push(group(&mut d, vec![m], 0.5, Blend::Normal, false));
+    let m = multiply_in(&mut d, cell(110.0, 10.0), S);
+    objects.push(group(&mut d, vec![m], 0.7, Blend::Screen, false));
+    // Object 2 is a masked group holding a Multiply child. Its mask art holds a 50% group with a
+    // Multiply child.
+    let m = multiply_in(&mut d, cell(210.0, 10.0), S);
+    let mut masked = group(&mut d, vec![m], 1.0, Blend::Normal, false);
+    let white = rect(&mut d, cell(205.0, 5.0), [1.0; 3]);
+    let gray = multiply_in(&mut d, Rect::new(220.0, 20.0, 250.0, 50.0), [0.5; 3]);
+    let half = group(&mut d, vec![gray], 0.5, Blend::Normal, false);
+    let art = group(&mut d, vec![white, half], 1.0, Blend::Normal, false);
+    masked.extras_mut().mask = Some(Box::new(vectorcraft_doc::OpacityMask::new(art, true)));
+    objects.push(masked);
+    // Object 3 is a knockout group of two Multiply rectangles that overlap.
+    let lower = multiply_in(&mut d, Rect::new(10.0, 110.0, 45.0, 160.0), S);
+    let upper = multiply_in(&mut d, Rect::new(25.0, 110.0, 60.0, 160.0), [1.0, 0.4, 0.6]);
+    let mut knockout = group(&mut d, vec![lower, upper], 1.0, Blend::Normal, false);
+    knockout.knockout = Knockout::On;
+    objects.push(knockout);
+    // Object 4 is an isolated group that holds a 50% group with a Multiply child.
+    let green = rect(&mut d, cell(110.0, 110.0), [0.2, 0.9, 0.4]);
+    let m = multiply_in(&mut d, Rect::new(120.0, 120.0, 150.0, 150.0), S);
+    let half = group(&mut d, vec![m], 0.5, Blend::Normal, false);
+    objects.push(group(&mut d, vec![green, half], 1.0, Blend::Normal, true));
+    // Object 5 is a clip group that holds a 50% group with a Multiply child and a rectangle after
+    // the group.
+    let clip = clip_path(&mut d, Rect::new(215.0, 115.0, 255.0, 155.0));
+    let m = multiply_in(&mut d, cell(210.0, 110.0), S);
+    let half = group(&mut d, vec![m], 0.5, Blend::Normal, false);
+    let after = rect(&mut d, Rect::new(210.0, 140.0, 260.0, 160.0), [0.9, 0.9, 0.1]);
+    let children = [clip, half, after].into_iter().map(Arc::new).collect();
+    objects.push(Node::new(d.alloc_id(), NodeKind::Group { children, clip: true }));
+    // Object 6 is a 50% rectangle that is not in a group.
+    let mut plain = rect(&mut d, cell(10.0, 210.0), [0.3, 0.2, 0.8]);
+    plain.opacity = 0.5;
+    objects.push(plain);
+    // Object 7 is a Screen group at 100% holding a Multiply child.
+    let m = multiply_in(&mut d, cell(110.0, 210.0), S);
+    objects.push(group(&mut d, vec![m], 1.0, Blend::Screen, false));
+    // Object 8 is a 50% group whose Multiply child reaches past the page's corner.
+    let m = multiply_in(&mut d, Rect::new(260.0, 260.0, 330.0, 330.0), S);
+    objects.push(group(&mut d, vec![m], 0.5, Blend::Normal, false));
+    let l = d.layers[0].id;
+    let kept = objects.into_iter().enumerate().filter(|(i, _)| with(*i)).map(|(_, n)| n);
+    for n in [below, stripe].into_iter().chain(kept) {
+        d.insert(Some(l), usize::MAX, n).unwrap();
+    }
+    d
+}
+
+/// The renderer copies the backdrop of several objects in one frame, each from the picture of what
+/// it drew before that object. The frame equals the page drawn with each object alone, pixel for
+/// pixel, when it is drawn on one thread and on two, turned, composited in floating point, inside
+/// an isolated page group, zoomed in until the first group fills the frame, and as the renderer's
+/// next frame.
+#[test]
+fn objects_that_copy_their_backdrop_draw_as_they_do_alone() {
+    let (all, none) = (objects_apart(|_| true), objects_apart(|_| false));
+    let alone: Vec<Document> = (0..9).map(|i| objects_apart(|j| j == i)).collect();
+    let (plain, precise) = (RenderOptions::default(), RenderOptions { precise: true, ..Default::default() });
+    let turned = Affine::rotate_about(0.35, vectorcraft_geom::Point::new(150.0, 150.0));
+    let zoomed = Affine::translate((150.0, 150.0)) * Affine::scale(6.0) * Affine::translate((-35.0, -35.0));
+    for (what, threads, view, opts, isolate) in [
+        ("one thread", 0, Affine::IDENTITY, &plain, false),
+        ("two threads", 2, Affine::IDENTITY, &plain, false),
+        ("turned", 0, turned, &plain, false),
+        ("floating point", 0, Affine::IDENTITY, &precise, false),
+        ("isolated page", 0, Affine::IDENTITY, &plain, true),
+        ("zoomed", 0, zoomed, &plain, false),
+    ] {
+        let mut r = Renderer::new();
+        r.threads = threads;
+        let mut draw = |d: &Document| {
+            let mut d = d.clone();
+            d.page_isolate = isolate;
+            r.render(&d, 300, 300, view, opts).pixels
+        };
+        let below = draw(&none);
+        let mut want = below.clone();
+        for d in &alone {
+            let one = draw(d);
+            for ((w, o), b) in want.as_chunks_mut::<4>().0.iter_mut().zip(one.as_chunks::<4>().0).zip(below.as_chunks::<4>().0) {
+                if o != b {
+                    assert_eq!(*w, *b, "{what}: two objects draw on one pixel");
+                    *w = *o;
+                }
+            }
+        }
+        for frame in 1..=2 {
+            let got = draw(&all);
+            let differ: Vec<usize> = (0..300 * 300).filter(|i| got[i * 4..i * 4 + 4] != want[i * 4..i * 4 + 4]).collect();
+            let at = differ.first().map(|i| (i % 300, i / 300));
+            assert!(differ.is_empty(), "{what}, frame {frame}: {} pixels differ, the first at {at:?}", differ.len());
+        }
+    }
+}
+
+/// The renderer copies the backdrop of twenty 50% groups with Multiply children on a 400 × 400
+/// page. The images it draws in that frame add up to fewer pixels than the page: it draws no
+/// picture of the page back after a copy.
+#[test]
+fn backdrop_copies_draw_no_picture_of_the_page_back() {
+    let mut d = Document::new(400.0, 400.0);
+    let l = d.layers[0].id;
+    let below = rect(&mut d, Rect::new(0.0, 0.0, 400.0, 400.0), B);
+    d.insert(Some(l), usize::MAX, below).unwrap();
+    for i in 0..20u32 {
+        let (x, y) = (10.0 + f64::from(i % 5) * 80.0, 10.0 + f64::from(i / 5) * 80.0);
+        let m = multiply_in(&mut d, Rect::new(x, y, x + 20.0, y + 20.0), S);
+        let g = group(&mut d, vec![m], 0.5, Blend::Normal, false);
+        d.insert(Some(l), usize::MAX, g).unwrap();
+    }
+    let drawn = || crate::group::PIXELS_DRAWN.with(std::cell::Cell::get);
+    for threads in [0, 2] {
+        let mut r = Renderer::new();
+        r.threads = threads;
+        let before = drawn();
+        let frame = r.render(&d, 400, 400, Affine::IDENTITY, &RenderOptions::default());
+        let images = drawn() - before;
+        assert!(images < 400 * 400, "threads {threads}: {images} pixels drawn as images");
+        assert_near(frame.pixel(20, 20), lerp(B, blend_rgb(Blend::Multiply, B, S), 0.5), "inside a group");
+    }
+}
+
+/// Isolation mode (#833): the art around the isolated group draws at half opacity, above it as
+/// well as below; the group's own art as usual.
+#[test]
+fn isolation_mode_dims_the_art_around_the_isolated_group() {
+    let mut d = Document::new(100.0, 100.0);
+    let l = d.layers[0].id;
+    let below = rect(&mut d, Rect::new(0.0, 0.0, 40.0, 40.0), [0.0, 0.0, 0.0]);
+    let inside = rect(&mut d, Rect::new(60.0, 60.0, 100.0, 100.0), [0.0, 0.0, 0.0]);
+    let above = rect(&mut d, Rect::new(60.0, 0.0, 100.0, 40.0), [0.0, 0.0, 0.0]);
+    let g = group(&mut d, vec![inside], 1.0, Blend::Normal, false);
+    let gid = g.id;
+    for n in [below, g, above] {
+        d.insert(Some(l), usize::MAX, n).unwrap();
+    }
+    let alpha = |img: &Rendered, x: usize, y: usize| img.pixels[(y * 100 + x) * 4 + 3];
+    let plain = render(&d);
+    let isolated = |id| render_with(&mut Renderer::new(), &d, &RenderOptions { isolated: Some(id), ..Default::default() });
+    let dimmed = isolated(gid);
+    assert_eq!(alpha(&dimmed, 80, 80), 255, "the isolated group's art");
+    for (x, y) in [(20, 20), (80, 20)] {
+        assert_eq!(alpha(&plain, x, y), 255);
+        assert!((120..=135).contains(&alpha(&dimmed, x, y)), "({x}, {y}): {}", alpha(&dimmed, x, y));
+    }
+    // An object that isn't in the document dims nothing.
+    assert_eq!(isolated(NodeId(u64::MAX)).pixels, plain.pixels);
 }

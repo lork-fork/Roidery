@@ -100,7 +100,7 @@ fn text_keeps_its_parent_group_clip_and_mask() {
     assert!(matches!(children[1].kind, NodeKind::Text(_)) && children[1].name.as_deref() == Some("own"));
     // The text's own mask.
     assert!(matches!(inner[3].kind, NodeKind::Text(_)));
-    assert!(inner[3].mask.is_some());
+    assert!(inner[3].extras().mask.is_some());
     assert_eq!(inner[3].name.as_deref(), Some("masked"));
 }
 
@@ -517,4 +517,115 @@ fn gradients_on_scaled_text_stay_in_place() {
     let geom = g.geom.unwrap();
     let (start, end) = (t.xf * geom.start, t.xf * geom.end);
     assert!(start.distance(Point::new(40.0, 0.0)) < 1e-6 && end.distance(Point::new(240.0, 0.0)) < 1e-6, "{start:?} {end:?}");
+}
+
+/// The start of a type-on-a-path object's path and a point a little way along it, in document
+/// space.
+fn path_start(t: &TextObject) -> (Point, Point) {
+    use vectorcraft_geom::kurbo::{ParamCurve, PathEl};
+    let TextKind::OnPath { path, .. } = &t.kind else { panic!("{:?}", t.kind) };
+    let mut bp = path.to_bezpath();
+    bp.apply_affine(t.xf);
+    let PathEl::MoveTo(p0) = bp.elements()[0] else { panic!("{bp:?}") };
+    let next = bp.segments().next().unwrap().eval(0.05);
+    (p0, next)
+}
+
+#[test]
+fn text_path_follows_basic_shapes_as_their_equivalent_paths() {
+    let (d, w) = import_with_report(&svg(r##"<circle id="c" cx="150" cy="150" r="100"/>
+        <ellipse id="e" cx="150" cy="150" rx="80" ry="40" transform="translate(10 0)"/>
+        <rect id="r" x="20" y="30" width="100" height="60" rx="10"/>
+        <rect id="s" x="20" y="30" width="100" height="60"/>
+        <line id="l" x1="10" y1="200" x2="210" y2="200"/>
+        <polyline id="pl" points="10,10 110,10 110,60"/>
+        <polygon id="pg" points="10 10, 60 10, 35 50"/>
+        <text font-size="10"><textPath xlink:href="#c">TEXT ON A CIRCLE</textPath></text>
+        <text font-size="10"><textPath href="#e">Ellipse</textPath></text>
+        <text font-size="10"><textPath href="#r">Rounded</textPath></text>
+        <text font-size="10"><textPath href="#s">Square</textPath></text>
+        <text font-size="10"><textPath href="#l">Line</textPath></text>
+        <text font-size="10"><textPath href="#pl">Polyline</textPath></text>
+        <text font-size="10"><textPath href="#pg">Polygon</textPath></text>"##))
+    .unwrap();
+    assert!(!w.iter().any(|w| w.contains("textPath")), "{w:?}");
+    let t = texts(&d);
+    assert_eq!(t.len(), 7);
+    assert!(t.iter().all(|t| matches!(t.kind, TextKind::OnPath { .. })), "{:?}", t.iter().map(|t| &t.kind).collect::<Vec<_>>());
+    let near = |a: Point, b: Point| (a - b).hypot() < 1e-6;
+    // Circle: starts at 3 o'clock and runs clockwise (down first, y pointing down), around the circle.
+    let (p0, next) = path_start(t[0]);
+    assert!(near(p0, Point::new(250.0, 150.0)) && next.y > p0.y && next.x < p0.x, "{p0:?} {next:?}");
+    let TextKind::OnPath { path, .. } = &t[0].kind else { panic!("not on a path") };
+    let b = t[0].xf.transform_rect_bbox(path.bounds().unwrap());
+    assert!(close(b.x0, 50.0, 1e-6) && close(b.y0, 50.0, 1e-6) && close(b.x1, 250.0, 1e-6) && close(b.y1, 250.0, 1e-6), "{b:?}");
+    assert!(path.is_closed());
+    // Ellipse, with the shape's own transform.
+    let (p0, next) = path_start(t[1]);
+    assert!(near(p0, Point::new(240.0, 150.0)) && next.y > p0.y, "{p0:?} {next:?}");
+    // Rounded rect: after the top-left corner, along the top edge to the right.
+    let (p0, next) = path_start(t[2]);
+    assert!(near(p0, Point::new(30.0, 30.0)) && next.x > p0.x && close(next.y, 30.0, 1e-9), "{p0:?} {next:?}");
+    let (p0, next) = path_start(t[3]);
+    assert!(near(p0, Point::new(20.0, 30.0)) && next.x > p0.x, "{p0:?} {next:?}");
+    // Line, polyline and polygon follow their points.
+    assert!(near(path_start(t[4]).0, Point::new(10.0, 200.0)));
+    assert!(near(path_start(t[5]).0, Point::new(10.0, 10.0)));
+    let TextKind::OnPath { path, .. } = &t[6].kind else { panic!("not on a path") };
+    assert!(path.is_closed() && near(path_start(t[6]).0, Point::new(10.0, 10.0)));
+    assert_eq!(t[0].plain_text(), "TEXT ON A CIRCLE");
+}
+
+#[test]
+fn text_path_to_an_empty_shape_still_falls_back_to_point_type() {
+    let (d, w) =
+        import_with_report(&svg(r##"<circle id="c" cx="5" cy="5" r="0"/><text x="5" y="10"><textPath href="#c">Zero</textPath></text>"##)).unwrap();
+    assert!(matches!(only_text(&d).kind, TextKind::Point));
+    assert!(w.iter().any(|w| w.contains("textPath")), "{w:?}");
+}
+
+/// #1557: the `font` shorthand sets the type's size, weight and style.
+#[test]
+fn the_font_shorthand_styles_type() {
+    let d = open(r#"<text x="10" y="40" style="font: italic bold 30px sans-serif">Deco</text>"#);
+    let t = only_text(&d);
+    let st = &t.runs[0].style;
+    assert!(close(st.size * t.xf.determinant().abs().sqrt(), 30.0, 1e-6), "{}", st.size);
+    let style = st.font_style.to_ascii_lowercase();
+    assert!(style.contains("bold") && style.contains("italic"), "{style}");
+}
+
+/// Inkscape's flowed text (`<flowRoot>`) becomes area type in its region's rectangle, a paragraph
+/// per `<flowPara>`; another kind of region is left out with a warning, not silently.
+#[test]
+fn flowed_text_becomes_area_type() {
+    let (d, w) = import_with_report(&svg(
+        r#"<flowRoot style="font-size:16px;font-family:sans-serif"><flowRegion><rect x="20" y="30" width="100" height="160"/></flowRegion><flowPara>This is   flowed text</flowPara><flowPara>Second <flowSpan>one</flowSpan></flowPara></flowRoot>
+        <flowRoot><flowRegion><path d="M0 0 L10 0 L5 10 Z"/></flowRegion><flowPara>Lost</flowPara></flowRoot>"#,
+    ))
+    .unwrap();
+    let t = only_text(&d);
+    assert_eq!(t.plain_text(), "This is flowed text\nSecond one");
+    let TextKind::Area { frame } = &t.kind else { panic!("{:?}", t.kind) };
+    let b = t.xf.transform_rect_bbox(frame.bounds().unwrap());
+    assert!(close(b.x0, 20.0, 1e-6) && close(b.y0, 30.0, 1e-6) && close(b.x1, 120.0, 1e-6) && close(b.y1, 190.0, 1e-6), "{b:?}");
+    assert!(close(t.runs[0].style.size * t.xf.determinant().abs().sqrt(), 16.0, 1e-6));
+    assert!(w.iter().any(|w| w.contains("flowRoot")), "{w:?}");
+}
+
+/// Flowed text that can't be read is left out with a warning each, and never stops the import: no
+/// region, a region too large for numbers, a flowRoot inside a flowRoot (read once, as the outer one).
+#[test]
+fn flowed_text_that_cannot_be_read_is_reported() {
+    let (d, w) = import_with_report(&svg(
+        r#"<flowRoot id="none"><flowPara>No region</flowPara></flowRoot>
+        <flowRoot id="huge"><flowRegion><rect width="1e999" height="10"/></flowRegion><flowPara>Huge</flowPara></flowRoot>
+        <flowRoot id="far"><flowRegion><rect x="1e308" width="1e308" height="10" transform="scale(1e308)"/></flowRegion><flowPara>Far</flowPara></flowRoot>
+        <flowRoot id="outer"><flowRegion><rect width="50" height="50"/></flowRegion><flowPara>Outer</flowPara><flowRoot><flowRegion><rect width="5" height="5"/></flowRegion><flowPara>inner</flowPara></flowRoot></flowRoot>"#,
+    ))
+    .unwrap();
+    assert_eq!(only_text(&d).plain_text(), "Outer\ninner");
+    for id in ["none", "huge", "far"] {
+        assert!(w.iter().any(|w| w.contains(id) && w.contains("flowRoot")), "{id}: {w:?}");
+    }
 }

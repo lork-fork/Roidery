@@ -217,6 +217,35 @@ fn blend_release_restores_keys() {
     assert!(s.execute("object.blend.release", &json!({})).is_ok() || s.execute("object.blend.release", &json!({})).is_err());
 }
 
+/// Release Blend of a blend and of a blend inside a group that is a key object of the first puts
+/// the outer blend's spine and keys where it was, then the inner blend's spine and keys where it
+/// was inside that group, as releasing one blend at a time does.
+#[test]
+fn blend_release_of_a_blend_and_a_blend_inside_it_keeps_order_and_ids() {
+    let mut s = session();
+    let (r1, r2) = (rect(&mut s, 0.0, 0.0, 10.0, 10.0), rect(&mut s, 100.0, 0.0, 10.0, 10.0));
+    sel(&mut s, &[r1, r2]);
+    let inner = id_of(&s.execute("object.blend.make", &json!({})).unwrap());
+    let r3 = rect(&mut s, 200.0, 0.0, 10.0, 10.0);
+    sel(&mut s, &[inner, r3]);
+    let group = id_of(&s.execute("object.group", &json!({})).unwrap());
+    let r4 = rect(&mut s, 400.0, 0.0, 10.0, 10.0);
+    sel(&mut s, &[group, r4]);
+    let outer = id_of(&s.execute("object.blend.make", &json!({})).unwrap());
+    sel(&mut s, &[outer, inner]);
+    let before = s.doc().unwrap().doc.clone();
+    let n = before.peek_next_id();
+    let r = s.execute("object.blend.release", &json!({})).unwrap();
+    assert_eq!(r["ids"], json!([group.0, r4.0, r1.0, r2.0]));
+    assert_eq!(r["spines"], json!([n, n + 1]));
+    let ids = |n: &Node| n.children().unwrap().iter().map(|c| c.id).collect::<Vec<_>>();
+    assert_eq!(ids(&s.doc().unwrap().doc.layers[0]), [NodeId(n), group, r4]);
+    assert_eq!(ids(&node(&s, group)), [NodeId(n + 1), r1, r2, r3]);
+    assert_eq!(s.doc().unwrap().selection.objects, [NodeId(n), NodeId(n + 1), group, r4, r1, r2]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(*s.doc().unwrap().doc == *before, "Undo gives back the document");
+}
+
 #[test]
 fn blend_expand_makes_group_with_unique_ids() {
     let mut s = session();
@@ -413,7 +442,8 @@ fn envelope_options_and_edit_contents() {
     let e = id_of(&s.execute("object.envelope.makeWithWarp", &json!({"style": "arc", "bend": 50})).unwrap());
     s.execute("object.envelope.options", &json!({"fidelity": 90, "bend": -30})).unwrap();
     match &node(&s, e).kind {
-        NodeKind::Envelope { fidelity, kind: EnvelopeKind::Warp { bend, style, .. }, .. } => {
+        NodeKind::Envelope { fidelity, kind, .. } => {
+            let EnvelopeKind::Warp { bend, style, .. } = &**kind else { panic!("{kind:?}") };
             assert!(close(*fidelity, 90.0) && close(*bend, -30.0) && style == "arc");
         }
         k => panic!("{k:?}"),
@@ -589,11 +619,7 @@ fn mesh_hit_test_inside() {
     sel(&mut s, &[a]);
     s.execute("object.mesh.create", &json!({"rows": 2, "cols": 2})).unwrap();
     let d = &s.doc().unwrap().doc;
-    let h = vectorcraft_doc::hit::hit_test(
-        d,
-        Point::new(50.0, 30.0),
-        vectorcraft_doc::hit::HitOptions { tol: 1.0, outline: false, path_only: false, inside: false },
-    );
+    let h = vectorcraft_doc::hit::hit_test(d, Point::new(50.0, 30.0), vectorcraft_doc::hit::HitOptions { tol: 1.0, ..Default::default() });
     assert_eq!(h.map(|h| h.leaf), Some(a));
 }
 

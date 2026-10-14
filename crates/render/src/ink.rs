@@ -15,6 +15,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vectorcraft_color::Color;
@@ -26,6 +27,7 @@ use vello_cpu::Pixmap;
 use vello_cpu::color::PremulRgba8;
 use vello_cpu::peniko;
 
+use crate::images::{self, ImageKey};
 use crate::{RenderOptions, Renderer};
 
 /// What a frame paints for colours.
@@ -38,13 +40,16 @@ pub(crate) enum Ink {
     Cmy,
     /// The complemented K ink, as a grey.
     K,
+    /// Screen colours, with pure CMYK black as RGB black ([`RenderOptions::rich_black`]).
+    RichBlack,
 }
 
 impl Ink {
     /// The three values painted for colour `c`.
     pub(crate) fn rgb(self, c: &Color) -> [f32; 3] {
-        match self {
-            Ink::Display => c.to_rgb(),
+        match (self, *c) {
+            (Ink::RichBlack, Color::Cmyk { c, m, y, k }) if is_pure_black([c, m, y, k]) => [0.0; 3],
+            (Ink::Display | Ink::RichBlack, _) => c.to_rgb(),
             _ => self.plane(inks(c)),
         }
     }
@@ -63,7 +68,7 @@ impl Ink {
 
     fn fixed8(self, [r, g, b, a]: [u8; 4]) -> [u8; 4] {
         match self {
-            Ink::Display => [r, g, b, a],
+            Ink::Display | Ink::RichBlack => [r, g, b, a],
             _ => {
                 let lab = lab::srgb_to_lab([r, g, b].map(|v| v as f32 / 255.0));
                 let [r, g, b] = self.plane(inks(&Color::Lab { l: lab.l, a: lab.a, b: lab.b })).map(q);
@@ -81,15 +86,36 @@ fn q(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-/// Whether `doc` is drawn by ink planes: a CMYK document that shows transparency, unless drawn
-/// in Outline view or Separations Preview (which paints plates).
-pub(crate) fn blends_in_cmyk(doc: &Document, opts: &RenderOptions) -> bool {
-    doc.color_mode == ColorMode::Cmyk
-        && !opts.outline
-        && opts.proof.as_ref().is_none_or(|p| p.separations.is_none())
-        && (doc.layers.iter().any(|l| l.shows_transparency())
-            || doc.symbols.iter().any(|s| s.art.shows_transparency())
-            || doc.patterns.iter().any(|p| p.art.iter().any(|a| a.shows_transparency())))
+/// Black ink alone at 100%: what Appearance of Black calls pure CMYK black.
+fn is_pure_black([c, m, y, k]: [f32; 4]) -> bool {
+    c <= 0.0 && m <= 0.0 && y <= 0.0 && k >= 1.0
+}
+
+impl Renderer {
+    /// Whether `doc` is drawn by ink planes: a CMYK document that shows transparency, unless drawn
+    /// in Outline view or Separations Preview (which paints plates).
+    pub(crate) fn blends_in_cmyk(&mut self, doc: &Document, opts: &RenderOptions) -> bool {
+        doc.color_mode == ColorMode::Cmyk
+            && !opts.outline
+            && opts.proof.as_ref().is_none_or(|p| p.separations.is_none())
+            && self.shows_transparency(doc)
+    }
+
+    /// Whether `doc`'s layers, symbol art or pattern art show transparency
+    /// ([`vectorcraft_doc::Node::shows_transparency`]). The answer is kept with that art (see
+    /// [`Self::transparency`]) and found again only when the document holds other art.
+    fn shows_transparency(&mut self, doc: &Document) -> bool {
+        let art = || doc.layers.iter().chain(doc.symbols.iter().map(|s| &s.art)).chain(doc.patterns.iter().flat_map(|p| &p.art));
+        if let Some((held, shows)) = &self.transparency
+            && held.len() == art().count()
+            && held.iter().zip(art()).all(|(h, a)| std::ptr::eq(h.as_ptr(), Arc::as_ptr(a)))
+        {
+            return *shows;
+        }
+        let shows = art().any(|a| a.shows_transparency());
+        self.transparency = Some((art().map(Arc::downgrade).collect(), shows));
+        shows
+    }
 }
 
 /// The inks of `c` in the working CMYK space: CMYK as it is, grey as black ink, RGB and Lab
@@ -138,59 +164,104 @@ impl InkLut {
     }
 }
 
-/// Placed images as painted with [`Ink::Cmy`] and [`Ink::K`], per image key, with the tables they
-/// were separated by.
-pub(crate) type InkImages = HashMap<String, (Arc<[ProofLut; 2]>, [Arc<Pixmap>; 2])>;
+/// A table built for the colour settings it was built with, and its generation (see [`cached`]).
+type Cached<T> = Mutex<Option<(Arc<Cms>, Arc<T>, u64)>>;
 
-/// A table built for the colour settings it was built with.
-type Cached<T> = Mutex<Option<(Arc<Cms>, Arc<T>)>>;
+/// The last table generation handed out: images made with a table are cached under its
+/// generation (see [`crate::images`]), and none is ever reused.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 static DISPLAY: Cached<InkLut> = Mutex::new(None);
 /// Screen colours → [`Ink::Cmy`] and [`Ink::K`] values (placed images).
 static SEPARATE: Cached<[ProofLut; 2]> = Mutex::new(None);
 
-/// The table in `slot` for the active colour settings, built by `build` when they changed.
-fn cached<T>(slot: &Cached<T>, build: impl FnOnce(&Cms) -> T) -> Arc<T> {
+/// The table in `slot` for the active colour settings, built by `build` when they changed, and
+/// its generation.
+fn cached<T>(slot: &Cached<T>, build: impl FnOnce(&Cms) -> T) -> (Arc<T>, u64) {
     let cms = cms::active();
     let mut s = slot.lock().unwrap_or_else(|e| e.into_inner());
     match &*s {
-        Some((owner, t)) if Arc::ptr_eq(owner, &cms) => t.clone(),
+        Some((owner, t, g)) if Arc::ptr_eq(owner, &cms) => (t.clone(), *g),
         _ => {
             let t = Arc::new(build(&cms));
-            *s = Some((cms, t.clone()));
-            t
+            let g = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+            *s = Some((cms, t.clone(), g));
+            (t, g)
         }
     }
 }
 
+/// [`compose`] puts at least this many pixels in each band but the last.
+const BAND_PIXELS: usize = 1 << 16;
+
 /// The picture of a CMYK document from its ink planes (premultiplied RGBA8 drawn with
-/// [`Ink::Cmy`] and [`Ink::K`]): each pixel's inks shown through the working CMYK profile. Where
-/// only the frame's `background` shows it keeps its exact screen colour.
-pub(crate) fn compose(cmy: &[u8], k: &[u8], background: Option<[u8; 4]>) -> Vec<u8> {
-    let lut = cached(&DISPLAY, InkLut::build);
-    let bg = background.map(|b| (Ink::Cmy.fixed8(b), Ink::K.fixed8(b), b));
-    let mut out = Vec::with_capacity(cmy.len());
+/// [`Ink::Cmy`] and [`Ink::K`]): each pixel's inks shown through the working CMYK profile (pure
+/// black as RGB black with [`RenderOptions::rich_black`]). Where only the `background` of `opts`
+/// shows it keeps its exact screen colour. The pixels are split into bands of one size (the last can
+/// be smaller): `threads` of them, or one per [`BAND_PIXELS`] pixels in the frame when that makes
+/// fewer, and at least one. This thread composes the first band, and a thread of its own composes
+/// each other band (this thread does when that one can't start). Returns the picture and the number
+/// of threads that composed it.
+pub(crate) fn compose(cmy: &[u8], k: &[u8], opts: &RenderOptions, threads: u16) -> (Vec<u8>, usize) {
+    let (lut, _) = cached(&DISPLAY, InkLut::build);
+    let bg = opts.background.map(|b| (Ink::Cmy.fixed8(b), Ink::K.fixed8(b), b));
+    let mut out = vec![0; cmy.len().min(k.len()) / 4 * 4];
+    let pixels = out.len() / 4;
+    let bands = (pixels / BAND_PIXELS).clamp(1, usize::from(threads).max(1));
+    let band = |o: &mut [u8], p: &[u8], q: &[u8]| compose_band(o, p, q, &lut, bg, opts.rich_black);
+    if bands == 1 {
+        band(&mut out, cmy, k);
+        return (out, 1);
+    }
+    let size = pixels.div_ceil(bands).max(1) * 4;
+    let mut unstarted = vec![];
+    let used = std::thread::scope(|s| {
+        let mut parts = out.chunks_mut(size).zip(cmy.chunks(size)).zip(k.chunks(size)).enumerate();
+        let first = parts.next();
+        let mut used = 1;
+        for (i, ((o, p), q)) in parts {
+            match std::thread::Builder::new().spawn_scoped(s, move || band(o, p, q)) {
+                Ok(_) => used += 1,
+                Err(_) => unstarted.push(i),
+            }
+        }
+        if let Some((_, ((o, p), q))) = first {
+            band(o, p, q);
+        }
+        used
+    });
+    for at in unstarted.into_iter().map(|i| i * size) {
+        let end = (at + size).min(out.len());
+        if let (Some(o), Some(p), Some(q)) = (out.get_mut(at..end), cmy.get(at..end), k.get(at..end)) {
+            band(o, p, q);
+        }
+    }
+    (out, used)
+}
+
+/// [`compose`] for one band: the pixels of `cmy` and `k` into `out`. `bg` is the background as
+/// the [`Ink::Cmy`] and [`Ink::K`] planes paint it, and its screen color.
+fn compose_band(out: &mut [u8], cmy: &[u8], k: &[u8], lut: &InkLut, bg: Option<([u8; 4], [u8; 4], [u8; 4])>, rich_black: bool) {
     // Runs of one colour convert once.
     let mut last: Option<([u8; 8], [u8; 4])> = None;
-    for (p, q) in cmy.as_chunks::<4>().0.iter().zip(k.as_chunks::<4>().0) {
+    for ((o, p), q) in out.as_chunks_mut::<4>().0.iter_mut().zip(cmy.as_chunks::<4>().0).zip(k.as_chunks::<4>().0) {
         let key = [p[0], p[1], p[2], p[3], q[0], q[1], q[2], q[3]];
-        let px = match (&last, &bg) {
+        *o = match (&last, &bg) {
             _ if p[3] == 0 => [0; 4],
             (Some((k0, v)), _) if *k0 == key => *v,
             (_, Some((bc, bk, b))) if p == bc && q == bk => *b,
             _ => {
                 let un = |v: u8, a: u8| if a == 0 { 1.0 } else { (v as f32 / a as f32).min(1.0) };
                 let a = p[3];
-                let rgb = lut.apply(planes_cmyk([un(p[0], a), un(p[1], a), un(p[2], a)], un(q[0], q[3])));
+                let inks = planes_cmyk([un(p[0], a), un(p[1], a), un(p[2], a)], un(q[0], q[3]));
+                let rgb = if rich_black && is_pure_black(inks) { [0.0; 3] } else { lut.apply(inks) };
                 let pm = |v: f32| (v.clamp(0.0, 1.0) * a as f32).round() as u8;
                 let v = [pm(rgb[0]), pm(rgb[1]), pm(rgb[2]), a];
                 last = Some((key, v));
                 v
             }
         };
-        out.extend_from_slice(&px);
     }
-    out
 }
 
 /// Each pixel's ink amounts (C, M, Y, K bytes, 0 = no ink) from its ink planes (premultiplied
@@ -204,9 +275,6 @@ pub(crate) fn amounts(cmy: &[u8], k: &[u8]) -> Vec<u8> {
         .flat_map(|(p, q)| [p[3].saturating_sub(p[0]), p[3].saturating_sub(p[1]), p[3].saturating_sub(p[2]), q[3].saturating_sub(q[0])])
         .collect()
 }
-
-/// CMYK images as shown, per image key, with the table they were shown through.
-pub(crate) type CmykImages = HashMap<String, (Arc<InkLut>, Arc<Pixmap>)>;
 
 /// Ink amounts `inks` shown through `lut` (opaque).
 fn inks_pixmap(inks: &Inks, lut: &InkLut) -> Option<Pixmap> {
@@ -231,70 +299,65 @@ fn inks_pixmap(inks: &Inks, lut: &InkLut) -> Option<Pixmap> {
     Some(Pixmap::from_parts(data, w, h))
 }
 
-impl Renderer {
-    /// The pixels of CMYK image `blob` (cached as `cache_key`): its inks shown through the working
-    /// CMYK profile, as CMYK colours are, again when the colour settings change. `None` for
-    /// other images.
-    pub(crate) fn cmyk_image(&mut self, blob: &ImageBlob, cache_key: &str) -> Option<Arc<Pixmap>> {
-        // Other images are cached as they are once decoded: only CMYK ones come here again.
-        let shown = self.cmyk_images.get(cache_key).cloned();
-        if shown.is_none() && !blob.is_cmyk() {
-            return None;
-        }
-        let lut = cached(&DISPLAY, InkLut::build);
-        if let Some((owner, pm)) = shown
-            && Arc::ptr_eq(&owner, &lut)
-        {
-            return Some(pm);
-        }
-        let pm = Arc::new(inks_pixmap(&blob.cmyk()?, &lut)?);
-        self.cmyk_images.insert(cache_key.to_string(), (lut, pm.clone()));
-        Some(pm)
-    }
+/// The working CMYK profile's display table (what CMYK images show through) and its generation.
+pub(crate) fn display_lut() -> (Arc<InkLut>, u64) {
+    cached(&DISPLAY, InkLut::build)
+}
 
-    /// Placed image `key` (decoded as `pm`, from `blob`) as painted with `ink`, cached.
-    pub(crate) fn ink_image(&mut self, key: &str, pm: &Arc<Pixmap>, ink: Ink, blob: Option<&ImageBlob>) -> Arc<Pixmap> {
-        if ink == Ink::Display {
-            return pm.clone();
-        }
-        let luts = cached(&SEPARATE, |cms| {
-            let intent = cms.settings().intent;
-            [Ink::Cmy, Ink::K].map(|ink| ProofLut::build(|rgb| ink.plane(cms.srgb_to_cmyk(rgb, intent))))
-        });
-        let at = (ink == Ink::K) as usize;
-        if let Some((owner, planes)) = self.ink_images.get(key)
-            && Arc::ptr_eq(owner, &luts)
-        {
-            return planes[at].clone();
-        }
-        // CMYK images paint their own inks; the others are separated.
-        let size = (pm.width() as u32, pm.height() as u32);
-        let inks = blob.filter(|_| self.cmyk_images.contains_key(key)).and_then(ImageBlob::cmyk).filter(|i| (i.width, i.height) == size);
-        let planes = [Ink::Cmy, Ink::K].map(|plane| {
-            let mut out = Pixmap::new(pm.width(), pm.height());
-            if let Some(inks) = &inks {
-                for (o, p) in out.data_mut().iter_mut().zip(inks.data.as_chunks::<4>().0) {
-                    let [r, g, b] = plane.plane(p.map(|v| v as f32 / 255.0)).map(q);
-                    *o = PremulRgba8 { r, g, b, a: 255 };
-                }
-                return Arc::new(out);
-            }
-            let lut = &luts[(plane == Ink::K) as usize];
-            for (o, s) in out.data_mut().iter_mut().zip(pm.data()) {
-                let a = s.a;
-                if a == 0 {
-                    continue;
-                }
-                let un = |v: u8| (v as f32 / a as f32).min(1.0);
-                let [r, g, b] = lut.apply([un(s.r), un(s.g), un(s.b)]).map(|v| (v.clamp(0.0, 1.0) * a as f32).round() as u8);
-                *o = PremulRgba8 { r, g, b, a };
-            }
-            Arc::new(out)
-        });
-        let out = planes[at].clone();
-        self.ink_images.insert(key.to_string(), (luts, planes));
-        out
+/// The pixels of CMYK image `blob`: its inks shown through `lut`. `None` for other images.
+pub(crate) fn cmyk_pixmap(blob: &ImageBlob, lut: &InkLut) -> Option<Pixmap> {
+    inks_pixmap(&blob.cmyk()?, lut)
+}
+
+/// Image pixels `pm` (cached as `key`, from `blob` when it is a document's image as it is) as
+/// painted with `ink`, cached with the images, and their key.
+pub(crate) fn ink_image(key: &ImageKey, pm: &Arc<Pixmap>, ink: Ink, blob: Option<&ImageBlob>, touch: bool) -> (ImageKey, Arc<Pixmap>) {
+    if matches!(ink, Ink::Display | Ink::RichBlack) {
+        return (key.clone(), pm.clone());
     }
+    let (luts, generation) = cached(&SEPARATE, |cms| {
+        let intent = cms.settings().intent;
+        [Ink::Cmy, Ink::K].map(|ink| ProofLut::build(|rgb| ink.plane(cms.srgb_to_cmyk(rgb, intent))))
+    });
+    let plane_key = |plane: Ink| ImageKey { ink: plane, luts: (key.luts.0, generation), ..key.clone() };
+    let want = plane_key(ink);
+    let hit = {
+        let mut s = images::store();
+        if touch { s.get(&want) } else { s.peek(&want) }
+    };
+    if let Some(p) = hit {
+        return (want, p);
+    }
+    // CMYK images (shown through the display table) paint their own inks; the others are separated.
+    let size = (pm.width() as u32, pm.height() as u32);
+    let cmyk = key.luts.0 != 0 && key.adjust.is_none() && !key.grey;
+    let inks = blob.filter(|_| cmyk).and_then(ImageBlob::cmyk).filter(|i| (i.width, i.height) == size);
+    let planes = [Ink::Cmy, Ink::K].map(|plane| {
+        let mut out = Pixmap::new(pm.width(), pm.height());
+        if let Some(inks) = &inks {
+            for (o, p) in out.data_mut().iter_mut().zip(inks.data.as_chunks::<4>().0) {
+                let [r, g, b] = plane.plane(p.map(|v| v as f32 / 255.0)).map(q);
+                *o = PremulRgba8 { r, g, b, a: 255 };
+            }
+            return Arc::new(out);
+        }
+        let lut = &luts[(plane == Ink::K) as usize];
+        for (o, s) in out.data_mut().iter_mut().zip(pm.data()) {
+            let a = s.a;
+            if a == 0 {
+                continue;
+            }
+            let un = |v: u8| (v as f32 / a as f32).min(1.0);
+            let [r, g, b] = lut.apply([un(s.r), un(s.g), un(s.b)]).map(|v| (v.clamp(0.0, 1.0) * a as f32).round() as u8);
+            *o = PremulRgba8 { r, g, b, a };
+        }
+        Arc::new(out)
+    });
+    let [cmy, k] = planes;
+    let mut s = images::store();
+    let cmy = s.insert(plane_key(Ink::Cmy), cmy);
+    let k = s.insert(plane_key(Ink::K), k);
+    (want, if ink == Ink::K { k } else { cmy })
 }
 
 #[cfg(test)]
@@ -324,12 +387,14 @@ mod tests {
         use vectorcraft_doc::{Appearance, ImageObject, Node, NodeKind};
         use vectorcraft_geom::{Affine, Rect, shapes};
 
+        use crate::Renderer;
+
         let ink = [0u8, 102, 255, 25];
         let mut d = Document::new_with_mode(20.0, 10.0, ColorMode::Cmyk);
         d.images.insert("img".into(), ImageBlob::cmyk_tiff(&Inks::new(2, 2, ink.repeat(4)).unwrap()).unwrap());
         let l = d.layers[0].id;
         let im = ImageObject { key: "img".into(), width: 2, height: 2, xf: Affine::scale(5.0), link: None, placement: Default::default() };
-        let n = Node::new(d.alloc_id(), NodeKind::Image(im));
+        let n = Node::new(d.alloc_id(), NodeKind::Image(Box::new(im)));
         d.insert(Some(l), 0, n).unwrap();
         // The same inks as a fill beside it.
         let fill = Color::cmyk(0.0, 0.4, 1.0, 25.0 / 255.0);

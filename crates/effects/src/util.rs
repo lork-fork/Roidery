@@ -72,7 +72,7 @@ pub fn seg_cubic(sp: &SubPath, i: usize) -> CubicBez {
 /// Non-linear path mapping (shared with live envelopes in `vectorcraft-doc`).
 pub use vectorcraft_doc::live::map_nonlinear;
 
-/// Smooth subpath through `pts` (Catmull-Rom tangents).
+/// Smooth subpath through `pts` (Catmull-Rom tangents, see [`turn_tangent`] for sharp turns).
 pub fn catmull_rom(pts: &[Point], closed: bool, tension: f64) -> SubPath {
     let n = pts.len();
     if n < 3 {
@@ -82,11 +82,36 @@ pub fn catmull_rom(pts: &[Point], closed: bool, tension: f64) -> SubPath {
         .map(|i| {
             let prev = if i == 0 { if closed { pts[n - 1] } else { pts[0] } } else { pts[i - 1] };
             let next = if i == n - 1 { if closed { pts[0] } else { pts[n - 1] } } else { pts[i + 1] };
-            let t: Vec2 = (next - prev) * (tension / 6.0);
+            let t: Vec2 = turn_tangent(prev, pts[i], next) * (tension / 6.0);
             Anchor::with_handles(pts[i], pts[i] - t, pts[i] + t)
         })
         .collect();
     SubPath::new(anchors, closed)
+}
+
+/// The Catmull-Rom tangent `next − prev` at `p`. Where the path turns back sharply, `next`
+/// nearly meets `prev` and that tangent shrinks to nothing: the anchor would be a cusp, which
+/// PDF viewers draw with a miter spike (#1643). So it is kept at least half as long as the
+/// longer chord, and there it follows the bisector of the two chords (the perpendicular of the
+/// incoming one when the path reverses exactly): the turn becomes a round hairpin. Turns of
+/// less than about 150° keep the plain Catmull-Rom tangent.
+fn turn_tangent(prev: Point, p: Point, next: Point) -> Vec2 {
+    let t = next - prev;
+    let (a, b) = (p - prev, next - p);
+    let floor = 0.5 * a.hypot().max(b.hypot());
+    if t.hypot() >= floor {
+        return t;
+    }
+    let unit = |v: Vec2| {
+        let l = v.hypot();
+        if l > 1e-12 { v / l } else { Vec2::ZERO }
+    };
+    let (u, v) = (unit(a), unit(b));
+    let mut d = unit(u + v);
+    if d == Vec2::ZERO {
+        d = Vec2::new(-u.y, u.x);
+    }
+    if d == Vec2::ZERO { t } else { d * floor }
 }
 
 /// Unit normal (left of travel direction in y-down coordinates) of cubic `c` at `t`.

@@ -62,6 +62,12 @@ fn text_of(d: &Document, id: NodeId) -> Option<&TextObject> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: how many threads' stories [`reflow`] copied on this thread.
+    static COPIED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Re-flow every thread with a frame that changed between `before` and `doc` (structural sharing
 /// makes "changed" a pointer comparison). Deleted frames' text flows into the remaining ones.
 pub(crate) fn reflow(before: &Document, doc: &mut Document) {
@@ -73,35 +79,69 @@ pub(crate) fn reflow(before: &Document, doc: &mut Document) {
             (None, None) => false,
             _ => true,
         });
-        // The story: live frames' runs, plus the text of frames deleted by this edit.
-        let mut story: Vec<TextRun> = vec![];
-        let mut live = vec![];
-        for id in &thread {
-            match (text_of(doc, *id), text_of(before, *id)) {
-                (Some(t), _) => {
-                    story.extend(t.runs.iter().cloned());
-                    live.push(*id);
-                }
-                (None, Some(old)) => story.extend(old.runs.iter().cloned()),
-                (None, None) => {}
-            }
-        }
-        if !changed || live.is_empty() {
+        // When no frame changed, the thread keeps its area-type frames and their text is not copied.
+        if !changed {
+            let live: Vec<NodeId> = thread.into_iter().filter(|id| text_of(doc, *id).is_some()).collect();
             if live.len() >= 2 {
                 kept.push(live);
             }
             continue;
         }
+        #[cfg(test)]
+        COPIED.with(|c| c.set(c.get() + 1));
+        // The story: live frames' runs, plus the text of frames deleted by this edit.
+        let mut story: Vec<TextRun> = vec![];
+        let mut sources: Vec<TextObject> = vec![];
+        let mut later_wins = vec![];
+        let mut live = vec![];
+        for id in &thread {
+            match (text_of(doc, *id), text_of(before, *id)) {
+                (Some(t), old) => {
+                    story.extend(t.runs.iter().cloned());
+                    // A frame whose first paragraph was just restyled gives the paragraph it
+                    // shares with the frame before it that style.
+                    later_wins.push(old.is_some_and(|o| o.para_at(0) != t.para_at(0)));
+                    sources.push(t.clone());
+                    live.push(*id);
+                }
+                (None, Some(old)) => {
+                    story.extend(old.runs.iter().cloned());
+                    later_wins.push(false);
+                    sources.push(old.clone());
+                }
+                (None, None) => {}
+            }
+        }
+        if live.is_empty() {
+            continue;
+        }
+        let source_refs: Vec<&TextObject> = sources.iter().collect();
+        let paras = vectorcraft_text::thread::story_paras(&source_refs, &later_wins);
         vectorcraft_text::edit::normalize(&mut story);
+        if live.len() >= 2 {
+            // Threaded frames keep their size: Auto Size is off for them (as in Illustrator).
+            for id in &live {
+                if text_of(doc, *id).is_some_and(|t| t.area.fit == vectorcraft_doc::AreaFit::AutoHeight)
+                    && let Some(NodeKind::Text(t)) = doc.node_mut(*id).map(|n| &mut n.kind)
+                {
+                    t.area.fit = vectorcraft_doc::AreaFit::None;
+                }
+            }
+        }
         let frames: Vec<TextObject> = live.iter().filter_map(|id| text_of(doc, *id).cloned()).collect();
         let refs: Vec<&TextObject> = frames.iter().collect();
-        let parts = vectorcraft_text::thread::distribute(vectorcraft_text::FontDb::global(), &refs, &story);
-        for (id, runs) in live.iter().zip(parts) {
-            if let Some(NodeKind::Text(t)) = doc.node_mut(*id).map(|n| &mut n.kind)
-                && t.runs != runs
-            {
-                t.runs = runs;
-                refresh_bounds(t);
+        let parts = vectorcraft_text::thread::distribute(vectorcraft_text::FontDb::global(), &refs, &story, &paras);
+        for (id, part) in live.iter().zip(parts) {
+            if let Some(NodeKind::Text(t)) = doc.node_mut(*id).map(|n| &mut n.kind) {
+                let mut next = (**t).clone();
+                next.runs = part.runs;
+                next.set_paragraph_styles(part.paras);
+                if next.runs != t.runs || next.para != t.para || next.paras != t.paras {
+                    t.runs = next.runs;
+                    t.para = next.para;
+                    t.paras = next.paras;
+                    refresh_bounds(t);
+                }
             }
         }
         if live.len() >= 2 {
@@ -183,15 +223,17 @@ fn release(s: &mut Session, _: &Value) -> Result<Value> {
                 continue;
             }
             let mut story: Vec<TextRun> = vec![];
-            for id in &thread {
-                if let Some(t) = text_of(d, *id) {
-                    story.extend(t.runs.iter().cloned());
-                }
+            let sources: Vec<TextObject> = thread.iter().filter_map(|id| text_of(d, *id).cloned()).collect();
+            for t in &sources {
+                story.extend(t.runs.iter().cloned());
             }
+            let paras = vectorcraft_text::thread::story_paras(&sources.iter().collect::<Vec<_>>(), &[]);
             let style = story.first().map(|r| r.style.clone()).unwrap_or_default();
+            let first_para = paras.first().cloned().unwrap_or_default();
             for id in &out {
                 if let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) {
-                    t.runs = vec![TextRun { text: String::new(), style: style.clone() }];
+                    t.runs = vec![TextRun { text: String::new(), style: style.clone(), inline: None }];
+                    t.set_all_paras(first_para.clone());
                     refresh_bounds(t);
                 }
             }
@@ -200,6 +242,7 @@ fn release(s: &mut Session, _: &Value) -> Result<Value> {
             {
                 vectorcraft_text::edit::normalize(&mut story);
                 t.runs = story;
+                t.set_paragraph_styles(paras);
             }
             let i = d.text_threads.iter().position(|t| *t == thread).unwrap_or(0);
             d.text_threads[i] = keep;
@@ -261,6 +304,113 @@ mod tests {
         assert!(s.doc().unwrap().doc.text_threads.is_empty(), "a one-frame thread is no thread");
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.doc().unwrap().doc.text_threads.len(), 1);
+    }
+
+    #[test]
+    fn edits_copy_only_the_stories_of_threads_whose_frames_changed() {
+        let (mut s, a, b) = setup();
+        s.execute("text.thread.create", &json!({})).unwrap();
+        let c = s.execute("text.create", &json!({"x": 10, "y": 200, "text": TEXT.repeat(2), "area": {"width": 150, "height": 40}})).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let d = s.execute("shape.rectangle", &json!({"x": 200, "y": 220, "width": 150, "height": 60})).unwrap()["id"].as_u64().unwrap();
+        s.execute("select.set", &json!({"ids": [c, d]})).unwrap();
+        s.execute("text.thread.create", &json!({})).unwrap();
+        let texts = |s: &Session| [a, b, c, d].map(|id| text(s, id));
+        let copied = || COPIED.with(std::cell::Cell::get);
+        let (shown, start) = (texts(&s), copied());
+        // A rectangle drawn, moved and dragged beside the threads changes none of their frames.
+        let r = s.execute("shape.rectangle", &json!({"x": 400, "y": 250, "width": 20, "height": 20})).unwrap()["id"].as_u64().unwrap();
+        s.execute("select.set", &json!({"ids": [r]})).unwrap();
+        s.execute("object.move", &json!({"dx": 5, "dy": 0})).unwrap();
+        s.begin_interaction("Move").unwrap();
+        for dx in 1..=3 {
+            s.preview("object.move", &json!({"dx": dx, "dy": 0})).unwrap();
+        }
+        s.commit_interaction().unwrap();
+        assert_eq!(copied(), start, "edits beside the threads copied their stories");
+        assert_eq!(texts(&s), shown);
+        // Typing in the first thread copies and re-flows that thread's story only.
+        s.execute("text.editRange", &json!({"id": a, "start": 0, "end": 0, "insert": "NEW "})).unwrap();
+        assert_eq!(copied(), start + 1);
+        assert_eq!(format!("{}{}", text(&s, a), text(&s, b)), format!("NEW {}", TEXT.repeat(4)));
+        assert_eq!(texts(&s)[2..], shown[2..]);
+        let ids = |t: [u64; 2]| t.map(NodeId).to_vec();
+        assert_eq!(s.doc().unwrap().doc.text_threads, [ids([a, b]), ids([c, d])]);
+    }
+
+    /// Time edits of a story of 50,000 characters threaded through 8 frames, each frame wrapping
+    /// around an ellipse, with one style, a style change every 10 words and a style change at every
+    /// word: 21 characters typed into the first frame, then 200 moves of a rectangle below the
+    /// frames and 200 frames of a drag of it.
+    /// Run with `cargo test --release -p vectorcraft-engine --lib threaded_story_edit_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "manual timing probe; wall-clock performance depends on machine load"]
+    fn threaded_story_edit_timing() {
+        fn median(s: &mut Session, n: u32, f: &dyn Fn(&mut Session, f64)) -> f64 {
+            let mut ms: Vec<f64> = (1..=n)
+                .map(|i| {
+                    let start = std::time::Instant::now();
+                    f(s, f64::from(i));
+                    start.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            ms.sort_by(f64::total_cmp);
+            ms[ms.len() / 2]
+        }
+        let story = format!("{}\n", TEXT.repeat(6).trim_end()).repeat(81)[..50_000].to_string();
+        for words in [0, 10, 1] {
+            let mut s = Session::new();
+            s.execute("file.new", &json!({"width": 4400, "height": 1200})).unwrap();
+            let area = json!({"width": 500, "height": 900});
+            let first = s.execute("text.create", &json!({"x": 20, "y": 20, "text": story, "size": 9, "area": area})).unwrap()["id"].as_u64().unwrap();
+            if words > 0 {
+                s.edit("Restyle", |d, _| {
+                    let Some(NodeKind::Text(t)) = d.node_mut(NodeId(first)).map(|n| &mut n.kind) else { panic!("not text") };
+                    let style = t.runs[0].style.clone();
+                    let pieces: Vec<&str> = story.split_inclusive([' ', '\n']).collect();
+                    t.runs = pieces
+                        .chunks(words)
+                        .enumerate()
+                        .map(|(i, c)| {
+                            let mut run = TextRun::new(c.concat(), style.clone());
+                            run.style.underline = i % 2 == 1;
+                            run
+                        })
+                        .collect();
+                    refresh_bounds(t);
+                    Ok(())
+                })
+                .unwrap();
+            }
+            let mut ids = vec![first];
+            for k in 1..8 {
+                let frame = json!({"x": 20 + k * 540, "y": 20, "width": 500, "height": 900});
+                ids.push(s.execute("shape.rectangle", &frame).unwrap()["id"].as_u64().unwrap());
+            }
+            s.execute("select.set", &json!({"ids": ids})).unwrap();
+            s.execute("text.thread.create", &json!({})).unwrap();
+            for k in 0..8 {
+                let e = s.execute("shape.ellipse", &json!({"x": 195 + k * 540, "y": 395, "width": 150, "height": 150})).unwrap()["id"].clone();
+                s.execute("object.textWrap.make", &json!({"ids": [e]})).unwrap();
+            }
+            let r = s.execute("shape.rectangle", &json!({"x": 20, "y": 1100, "width": 30, "height": 30})).unwrap()["id"].clone();
+            s.execute("select.set", &json!({"ids": [r]})).unwrap();
+            let typing = median(&mut s, 21, &|s, _| {
+                s.execute("text.editRange", &json!({"id": first, "start": 0, "end": 0, "insert": "x"})).unwrap();
+            });
+            let edit = median(&mut s, 200, &|s, _| {
+                s.execute("object.move", &json!({"dx": 0.5, "dy": 0})).unwrap();
+            });
+            s.begin_interaction("Move").unwrap();
+            let frame = median(&mut s, 200, &|s, i| {
+                s.preview("object.move", &json!({"dx": i * 0.25, "dy": 0})).unwrap();
+            });
+            s.commit_interaction().unwrap();
+            let d = &s.doc().unwrap().doc;
+            let runs: usize = ids.iter().filter_map(|id| text_of(d, NodeId(*id))).map(|t| t.runs.len()).sum();
+            println!("{runs} runs in 8 frames: typing {typing:.1} ms, a move below them {edit:.3} ms, a drag frame {frame:.3} ms (medians)");
+        }
     }
 
     #[test]

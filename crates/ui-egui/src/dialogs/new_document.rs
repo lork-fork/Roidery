@@ -190,7 +190,7 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 ui.vertical(|ui| {
                     ui.set_width(640.0);
                     ui.set_min_height(HEIGHT - 32.0);
-                    presets(app, ui, &mut d);
+                    b.create |= presets(app, ui, &mut d);
                 });
             });
             egui::Frame::NONE.fill(t.panel_darker).inner_margin(egui::Margin::same(18)).show(ui, |ui| {
@@ -205,8 +205,9 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     b.finish(app, ctx, d);
 }
 
-/// The category tabs and the chosen category's preset cards.
-fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
+/// The category tabs and the chosen category's preset cards: a click chooses one, a double-click
+/// also creates it (true then).
+fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let t = Tokens::get(ui.ctx());
     let names: Vec<&str> = newdoc::category_names().collect();
     let cat = names.iter().position(|n| n.eq_ignore_ascii_case(&d.str("category"))).unwrap_or(0);
@@ -227,20 +228,24 @@ fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
     if list.is_empty() {
         let hint = if cat == 1 { tl!("Presets you save with the Save Preset button appear here.") } else { tl!("Documents you create appear here.") };
         ui.label(egui::RichText::new(hint).color(t.text_dim));
-        return;
+        return false;
     }
+    let mut create = false;
     egui::ScrollArea::vertical().id_salt(("newdoc-presets", cat)).max_height(HEIGHT - 110.0).auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
             let (w, h, preset) = (d.f64("width", 0.0), d.f64("height", 0.0), d.str("preset"));
             for s in &list {
                 let selected = d.fields.contains_key(APPLIED) && s.name == preset && s.width == w && s.height == h;
-                if preset_card(ui, s, selected).clicked() {
+                let card = preset_card(ui, s, selected);
+                if card.clicked() || card.double_clicked() {
                     apply(d, s);
                 }
+                create |= card.double_clicked();
             }
         });
     });
+    create
 }
 
 /// Is `name` a built-in preset's? Those are ours (translated); Recent and Saved hold the names of
@@ -250,7 +255,7 @@ fn is_builtin_preset(name: &str) -> bool {
 }
 
 /// A preset's name as shown: a built-in one translated, the user's as it is.
-fn preset_name(name: &str) -> &str {
+pub(crate) fn preset_name(name: &str) -> &str {
     if is_builtin_preset(name) { tl!(name) } else { name }
 }
 
@@ -299,7 +304,9 @@ fn details(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, b: &mut 
             let saving = !d.bool(SAVING);
             d.fields.insert(SAVING.into(), json!(saving));
             if saving && d.str("presetName").is_empty() {
-                d.fields.insert("presetName".into(), json!(format!("Preset {}", app.session.prefs.new_doc_presets.len() + 1)));
+                let template = "Preset {number}";
+                let name = crate::i18n::fmt(tl!(template), &[("number", &(app.session.prefs.new_doc_presets.len() + 1).to_string())]);
+                d.fields.insert("presetName".into(), json!(name));
             }
         }
     });
@@ -345,7 +352,7 @@ fn details(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, b: &mut 
     // Close and Create at the bottom right.
     ui.add_space((HEIGHT - (ui.cursor().top() - top) - 28.0).max(12.0));
     ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        b.create = widgets::primary_button(ui, tl!("Create")).clicked();
+        b.create |= widgets::primary_button(ui, tl!("Create")).clicked();
         ui.add_space(8.0);
         b.close = widgets::secondary_button(ui, tl!("Close")).clicked();
     });
@@ -441,17 +448,8 @@ fn choice(ui: &mut egui::Ui, d: &mut Dialog, key: &str, options: &[(Value, Strin
 
 /// The collapsible Advanced Options: Color Mode, Raster Effects and Preview Mode.
 fn advanced(ui: &mut egui::Ui, d: &mut Dialog, label: f32, field: f32) {
-    let t = Tokens::get(ui.ctx());
     let open = d.bool("advanced");
-    let resp = ui
-        .horizontal(|ui| {
-            let (r, _) = ui.allocate_exact_size(egui::vec2(14.0, 18.0), egui::Sense::hover());
-            crate::icons::paint(ui, if open { "chevron-down" } else { "chevron-right" }, r, t.icon);
-            ui.label(egui::RichText::new(tl!("Advanced Options")).color(t.text));
-        })
-        .response
-        .interact(egui::Sense::click());
-    if resp.clicked() {
+    if widgets::section_toggle(ui, tl!("Advanced Options"), open) {
         d.fields.insert("advanced".into(), json!(!open));
     }
     if !open {
@@ -567,7 +565,7 @@ fn show_more(app: &mut VectorcraftApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             templates = widgets::secondary_button(ui, tl!("Templates…")).on_hover_text(tl!("New from Template")).clicked();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                b.create = widgets::primary_button(ui, tl!("Create Document")).clicked();
+                b.create |= widgets::primary_button(ui, tl!("Create Document")).clicked();
                 ui.add_space(8.0);
                 // Cancel goes back to New Document.
                 if widgets::secondary_button(ui, tl!("Cancel")).clicked() {
@@ -617,6 +615,51 @@ mod tests {
 
     fn field(app: &VectorcraftApp, k: &str) -> serde_json::Value {
         app.ui.dialog.as_ref().unwrap().fields.get(k).cloned().unwrap_or_default()
+    }
+
+    /// A double-click on a preset card creates the document from it (#663); a click only chooses it.
+    #[test]
+    fn a_double_clicked_preset_creates_the_document() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.newDialog", json!({})).unwrap();
+        set(&mut app, "category", json!("Mobile"));
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        // Frames 50 ms apart, so two clicks a frame apart make a double-click.
+        let mut time = 0.0;
+        let mut run = |app: &mut VectorcraftApp, events| {
+            time += 0.05;
+            let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1000.0)));
+            let raw = egui::RawInput { screen_rect, events, time: Some(time), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| crate::dialogs::show(app, ui.ctx()));
+            out.textures_delta.clear();
+            out
+        };
+        run(&mut app, vec![]);
+        // The first card of the category, found by its size line.
+        let card = |app: &mut VectorcraftApp, run: &mut dyn FnMut(&mut VectorcraftApp, Vec<egui::Event>) -> egui::FullOutput| {
+            let out = run(app, vec![]);
+            let mut texts = vec![];
+            fn walk(s: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+                match s {
+                    egui::Shape::Text(t) => out.push((t.galley.text().to_string(), t.visual_bounding_rect())),
+                    egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                    _ => {}
+                }
+            }
+            out.shapes.iter().for_each(|c| walk(&c.shape, &mut texts));
+            texts.into_iter().find(|(t, _)| t.starts_with("Phone 393")).map(|(_, r)| r.center()).unwrap()
+        };
+        let at = card(&mut app, &mut run);
+        let press = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        run(&mut app, vec![egui::Event::PointerMoved(at), press(true)]);
+        run(&mut app, vec![press(false)]);
+        assert!(app.ui.dialog.is_some() && app.session.documents().is_empty(), "a click only chooses it");
+        assert!(field(&app, "preset").as_str().is_some_and(|p| p == "Phone 393×852"), "{:?}", field(&app, "preset"));
+        run(&mut app, vec![press(true)]);
+        run(&mut app, vec![press(false)]);
+        assert!(app.ui.dialog.is_none(), "the double-click created it: {:?}", app.ui.status);
+        assert_eq!(app.session.documents().len(), 1);
     }
 
     #[test]

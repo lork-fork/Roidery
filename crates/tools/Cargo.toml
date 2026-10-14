@@ -20,3 +20,4 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 image = { workspace = true }
+vectorcraft-text = { workspace = true, features = ["test-fonts"] }

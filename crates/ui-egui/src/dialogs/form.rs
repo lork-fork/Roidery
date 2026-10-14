@@ -23,7 +23,7 @@ pub(super) fn field_w(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str,
 }
 
 /// The label cell of a grid row.
-fn row_label(ui: &mut egui::Ui, label: &str) {
+pub(super) fn row_label(ui: &mut egui::Ui, label: &str) {
     let t = Tokens::get(ui.ctx());
     ui.label(egui::RichText::new(tl!(label)).color(t.text_dim));
 }
@@ -49,15 +49,24 @@ pub(super) fn length(ui: &mut egui::Ui, d: &mut Dialog, key: &str, unit: Unit, w
 fn lengths(kind: &str) -> &'static [&'static str] {
     match kind {
         "move" => &["dx", "dy"],
-        "rectangle" | "ellipse" | "artboardOptions" => &["width", "height"],
+        "rectangle" | "ellipse" | "rectangularGrid" | "polarGrid" | "artboardOptions" => &["width", "height"],
         "roundedRectangle" => &["width", "height", "radius"],
         "polygon" => &["radius"],
         "star" => &["radius1", "radius2"],
         "lineSegment" => &["length"],
         "offsetPath" => &["offset"],
         "simplify" => &["tolerance"],
-        "splitIntoGrid" => &["gutter"],
         _ => &[],
+    }
+}
+
+/// The fields of the form dialogs ([`grid`]) that are angles or percentages, with what follows the
+/// number: fields that ↑/↓ step by one (Shift: ten) and that do math, as the distances do.
+fn suffix(kind: &str, key: &str) -> Option<&'static str> {
+    match (kind, key) {
+        ("rotate" | "shear" | "reflect", "angle") => Some("°"),
+        ("scale", "sx" | "sy") => Some("%"),
+        _ => None,
     }
 }
 
@@ -66,8 +75,22 @@ fn lengths(kind: &str) -> &'static [&'static str] {
 fn order(kind: &str) -> &'static [&'static str] {
     match kind {
         "offsetPath" => &["offset", "joins", "miterLimit"],
-        "splitIntoGrid" => &["rows", "columns", "gutter"],
+        "rectangularGrid" => &["width", "height", "rows", "rowSkew", "columns", "columnSkew"],
+        "polarGrid" => &["width", "height", "concentric", "concentricSkew", "radial", "radialSkew"],
+        "artboardOptions" => &["name", "width", "height"],
         _ => &[],
+    }
+}
+
+/// The form dialog ([`grid`]) fields that are a grid tool's divider skew, a slider in percent: the
+/// words at the two ends of its rail (where the dividers crowd to), in the UI language.
+fn skew_ends(kind: &str, key: &str) -> Option<(&'static str, &'static str)> {
+    match (kind, key) {
+        ("rectangularGrid", "rowSkew") => Some((tl!("Bottom"), tl!("Top"))),
+        // The radial dividers gather on that side of the top one.
+        ("rectangularGrid", "columnSkew") | ("polarGrid", "radialSkew") => Some((tl!("Left"), tl!("Right"))),
+        ("polarGrid", "concentricSkew") => Some((tl!("Inside"), tl!("Outside"))),
+        _ => None,
     }
 }
 
@@ -80,7 +103,8 @@ fn choices(kind: &str, key: &str) -> Vec<(&'static str, &'static str)> {
     match (kind, key) {
         ("offsetPath", "joins") => vec![("miter", tl!("Miter")), ("round", tl!("Round")), ("bevel", tl!("Bevel"))],
         ("average", "axis") => vec![axis("horizontal", "Horizontal"), axis("vertical", "Vertical"), axis("both", "Both")],
-        ("reflect" | "shear", "axis") => vec![axis("horizontal", "Horizontal"), axis("vertical", "Vertical")],
+        ("reflect", "axis") => vec![axis("horizontal", "Horizontal"), axis("vertical", "Vertical"), axis("angle", "Angle")],
+        ("shear", "axis") => vec![axis("horizontal", "Horizontal"), axis("vertical", "Vertical")],
         _ => vec![],
     }
 }
@@ -101,7 +125,10 @@ pub(super) fn text_edit(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32
         .stroke(egui::Stroke::new(1.0, t.input_border))
         .corner_radius(egui::CornerRadius::same(3))
         .inner_margin(egui::Margin::symmetric(6, 3))
-        .show(ui, |ui| ui.add(egui::TextEdit::singleline(&mut s).id(id).frame(egui::Frame::NONE).desired_width(width)));
+        .show(ui, |ui| {
+            crate::theme::strong_selected_text(ui);
+            ui.add(egui::TextEdit::singleline(&mut s).id(id).frame(egui::Frame::NONE).desired_width(width))
+        });
     if r.inner.changed() {
         d.fields.insert(key.into(), Value::String(s));
     }
@@ -118,7 +145,10 @@ pub(super) fn text_area(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32
         .stroke(egui::Stroke::new(1.0, t.input_border))
         .corner_radius(egui::CornerRadius::same(3))
         .inner_margin(egui::Margin::symmetric(6, 3))
-        .show(ui, |ui| ui.add(egui::TextEdit::multiline(&mut s).frame(egui::Frame::NONE).desired_width(width).desired_rows(rows)));
+        .show(ui, |ui| {
+            crate::theme::strong_selected_text(ui);
+            ui.add(egui::TextEdit::multiline(&mut s).frame(egui::Frame::NONE).desired_width(width).desired_rows(rows))
+        });
     if r.inner.changed() {
         d.fields.insert(key.into(), Value::String(s));
     }
@@ -128,11 +158,11 @@ pub(super) fn text_area(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32
     r.inner
 }
 
-/// A checkbox bound to `d.fields[key]`.
+/// A checkbox bound to `d.fields[key]` (its box shows while unchecked too).
 pub(super) fn check(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
-    let mut b = d.bool(key);
-    if ui.checkbox(&mut b, tl!(label)).changed() {
-        d.fields.insert(key.into(), Value::Bool(b));
+    let b = d.bool(key);
+    if crate::widgets::check(ui, label, b, true) {
+        d.fields.insert(key.into(), Value::Bool(!b));
     }
 }
 
@@ -160,8 +190,10 @@ fn dropdown(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f32, options: &
 }
 
 /// The generic dialog body: a field per non-boolean value (positions, indices and UI-only keys
-/// hidden) in the kind's [`order`], the distances in `unit`, the [`choices`] as dropdowns.
+/// hidden) in the kind's [`order`], the distances in `unit`, the [`choices`] as dropdowns and the
+/// [`skew_ends`] fields as sliders.
 pub(super) fn grid(ui: &mut egui::Ui, d: &mut Dialog, unit: Unit) {
+    let rail = Tokens::get(ui.ctx()).input_border;
     let (lengths, first) = (lengths(&d.kind), order(&d.kind));
     let mut keys: Vec<String> = d
         .fields
@@ -176,8 +208,29 @@ pub(super) fn grid(ui: &mut egui::Ui, d: &mut Dialog, unit: Unit) {
             let options = choices(&d.kind, &k);
             if lengths.contains(&k.as_str()) {
                 length_field(ui, d, &k, &humanized(&k), unit);
+            } else if let Some(suffix) = suffix(&d.kind, &k) {
+                row_label(ui, &humanized(&k));
+                if let Some(v) = crate::widgets::plain_field(ui, ("dlg-num", &k), d.f64(&k, 0.0), suffix, 3, FIELD_W) {
+                    d.fields.insert(k, json!(v));
+                }
+                ui.end_row();
+            } else if let Some(ends) = skew_ends(&d.kind, &k) {
+                let max = vectorcraft_geom::shapes::GRID_SKEW_MAX;
+                row_label(ui, tl!("Skew:"));
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| slider_field(ui, d, &k, -max..=max, "%", &|_| rail));
+                    rail_ends(ui, ends);
+                });
+                ui.end_row();
             } else if options.is_empty() {
-                field(ui, d, &k, &humanized(&k));
+                let label = match (d.kind.as_str(), k.as_str()) {
+                    ("rectangularGrid", "rows") => tl!("Horizontal Dividers:").into(),
+                    ("rectangularGrid", "columns") => tl!("Vertical Dividers:").into(),
+                    ("polarGrid", "concentric") => tl!("Concentric Dividers:").into(),
+                    ("polarGrid", "radial") => tl!("Radial Dividers:").into(),
+                    _ => humanized(&k),
+                };
+                field(ui, d, &k, &label);
             } else {
                 row_label(ui, &humanized(&k));
                 dropdown(ui, d, &k, FIELD_W, &options, true);
@@ -197,21 +250,26 @@ pub(super) type Choices = &'static [(&'static str, &'static str)];
 
 /// Generic editor for command/effect parameters: numbers, booleans, strings and colours; the
 /// parameters `is_length` names are distances shown and typed in `unit`, those `choices` gives
-/// choices for are dropdowns. Returns true when a value changed.
+/// choices for are dropdowns. Fields come in `rank` order (by name among equals). Returns true when
+/// a value changed.
 pub(super) fn param_fields(
     ui: &mut egui::Ui,
     d: &mut Dialog,
     is_length: &dyn Fn(&str) -> bool,
     choices: &dyn Fn(&str) -> Option<Choices>,
+    rank: &dyn Fn(&str) -> usize,
     unit: Unit,
 ) -> bool {
     let t = Tokens::get(ui.ctx());
     let mut changed = false;
     egui::Grid::new("fxgrid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-        let keys: Vec<(String, Value)> =
+        let mut keys: Vec<(String, Value)> =
             d.fields.iter().filter(|(k, _)| !k.starts_with("__") && k.as_str() != "preview").map(|(k, v)| (k.clone(), v.clone())).collect();
+        keys.sort_by_key(|(k, _)| rank(k));
         for (k, v) in keys {
-            ui.label(egui::RichText::new(humanized(&k)).color(t.text));
+            // A size's Relative / Absolute pair (Roughen, Zig Zag, Tweak) is its own label.
+            let relative = k == "relative" && v.is_boolean();
+            ui.label(egui::RichText::new(if relative { String::new() } else { humanized(&k) }).color(t.text));
             if let Some(cur) = crate::widgets::blend_param(&k, &v) {
                 if let Some(m) = crate::widgets::blend_param_dropdown(ui, ("fx-blend", &k), cur) {
                     d.fields.insert(k, m);
@@ -226,10 +284,13 @@ pub(super) fn param_fields(
                 continue;
             }
             if let Some(options) = choices(&k) {
+                // In the "effect" context: some languages read the plain Soft, Horizontal and
+                // Vertical (Grain's types) as type settings.
+                let shown = |label: &'static str| crate::i18n::tr_ctx(crate::i18n::current(), "effect", label);
                 let cur = v.as_str().unwrap_or_default();
-                let label = options.iter().find(|(_, value)| *value == cur).map_or(cur, |(l, _)| *l);
-                let labels: Vec<&str> = options.iter().map(|(l, _)| *l).collect();
-                if let Some((_, value)) = crate::widgets::dropdown(ui, ("fx-choice", &k), label, &labels, 140.0).and_then(|i| options.get(i)) {
+                let label = options.iter().find(|(_, value)| *value == cur).map_or(cur, |(l, _)| shown(l));
+                let labels: Vec<&str> = options.iter().map(|(l, _)| shown(l)).collect();
+                if let Some((_, value)) = crate::widgets::dropdown_names(ui, ("fx-choice", &k), label, &labels, 140.0).and_then(|i| options.get(i)) {
                     d.fields.insert(k, json!(value));
                     changed = true;
                 }
@@ -238,16 +299,24 @@ pub(super) fn param_fields(
             }
             match v {
                 Value::Number(n) => {
-                    let mut x = n.as_f64().unwrap_or(0.0);
-                    let speed = if x.abs() > 20.0 { 1.0 } else { 0.1 };
-                    if ui.add(egui::DragValue::new(&mut x).speed(speed).max_decimals(2)).changed() {
-                        d.fields.insert(k, json!(x));
+                    if let Some(x) = crate::widgets::plain_field(ui, ("fx-num", &k), n.as_f64().unwrap_or(0.0), "", 3, 140.0) {
+                        d.fields.insert(k, typed_number(x));
                         changed = true;
                     }
                 }
-                Value::Bool(mut b) => {
-                    if ui.checkbox(&mut b, "").changed() {
-                        d.fields.insert(k, json!(b));
+                Value::Bool(b) if relative => {
+                    ui.horizontal(|ui| {
+                        for (label, on) in [(tl!("Relative"), true), (tl!("Absolute"), false)] {
+                            if crate::widgets::radio(ui, label, b == on, true) && b != on {
+                                d.fields.insert(k.clone(), json!(on));
+                                changed = true;
+                            }
+                        }
+                    });
+                }
+                Value::Bool(b) => {
+                    if crate::widgets::check(ui, "", b, true) {
+                        d.fields.insert(k, json!(!b));
                         changed = true;
                     }
                 }
@@ -274,6 +343,13 @@ pub(super) fn param_fields(
     changed
 }
 
+/// A number typed in a command's dialog as JSON: a whole number as an integer, as counts are read
+/// (`as_u64`: Object Mosaic's columns and rows, #1000), which `12.0` isn't; a fraction stays one.
+/// Commands that take any number read either.
+fn typed_number(x: f64) -> Value {
+    if x.fract() == 0.0 && x.abs() < 1e15 { json!(x as i64) } else { json!(x) }
+}
+
 /// Editor for a plug-in's parameters from its schema (plug-in filter and effect dialogs): numbers
 /// within their range, whole numbers, checkboxes and dropdowns, in declaration order. Returns
 /// true when a value changed. The labels (from the parameter keys) and choices are the plug-in's
@@ -288,17 +364,27 @@ pub(super) fn schema_fields(ui: &mut egui::Ui, d: &mut Dialog, specs: &[(String,
             let cur = d.fields.get(k).cloned().unwrap_or_else(|| spec.default_value());
             let new = match spec {
                 ParamSpec::Number { min, max, .. } => {
-                    let mut x = cur.as_f64().unwrap_or(*min).clamp(*min, *max);
-                    let speed = ((max - min) / 200.0).clamp(0.01, 10.0);
-                    ui.add(egui::DragValue::new(&mut x).range(*min..=*max).speed(speed).max_decimals(2)).changed().then(|| json!(x))
+                    let x = cur.as_f64().unwrap_or(*min);
+                    crate::widgets::range_field(ui, ("plugin-num", k), x, *min..=*max, "", 2, 100.0).map(|x| json!(x))
                 }
                 ParamSpec::Int { min, max, .. } => {
-                    let mut x = cur.as_i64().unwrap_or(*min).clamp(*min, *max);
-                    ui.add(egui::DragValue::new(&mut x).range(*min..=*max).speed(0.2)).changed().then(|| json!(x))
+                    let x = cur.as_i64().unwrap_or(*min).clamp(*min, *max);
+                    // An f64 holds every whole number up to 2^53, so the numeric field (arrows, wheel, arithmetic) is exact there.
+                    // Past it, the number typed is read as an integer.
+                    const EXACT: i64 = 1 << 53;
+                    if -EXACT <= *min && *max <= EXACT {
+                        crate::widgets::range_field(ui, ("plugin-int", k), x as f64, *min as f64..=*max as f64, "", 0, 100.0).map(|x| json!(x as i64))
+                    } else {
+                        let shown = x.to_string();
+                        crate::widgets::take_dialog_focus(ui, ui.id().with(("plugin-int", k)), &shown);
+                        crate::widgets::text_field(ui, ("plugin-int", k), Some(&shown), 100.0, 1)
+                            .and_then(|text| text.parse::<i64>().ok())
+                            .map(|x| json!(x.clamp(*min, *max)))
+                    }
                 }
                 ParamSpec::Bool { .. } => {
-                    let mut b = cur.as_bool().unwrap_or(false);
-                    ui.checkbox(&mut b, "").changed().then(|| json!(b))
+                    let b = cur.as_bool().unwrap_or(false);
+                    crate::widgets::check(ui, "", b, true).then(|| json!(!b))
                 }
                 ParamSpec::Choice { options, .. } => {
                     let labels: Vec<&str> = options.iter().map(String::as_str).collect();
@@ -337,14 +423,20 @@ pub(super) fn humanize(k: &str) -> String {
         "Sy" => "Vertical %".into(),
         "Radius1" => "Radius 1".into(),
         "Radius2" => "Radius 2".into(),
+        "Max Radius" => "Max. Radius:".into(),
+        "Channel1" => "Channel 1:".into(),
+        "Channel2" => "Channel 2:".into(),
+        "Channel3" => "Channel 3:".into(),
+        "Channel4" => "Channel 4:".into(),
         "Include Cmy Blacks" => "Include Blacks with CMY:".into(),
         "Align To Path" => "Align to Path:".into(),
+        "Create" => "Create New Fields by:".into(),
         _ => format!("{s}:"),
     }
 }
 
 /// [`humanize`] translated where it is painted: the ":" stays outside the translated text.
-fn humanized(k: &str) -> String {
+pub(super) fn humanized(k: &str) -> String {
     let h = humanize(k);
     match h.strip_suffix(':') {
         Some(base) => format!("{}:", tl!(base)),
@@ -380,34 +472,56 @@ pub(super) fn slider_w(
     track: &dyn Fn(f32) -> egui::Color32,
 ) {
     let t = Tokens::get(ui.ctx());
-    let (min, max) = (*range.start(), *range.end());
-    let v = d.f64(key, 0.0).clamp(min, max);
-    let mut new = None;
     ui.horizontal(|ui| {
         ui.add_sized([label_w, 22.0], egui::Label::new(egui::RichText::new(tl!(label)).color(t.text)));
-        if let (Some(x), _) = crate::widgets::color_slider(ui, ("dlg-slider", key), ((v - min) / (max - min)) as f32, SLIDER_WIDTH, track) {
-            new = Some((min + x as f64 * (max - min)).round());
-        }
-        if let Some(x) = crate::widgets::plain_field(ui, ("dlg-field", key), v, suffix, 0, 52.0) {
-            new = Some(x.round().clamp(min, max));
-        }
+        slider_field(ui, d, key, range, suffix, track);
     });
-    if let Some(n) = new.filter(|n| *n != v) {
+}
+
+/// The rail and value field of [`slider`] without its label (for a row that draws its own).
+pub(super) fn slider_field(
+    ui: &mut egui::Ui,
+    d: &mut Dialog,
+    key: &str,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+    track: &dyn Fn(f32) -> egui::Color32,
+) {
+    let (min, max) = (*range.start(), *range.end());
+    let v = d.f64(key, 0.0).clamp(min, max);
+    slider_rail(ui, d, key, range, track);
+    if let Some(n) = crate::widgets::plain_field(ui, ("dlg-field", key), v, suffix, 0, 52.0).map(|x| x.round().clamp(min, max)).filter(|n| *n != v) {
+        d.fields.insert(key.into(), json!(n));
+    }
+}
+
+/// The rail of [`slider_field`] alone: dragging it sets the number `d.fields[key]` to a whole
+/// number in `range` (a value past the range shows at its end until the rail moves).
+pub(super) fn slider_rail(ui: &mut egui::Ui, d: &mut Dialog, key: &str, range: std::ops::RangeInclusive<f64>, track: &dyn Fn(f32) -> egui::Color32) {
+    let (min, max) = (*range.start(), *range.end());
+    let v = d.f64(key, 0.0).clamp(min, max);
+    let (dragged, _) = crate::widgets::color_slider(ui, ("dlg-slider", key), ((v - min) / (max - min)) as f32, SLIDER_WIDTH, track);
+    if let Some(n) = dragged.map(|x| (min + x as f64 * (max - min)).round()).filter(|n| *n != v) {
         d.fields.insert(key.into(), json!(n));
     }
 }
 
 /// The words at the two ends of a slider's rail (Less … More), under a slider whose label column
 /// is `label_w` wide.
-pub(super) fn slider_ends(ui: &mut egui::Ui, label_w: f32, (left, right): (&str, &str)) {
-    let t = Tokens::get(ui.ctx());
+pub(super) fn slider_ends(ui: &mut egui::Ui, label_w: f32, ends: (&str, &str)) {
     ui.horizontal(|ui| {
         ui.add_space(label_w + ui.spacing().item_spacing.x);
-        let (r, _) = ui.allocate_exact_size(egui::vec2(SLIDER_WIDTH, 14.0), egui::Sense::hover());
-        let font = egui::FontId::proportional(11.0);
-        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, left, font.clone(), t.text_dim);
-        ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, right, font, t.text_dim);
+        rail_ends(ui, ends);
     });
+}
+
+/// The words of [`slider_ends`] under a rail that starts where the next widget does.
+fn rail_ends(ui: &mut egui::Ui, (left, right): (&str, &str)) {
+    let t = Tokens::get(ui.ctx());
+    let (r, _) = ui.allocate_exact_size(egui::vec2(SLIDER_WIDTH, 14.0), egui::Sense::hover());
+    let font = egui::FontId::proportional(11.0);
+    ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, left, font.clone(), t.text_dim);
+    ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, right, font, t.text_dim);
 }
 
 /// The field where [`preview`] keeps the parameters it last previewed.
@@ -417,6 +531,19 @@ pub(super) const PREVIEWED: &str = "__previewed";
 /// again on the interaction's snapshot whenever they differ from the last preview (whether a widget
 /// or `ui.dialog.set` changed them); turning it off rolls back.
 pub(super) fn preview(app: &mut crate::VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, label: &str, cmd: &str, params: Value) {
+    let _ = preview_result(app, ui, d, label, cmd, params);
+}
+
+/// As [`preview`], returning the command's result only when a new preview succeeds.
+/// A dialog can retain a small summary (such as point counts) in its private fields.
+pub(super) fn preview_result(
+    app: &mut crate::VectorcraftApp,
+    ui: &mut egui::Ui,
+    d: &mut Dialog,
+    label: &str,
+    cmd: &str,
+    params: Value,
+) -> Option<Value> {
     const LAST: &str = PREVIEWED;
     ui.add_space(8.0);
     let mut on = d.bool("preview");
@@ -428,15 +555,18 @@ pub(super) fn preview(app: &mut crate::VectorcraftApp, ui: &mut egui::Ui, d: &mu
         if d.fields.remove(LAST).is_some() {
             let _ = app.session.cancel_interaction();
         }
-        return;
+        return None;
     }
+    let mut result = None;
     if d.fields.get(LAST) != Some(&params) || !app.session.in_interaction() {
         let _ = app.session.begin_interaction(label);
-        if let Err(e) = app.session.preview(cmd, &params) {
-            app.status(e.to_string());
+        match app.session.preview(cmd, &params) {
+            Ok(r) => result = Some(r),
+            Err(e) => app.status(e.to_string()),
         }
         d.fields.insert(LAST.into(), params);
     }
+    result
 }
 
 /// OK of a dialog using [`preview`]: keep the previewed `cmd` as one undo step (or run it when no
@@ -512,4 +642,20 @@ pub(super) fn bleed(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Un
 pub(super) fn caption(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     ui.label(egui::RichText::new(tl!(text)).size(11.0).color(t.text_dim));
+}
+
+#[cfg(test)]
+mod typed_number_tests {
+    use super::*;
+
+    #[test]
+    fn whole_numbers_are_integers_and_fractions_stay_fractions() {
+        // Whatever the field held before: a count typed after a fraction is a count again.
+        assert_eq!(typed_number(24.0).as_u64(), Some(24));
+        assert_eq!(typed_number(-4.0), json!(-4));
+        assert_eq!(typed_number(0.0), json!(0));
+        assert_eq!(typed_number(2.5), json!(2.5));
+        // Numbers past exact integers stay floats.
+        assert!(typed_number(1e20).is_f64());
+    }
 }

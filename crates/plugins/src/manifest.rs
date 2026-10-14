@@ -67,11 +67,11 @@ fn int_max() -> i64 {
 }
 
 impl ParamSpec {
-    /// The value a parameter takes when it isn't given.
+    /// The value a parameter takes when it isn't given (numeric defaults clamped into range).
     pub fn default_value(&self) -> Value {
         match self {
-            ParamSpec::Number { default, .. } => json!(default),
-            ParamSpec::Int { default, .. } => json!(default),
+            ParamSpec::Number { min, max, default } => json!(default.clamp(*min, *max)),
+            ParamSpec::Int { min, max, default } => json!((*default).clamp(*min, *max)),
             ParamSpec::Bool { default } => json!(default),
             ParamSpec::Choice { options, default } => json!(default.clone().or_else(|| options.first().cloned()).unwrap_or_default()),
         }
@@ -139,10 +139,8 @@ impl Manifest {
                 return Err(Error::Manifest(format!("invalid parameter name {k:?}")));
             }
             match spec {
-                ParamSpec::Number { min, max, default } => {
-                    if !(min.is_finite() && max.is_finite() && default.is_finite()) || min > max {
-                        return Err(Error::Manifest(format!("parameter `{k}`: bad range")));
-                    }
+                ParamSpec::Number { min, max, default } if !(min.is_finite() && max.is_finite() && default.is_finite()) || min > max => {
+                    return Err(Error::Manifest(format!("parameter `{k}`: bad range")));
                 }
                 ParamSpec::Int { min, max, .. } if min > max => return Err(Error::Manifest(format!("parameter `{k}`: bad range"))),
                 ParamSpec::Choice { options, default } => {
@@ -169,8 +167,8 @@ impl Manifest {
             .params
             .iter()
             .map(|(k, spec)| match spec {
-                ParamSpec::Number { min, max, default } => format!("{k}: {min}..{max} ({default})"),
-                ParamSpec::Int { min, max, default } => format!("{k}: int {min}..{max} ({default})"),
+                ParamSpec::Number { min, max, default } => format!("{k}: {min}..{max} ({})", default.clamp(*min, *max)),
+                ParamSpec::Int { min, max, default } => format!("{k}: int {min}..{max} ({})", (*default).clamp(*min, *max)),
                 ParamSpec::Bool { default } => format!("{k}: bool ({default})"),
                 ParamSpec::Choice { options, .. } => {
                     let opts: Vec<String> = options.iter().map(|o| format!("{o:?}")).collect();
@@ -205,8 +203,17 @@ impl Manifest {
             let resolved = match spec {
                 ParamSpec::Number { min, max, .. } => json!(v.as_f64().filter(|f| f.is_finite()).ok_or_else(|| wrong("a number"))?.clamp(*min, *max)),
                 ParamSpec::Int { min, max, .. } => {
-                    let f = v.as_f64().filter(|f| f.is_finite()).ok_or_else(|| wrong("a number"))?;
-                    json!((f.round().clamp(*min as f64, *max as f64)) as i64)
+                    // Keep JSON integers exact: f64 cannot represent every i64 or its bounds.
+                    let value = if let Some(i) = v.as_i64() {
+                        i.clamp(*min, *max)
+                    } else if v.is_u64() {
+                        // Past i64::MAX, so past any maximum.
+                        *max
+                    } else {
+                        let f = v.as_f64().filter(|f| f.is_finite()).ok_or_else(|| wrong("a number"))?;
+                        (f.round() as i64).clamp(*min, *max)
+                    };
+                    json!(value)
                 }
                 ParamSpec::Bool { .. } => json!(v.as_bool().ok_or_else(|| wrong("true or false"))?),
                 ParamSpec::Choice { options, .. } => {
@@ -303,6 +310,49 @@ mod tests {
         assert!(m.resolve_params(&json!({"mono": 1})).is_err());
         assert!(m.resolve_params(&json!([1, 2])).is_err());
         assert!(m.resolve_params(&Value::Null).is_ok());
+    }
+
+    #[test]
+    fn integer_parameters_preserve_precision_and_exact_bounds() {
+        let m = Manifest::parse(
+            br#"{"id":"org.example.generative","name":"Generative Pattern","kind":"filter",
+                "params":{"seed":{"type":"int","min":-9007199254740995,"max":9007199254740995}}}"#,
+        )
+        .unwrap();
+        for (given, expected) in [
+            (json!(9007199254740992_i64), 9007199254740992_i64),
+            (json!(9007199254740993_i64), 9007199254740993_i64),
+            (json!(-9007199254740993_i64), -9007199254740993_i64),
+            (json!(i64::MAX), 9007199254740995_i64),
+            (json!(i64::MIN), -9007199254740995_i64),
+            (json!(u64::MAX), 9007199254740995_i64),
+            (json!(1e30), 9007199254740995_i64),
+            (json!(-1e30), -9007199254740995_i64),
+            (json!(3.6), 4_i64),
+        ] {
+            let resolved = m.resolve_params(&json!({"seed": given})).unwrap();
+            assert_eq!(resolved["seed"], json!(expected), "input: {given}");
+        }
+    }
+
+    #[test]
+    fn numeric_defaults_stay_in_the_declared_range() {
+        let m = Manifest::parse(
+            br#"{"id":"org.example.defaults","name":"Defaults","kind":"filter",
+                "params":{"count":{"type":"int","min":1,"max":10},
+                          "seed":{"type":"int","min":-9007199254740995,"max":-9007199254740993,"default":0},
+                          "amount":{"type":"number","min":0,"max":100,"default":500}}}"#,
+        )
+        .unwrap();
+        let expected = json!({"count": 1, "seed": -9007199254740993_i64, "amount": 100.0});
+        assert_eq!(Value::Object(m.defaults()), expected);
+        assert_eq!(
+            m.params_doc(),
+            "{count: int 1..10 (1), seed: int -9007199254740995..-9007199254740993 (-9007199254740993), amount: 0..100 (100)}"
+        );
+        for given in [Value::Null, json!({}), json!({"count": null, "seed": null, "amount": null})] {
+            assert_eq!(Value::Object(m.resolve_params(&given).unwrap()), expected);
+        }
     }
 
     #[test]

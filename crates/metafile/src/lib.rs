@@ -102,7 +102,9 @@ pub struct Imported {
 /// Read an EMF or WMF file (with or without a placeable header) into a document whose one
 /// artboard is the picture's frame.
 pub fn import(bytes: &[u8]) -> Result<Imported, String> {
-    import::import(bytes)
+    let mut i = import::import(bytes)?;
+    i.document.limit_depth_noting(&mut i.warnings);
+    Ok(i)
 }
 
 #[cfg(test)]

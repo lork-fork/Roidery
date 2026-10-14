@@ -239,7 +239,7 @@ fn quality_row(ui: &mut egui::Ui, d: &mut Dialog, label: &dyn Fn(&mut egui::Ui, 
     label(ui, tl!("Quality:"));
     let mut q = (d.f64("quality", 90.0) / 10.0).round().clamp(0.0, 10.0) as u8;
     ui.horizontal(|ui| {
-        if ui.add(egui::Slider::new(&mut q, 0..=10)).changed() {
+        if widgets::slider(ui, egui::Slider::new(&mut q, 0..=10)).changed() {
             d.fields.insert("quality".into(), json!(u32::from(q) * 10));
         }
         label(ui, QUALITY_BANDS[q as usize]);
@@ -254,9 +254,9 @@ fn method_row(ui: &mut egui::Ui, d: &mut Dialog, label: &dyn Fn(&mut egui::Ui, &
         choice(ui, d, "method", &Method::ALL.map(Method::id), &Method::ALL.map(Method::label));
         if Method::from_id(&d.str("method")) == Some(Method::Progressive) {
             label(ui, tl!("Scans:"));
-            let mut scans = d.f64("scans", 3.0).round().clamp(*jpeg::SCANS.start() as f64, *jpeg::SCANS.end() as f64) as u8;
-            if ui.add(egui::DragValue::new(&mut scans).range(jpeg::SCANS)).changed() {
-                d.fields.insert("scans".into(), json!(scans));
+            let range = f64::from(*jpeg::SCANS.start())..=f64::from(*jpeg::SCANS.end());
+            if let Some(scans) = widgets::range_field(ui, "scans", d.f64("scans", 3.0), range, "", 0, 44.0) {
+                d.fields.insert("scans".into(), json!(scans as u8));
             }
         }
     });
@@ -277,8 +277,8 @@ fn palette_rows(ui: &mut egui::Ui, d: &mut Dialog, label: &dyn Fn(&mut egui::Ui,
             n = COLOR_COUNTS.get(i).and_then(|c| c.parse().ok()).unwrap_or(n);
             d.fields.insert("colors".into(), json!(n));
         }
-        if ui.add(egui::DragValue::new(&mut n).range(2..=256)).changed() {
-            d.fields.insert("colors".into(), json!(n));
+        if let Some(n) = widgets::range_field(ui, "colors", f64::from(n), 2.0..=256.0, "", 0, 52.0) {
+            d.fields.insert("colors".into(), json!(n as u16));
         }
     });
     ui.end_row();
@@ -286,11 +286,10 @@ fn palette_rows(ui: &mut egui::Ui, d: &mut Dialog, label: &dyn Fn(&mut egui::Ui,
     label(ui, tl!("Dither:"));
     ui.horizontal(|ui| {
         choice(ui, d, "dither", &Dither::ALL.map(Dither::id), &Dither::ALL.map(Dither::label));
-        if Dither::from_id(&d.str("dither")).is_some_and(|x| x != Dither::None) {
-            let mut amount = d.f64("ditherAmount", 100.0).round().clamp(0.0, 100.0) as u8;
-            if ui.add(egui::DragValue::new(&mut amount).range(0..=100).suffix("%")).changed() {
-                d.fields.insert("ditherAmount".into(), json!(amount));
-            }
+        if Dither::from_id(&d.str("dither")).is_some_and(|x| x != Dither::None)
+            && let Some(amount) = widgets::range_field(ui, "ditherAmount", d.f64("ditherAmount", 100.0), 0.0..=100.0, "%", 0, 52.0)
+        {
+            d.fields.insert("ditherAmount".into(), json!(amount as u8));
         }
     });
     ui.end_row();

@@ -1,13 +1,14 @@
 //! Object menu long tail: Lock/Hide All Artwork Above & Other Layers, Transform Each, Reset
-//! Bounding Box, Rasterize, Crop Image, Create Trim Marks, Convert to Shape and
+//! Bounding Box, Rasterize, Crop Image, Mask (an image), Create Trim Marks, Convert to Shape and
 //! Artboards → Convert / Rearrange. (Live blends are in `live.rs`.)
 
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::marks::{MarkStyle, TrimMarks};
-use vectorcraft_doc::{Appearance, ImageObject, LiveShape, Node, NodeId, NodeKind, RasterColorModel, RasterEffectsSettings};
+use vectorcraft_doc::{Appearance, ImageObject, LiveShape, Node, NodeId, NodeKind, RasterColorModel, RasterEffectsSettings, Scaling};
 use vectorcraft_geom::{Affine, Anchor, PathData, Point, Rect, Vec2};
 use vectorcraft_render::AntiAlias;
 use vectorcraft_render::encode::{RasterExportOptions, RasterFormat};
@@ -39,7 +40,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "All Artwork Above",
             ["Object", "Lock"],
             None,
-            "{} lock objects in the same layer that are above and overlap the selection → {count}",
+            "{} lock objects in the same layer that are above and overlap the selection, deselecting every selected object left locked or hidden (the key object too) → {count}",
             has_selection,
             |s, _| above(s, true)
         ),
@@ -57,7 +58,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "All Artwork Above",
             ["Object", "Hide"],
             None,
-            "{} hide objects in the same layer that are above and overlap the selection → {count}",
+            "{} hide objects in the same layer that are above and overlap the selection, deselecting every selected object left hidden or locked (the key object too) → {count}",
             has_selection,
             |s, _| above(s, false)
         ),
@@ -75,7 +76,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Transform Each…",
             ["Object", "Transform"],
             Some("Cmd+Alt+Shift+D"),
-            "{scaleH?: % (100), scaleV?: % (100), moveH?: pt, moveV?: pt (down = +), rotate?: deg (counter-clockwise), reflectX?: bool (flip vertically), reflectY?: bool (flip horizontally), random?: bool, seed?: n, reference?: 0..8 (9-point grid, 4 = centre), copy?: bool, strokes?: bool (Scale Strokes & Effects), corners?: bool (Scale Corners; both default to the preferences), patterns?: bool (Transform Patterns; default: prefs transformPatternTiles)} transform every selected object about its own reference point → {ids}",
+            "{scaleH?: % (100), scaleV?: % (100), moveH?: pt, moveV?: pt (down = +), rotate?: deg (counter-clockwise), reflectX?: bool (flip vertically), reflectY?: bool (flip horizontally), random?: bool, seed?: n, reference?: 0..8 (9-point grid, 4 = centre), copy?: bool, strokes?: bool (Scale Strokes & Effects), corners?: bool (Scale Corners; both default to the preferences), objects?: bool (Transform Objects, default true; false: the art stays and, with patterns, only its pattern tiles transform), patterns?: bool (Transform Patterns; default: prefs transformPatternTiles)} transform every selected object about its own reference point → {ids}",
             has_selection,
             transform_each
         ),
@@ -111,9 +112,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "Crop Image",
             ["Object"],
             None,
-            "{rect?: [x, y, width, height]} crop the selected image (default: to the artboard it sits on) → {id, width, height}",
+            "{rect?: [x, y, width, height] | trim?: true (to the pixels that aren't fully transparent, pixel for pixel; an image with none to cut is left as it is, trimmed: false)} crop the selected image (default: to the artboard it sits on) → {id, width, height, trimmed? (with trim)}",
             has_image,
             crop_image
+        ),
+        cmd!(
+            "object.maskImage",
+            "Mask",
+            [],
+            None,
+            "{} clip the selected image with a rectangle around it (its own outline, rotated with it) and select that clipping path, whose handles then crop it; one undo step → {id: the clip group, path: the clipping path}",
+            has_image,
+            mask_image
         ),
         cmd!(
             "object.createTrimMarks",
@@ -147,7 +157,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Rearrange All Artboards…",
             ["Object", "Artboards"],
             None,
-            "{columns?: n (2), spacing?: pt (20), byColumn?: false, moveArtwork?: true (locked and hidden art only with prefs moveLockedWithArtboard)} lay artboards out in a grid",
+            "{layout?: gridByRow|gridByColumn|row|column (gridByRow; byColumn?: true is gridByColumn), order?: leftToRight|rightToLeft (leftToRight: right-to-left mirrors the order along the rows), columns?: n (2; the rows for gridByColumn; row and column ignore it), spacing?: pt (20), moveArtwork?: true (locked and hidden art only with prefs moveLockedWithArtboard), patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles), byColumn?: bool (an older way to ask for layout gridByColumn)} lay the artboards out in their order, the grid's top-left at the first artboard's → {artboards, rows, columns}",
             has_doc,
             rearrange_artboards
         ),
@@ -171,6 +181,7 @@ pub(crate) fn squash(s: &mut Session, from: usize, label: &str) {
         if h.len() > from {
             h.truncate(from + 1);
             h[from].label = label.to_string();
+            st.history.recost_last(&st.doc);
         }
     }
 }
@@ -199,7 +210,9 @@ fn reset_bounding_box(s: &mut Session, _: &Value) -> Result<Value> {
 fn above(s: &mut Session, lock: bool) -> Result<Value> {
     let roots = selected_roots(s)?;
     let d = &s.doc()?.doc;
-    let mut hits: Vec<NodeId> = vec![];
+    // `selected` holds each selected object's visual bounds, by layer, with the index there of its
+    // ancestor directly inside the layer.
+    let mut selected: BTreeMap<NodeId, Vec<(usize, Rect)>> = BTreeMap::new();
     for id in &roots {
         let Some(layer) = d.layer_of(*id) else { continue };
         // The selected object's ancestor directly inside the layer.
@@ -208,18 +221,39 @@ fn above(s: &mut Session, lock: bool) -> Result<Value> {
         let top = anc.get(pos + 1).copied().unwrap_or(*id);
         let Some(b) = d.node(*id).and_then(|n| n.visual_bounds()) else { continue };
         let Some((_, idx, _)) = d.position(top) else { continue };
-        for n in d.children(Some(layer)).into_iter().flatten().skip(idx + 1) {
-            if roots.contains(&n.id) || hits.contains(&n.id) {
+        selected.entry(layer).or_default().push((idx, b));
+    }
+    // The loop walks up each layer once. Each object that is not selected and overlaps a selected
+    // object below it is locked (Lock) or hidden (Hide).
+    let roots: HashSet<NodeId> = roots.into_iter().collect();
+    let mut hits: BTreeSet<NodeId> = BTreeSet::new();
+    for (layer, mut below) in selected {
+        below.sort_by_key(|(idx, _)| *idx);
+        let mut below = below.into_iter().peekable();
+        // `under` holds the bounds of the selected objects below the object at `i`.
+        let mut under: Vec<Rect> = vec![];
+        for (i, n) in d.children(Some(layer)).into_iter().flatten().enumerate() {
+            while let Some((_, b)) = below.next_if(|(idx, _)| *idx < i) {
+                under.push(b);
+            }
+            if under.is_empty() || roots.contains(&n.id) {
                 continue;
             }
-            if n.visual_bounds().is_some_and(|nb| nb.intersect(b).area() > 0.0 || nb.contains(b.center())) {
-                hits.push(n.id);
+            if n.visual_bounds().is_some_and(|nb| under.iter().any(|b| nb.intersect(*b).area() > 0.0 || nb.contains(b.center()))) {
+                hits.insert(n.id);
             }
         }
     }
+    // When there is no object above, or every one is locked (Lock) or hidden (Hide) already, the
+    // document and its undo history stay as they are, and selected objects that are hidden or
+    // locked are deselected.
+    if hits.iter().all(|id| d.node(*id).is_none_or(|n| if lock { n.locked } else { !n.visible })) {
+        s.select(|d, sel| sel.deselect_uneditable(d))?;
+        return Ok(json!({ "count": hits.len() }));
+    }
     let label = if lock { "Lock" } else { "Hide" };
     let n = hits.len();
-    s.edit(label, |d, _| {
+    s.edit(label, |d, sel| {
         for id in &hits {
             if let Some(n) = d.node_mut(*id) {
                 if lock {
@@ -229,6 +263,7 @@ fn above(s: &mut Session, lock: bool) -> Result<Value> {
                 }
             }
         }
+        sel.deselect_uneditable(d);
         Ok(())
     })?;
     Ok(json!({ "count": n }))
@@ -239,6 +274,11 @@ fn other_layers(s: &mut Session, lock: bool) -> Result<Value> {
     let keep: Vec<NodeId> = st.selection.objects.iter().filter_map(|id| st.doc.ancestry(*id)).flatten().collect();
     let others: Vec<NodeId> = st.doc.layers.iter().map(|l| l.id).filter(|l| !keep.contains(l)).collect();
     let n = others.len();
+    // When there is no other layer, or every one is locked (Lock) or hidden (Hide) already, the
+    // document and its undo history stay as they are.
+    if others.iter().all(|id| st.doc.node(*id).is_none_or(|l| if lock { l.locked } else { !l.visible })) {
+        return Ok(json!({ "count": n }));
+    }
     s.edit(if lock { "Lock Others" } else { "Hide Others" }, |d, _| {
         for id in &others {
             if let Some(n) = d.node_mut(*id) {
@@ -284,12 +324,19 @@ fn transform_each(s: &mut Session, p: &Value) -> Result<Value> {
     let random = bool_or(p, "random", false);
     let refi = p.get("reference").and_then(Value::as_u64).unwrap_or(4).min(8) as usize;
     let copy = bool_or(p, "copy", false);
+    let objects = super::object::transforms_objects(p);
     if sh == 0.0 || sv == 0.0 {
         return Err(bad("object.transformEach", "scale must be non-zero"));
     }
     let mut rng = Rng(p.get("seed").and_then(Value::as_u64).unwrap_or(0x9E37_79B9_7F4A_7C15).max(1));
     let mut sc = if sh != 100.0 || sv != 100.0 { super::object::scaling(s, p) } else { Default::default() };
     sc.patterns = super::object::transform_patterns(s, p, &roots)?;
+    // With no object to transform, or without a copy when both scales are 100% and there is no
+    // move, rotation or reflection (with or without Random), the document and its undo history
+    // stay as they are.
+    if roots.is_empty() || (!copy && sh == 100.0 && sv == 100.0 && mh == 0.0 && mv == 0.0 && rot == 0.0 && !rx && !ry) {
+        return Ok(ids_json(&roots));
+    }
     let ids = s.edit("Transform Each", |d, sel| {
         let targets = if copy { duplicate_in(d, sel, &roots, Affine::IDENTITY)? } else { roots.clone() };
         for id in &targets {
@@ -307,7 +354,7 @@ fn transform_each(s: &mut Session, p: &Value) -> Result<Value> {
             let m = Affine::translate((k_mh, k_mv))
                 * about(o, Affine::rotate(-k_rot.to_radians()) * refl * Affine::scale_non_uniform(k_sh / 100.0, k_sv / 100.0));
             if let Some(n) = d.node_mut(*id) {
-                n.transform(m, sc);
+                super::object::transform_node(n, m, sc, objects);
             }
         }
         Ok(targets)
@@ -413,22 +460,20 @@ fn rasterize(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|(bp, rule)| (PathData::from_bezpath(&bp), rule));
     let tmp = isolated_doc(&st.doc, nodes);
     let (png, w, h) = render_png(&tmp, region, scale, &raster.render_options(RasterFormat::Png), look.color_model)?;
-    let top = *roots.last().ok_or_else(|| bad(C, "nothing selected"))?;
+    if roots.is_empty() {
+        return Err(bad(C, "nothing selected"));
+    }
     let id = s.edit("Rasterize", |d, sel| {
-        let (par, idx, _) = d.position(top).ok_or(EngineError::NoNode(top))?;
         let key = unique_key(d, "raster");
         d.images.insert(key.clone(), vectorcraft_doc::ImageBlob::new("image/png", png));
         let id = d.alloc_id();
         let xf = Affine::translate(region.origin().to_vec2()) * Affine::scale(1.0 / scale);
-        let mut node = Node::new(id, NodeKind::Image(ImageObject { key, width: w, height: h, xf, link: None, placement: Default::default() }));
+        let mut node =
+            Node::new(id, NodeKind::Image(Box::new(ImageObject { key, width: w, height: h, xf, link: None, placement: Default::default() })));
         if let Some((path, rule)) = clip {
             node = super::rasterfx::clip_group(d, path, rule, node);
         }
-        let id = node.id;
-        d.insert(par, idx + 1, node)?;
-        for r in &roots {
-            d.remove(*r)?;
-        }
+        let id = d.wrap(&roots, |_| node)?;
         sel.set([id]);
         Ok(id)
     })?;
@@ -532,6 +577,9 @@ fn crop_image(s: &mut Session, p: &Value) -> Result<Value> {
         .ok_or_else(|| bad(C, "select an image"))?;
     let node = st.doc.node(id).cloned().ok_or(EngineError::NoNode(id))?;
     let NodeKind::Image(im) = &node.kind else { return Err(bad(C, "select an image")) };
+    if p.get("trim").and_then(Value::as_bool) == Some(true) {
+        return trim_image(s, id, (**im).clone());
+    }
     let ib = node.geometric_bounds().ok_or_else(|| bad(C, "image has no bounds"))?;
     let rect = match p.get("rect").and_then(Value::as_array) {
         Some(a) if a.len() == 4 => {
@@ -562,7 +610,7 @@ fn crop_image(s: &mut Session, p: &Value) -> Result<Value> {
     let mut bare = node.clone();
     bare.opacity = 1.0;
     bare.blend = Default::default();
-    bare.appearance = Appearance::default();
+    bare.appearance = Appearance::default().into();
     bare.visible = true;
     let tmp = isolated_doc(&st.doc, vec![bare]);
     let region = Rect::new(r.x0, r.y0, r.x0 + (r.width() * scale).round().max(1.0) / scale, r.y0 + (r.height() * scale).round().max(1.0) / scale);
@@ -571,18 +619,102 @@ fn crop_image(s: &mut Session, p: &Value) -> Result<Value> {
         let key = unique_key(d, "crop");
         d.images.insert(key.clone(), vectorcraft_doc::ImageBlob::new("image/png", png));
         if let Some(n) = d.node_mut(id) {
-            n.kind = NodeKind::Image(ImageObject {
+            n.kind = NodeKind::Image(Box::new(ImageObject {
                 key,
                 width: w,
                 height: h,
                 xf: Affine::translate(region.origin().to_vec2()) * Affine::scale(1.0 / scale),
                 link: None,
                 placement: Default::default(),
-            });
+            }));
         }
         Ok(())
     })?;
     Ok(json!({ "id": id.0, "width": w, "height": h }))
+}
+
+/// Crop Image's trim: the image cut to the box of its pixels that aren't fully transparent, the
+/// pixels copied as they are (no resampling) and placed where they were.
+fn trim_image(s: &mut Session, id: NodeId, im: ImageObject) -> Result<Value> {
+    const C: &str = "object.cropImage";
+    let st = s.doc()?;
+    let blob = st.doc.images.get(&im.key).ok_or_else(|| bad(C, "the image's pixels are missing"))?;
+    // A CMYK image (kept as its ink amounts) has no alpha: nothing to cut.
+    if blob.is_cmyk() {
+        return Ok(json!({ "id": id.0, "width": im.width, "height": im.height, "trimmed": false }));
+    }
+    // Print rasters run to gigabytes decoded: the same allowance opening them has.
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(blob.bytes.as_slice()))
+        .with_guessed_format()
+        .map_err(|_| bad(C, "the image's pixels can't be read"))?;
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(crate::cmd::fileio::MAX_RASTER_ALLOC);
+    reader.limits(limits);
+    let px = reader.decode().map_err(|e| bad(C, format!("the image's pixels can't be read: {e}")))?.to_rgba8();
+    let (w, h) = px.dimensions();
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+    for (x, y, p) in px.enumerate_pixels() {
+        if p[3] > 0 {
+            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+        }
+    }
+    if x1 <= x0 || y1 <= y0 {
+        return Err(bad(C, "the image is fully transparent"));
+    }
+    if (x0, y0, x1, y1) == (0, 0, w, h) {
+        // Already trimmed: not an error, so a script can trim every image it opens.
+        return Ok(json!({ "id": id.0, "width": w, "height": h, "trimmed": false }));
+    }
+    let cut = image::imageops::crop_imm(&px, x0, y0, x1 - x0, y1 - y0).to_image();
+    let mut png = Vec::new();
+    cut.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| bad(C, e.to_string()))?;
+    let (cw, ch) = (x1 - x0, y1 - y0);
+    s.edit("Crop Image", |d, _| {
+        let key = unique_key(d, "crop");
+        d.images.insert(key.clone(), vectorcraft_doc::ImageBlob::new("image/png", png));
+        if let Some(n) = d.node_mut(id) {
+            n.kind = NodeKind::Image(Box::new(ImageObject {
+                key,
+                width: cw,
+                height: ch,
+                xf: im.xf * Affine::translate((f64::from(x0), f64::from(y0))),
+                link: None,
+                placement: Default::default(),
+            }));
+        }
+        Ok(())
+    })?;
+    Ok(json!({ "id": id.0, "width": cw, "height": ch, "trimmed": true }))
+}
+
+/// The Control bar's Mask for an image: a clip group of the image and a clipping path on its
+/// outline, with that path selected so dragging its handles crops the image.
+fn mask_image(s: &mut Session, _: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let (id, outline) = st
+        .selection
+        .objects
+        .iter()
+        .find_map(|id| match st.doc.node(*id).map(|n| &n.kind) {
+            Some(NodeKind::Image(im)) => {
+                Some((*id, vectorcraft_geom::shapes::rectangle(Rect::new(0.0, 0.0, im.width as f64, im.height as f64)).transformed(im.xf)))
+            }
+            _ => None,
+        })
+        .ok_or_else(|| bad("object.maskImage", "select an image"))?;
+    let (gid, pid) = s.edit("Mask", |d, sel| {
+        let mut clip = super::pathops::shape_node(d, outline, None);
+        super::object::as_clipping_path(&mut clip)?;
+        let pid = clip.id;
+        let (par, idx, _) = d.position(id).ok_or(EngineError::NoNode(id))?;
+        let gid = d.alloc_id();
+        d.insert(par, idx + 1, Node::new(gid, NodeKind::Group { children: vec![], clip: true }))?;
+        d.insert(Some(gid), 0, clip)?;
+        d.move_node(id, Some(gid), usize::MAX)?;
+        sel.set([pid]);
+        Ok((gid, pid))
+    })?;
+    Ok(json!({ "id": gid.0, "path": pid.0 }))
 }
 
 // ---------- Trim marks ----------
@@ -617,7 +749,7 @@ fn trim_marks(s: &mut Session, p: &Value) -> Result<Value> {
     if rects.is_empty() {
         return Err(bad(C, "nothing to mark"));
     }
-    let parent = s.doc()?.insertion_parent();
+    let parent = s.doc()?.target_parent()?;
     let ids = s.edit("Create Trim Marks", |d, sel| {
         let mut ids = vec![];
         for r in &rects {
@@ -694,7 +826,7 @@ fn convert_to_shape(s: &mut Session, _: &Value) -> Result<Value> {
             }
             if let Some(l) = detect_shape(path) {
                 *path = l.to_path();
-                *live = Some(l);
+                *live = Some(Box::new(l));
                 n += 1;
             }
         }
@@ -711,7 +843,7 @@ fn convert_to_shape(s: &mut Session, _: &Value) -> Result<Value> {
 fn convert_to_artboards(s: &mut Session, _: &Value) -> Result<Value> {
     let roots = selected_roots(s)?;
     let n = s.edit("Convert to Artboards", |d, sel| {
-        let mut n = 0;
+        let mut converted = vec![];
         for id in &roots {
             let Some(b) = d.node(*id).and_then(|n| n.geometric_bounds()) else { continue };
             if b.width() <= 0.0 || b.height() <= 0.0 {
@@ -725,54 +857,92 @@ fn convert_to_artboards(s: &mut Session, _: &Value) -> Result<Value> {
                 show_center_mark: false,
                 show_cross_hairs: false,
             });
-            d.remove(*id)?;
-            n += 1;
+            converted.push(*id);
         }
-        if n == 0 {
+        if converted.is_empty() {
             return Err(EngineError::Other("Convert to Artboards: selection has no area".into()));
         }
+        d.remove_many(&converted)?;
         sel.clear();
-        Ok(n)
+        Ok(converted.len())
     })?;
     Ok(json!({ "artboards": n }))
 }
 
 fn rearrange_artboards(s: &mut Session, p: &Value) -> Result<Value> {
-    let n_ab = s.doc()?.doc.artboards.len().max(1);
-    let cols = (f64_or(p, "columns", 2.0).clamp(1.0, n_ab as f64)) as usize;
+    const CMD: &str = "artboard.rearrange";
+    use super::newdoc::ArtboardLayout as L;
+    // A value given (not null) must be one of the names.
+    let named = |key: &str| p.get(key).filter(|v| !v.is_null()).map(|v| v.as_str().unwrap_or_default());
+    let layout = match named("layout") {
+        Some(l) => L::parse(l).ok_or_else(|| bad(CMD, "layout must be gridByRow, gridByColumn, row or column"))?,
+        None if bool_or(p, "byColumn", false) => L::GridByColumn,
+        None => L::GridByRow,
+    };
+    let rtl = match named("order") {
+        None => false,
+        Some(o) if o.eq_ignore_ascii_case("leftToRight") => false,
+        Some(o) if o.eq_ignore_ascii_case("rightToLeft") => true,
+        Some(_) => return Err(bad(CMD, "order must be leftToRight or rightToLeft")),
+    };
+    let count = s.doc()?.doc.artboards.len();
+    let n_ab = count.max(1);
+    // Columns of a grid by row, rows of a grid by column (NaN casts to 0).
+    let lines = (f64_or(p, "columns", 2.0).clamp(1.0, n_ab as f64) as usize).max(1);
+    let (rows, cols) = match layout {
+        L::GridByRow => (n_ab.div_ceil(lines), lines),
+        L::GridByColumn => (lines, n_ab.div_ceil(lines)),
+        L::Row => (1, n_ab),
+        L::Column => (n_ab, 1),
+    };
     let spacing = f64_or(p, "spacing", 20.0).clamp(-1.0e5, 1.0e5);
-    let by_col = bool_or(p, "byColumn", false);
     let move_art = bool_or(p, "moveArtwork", true);
     let locked_and_hidden = s.prefs.move_locked_with_artboard;
-    let scale_strokes = false;
+    let d = &s.doc()?.doc;
+    let rects: Vec<Rect> = d.artboards.iter().map(|a| a.rect).collect();
+    let sizes: Vec<(f64, f64)> = rects.iter().map(|r| (r.width(), r.height())).collect();
+    let first = rects.first().map_or(Point::ZERO, |r| r.origin());
+    let origins = super::newdoc::grid_origins_rc(&sizes, first, (rows, cols), spacing, layout == L::GridByColumn, rtl);
+    let deltas: Vec<Vec2> = rects.iter().zip(origins).map(|(r, o)| o - r.origin()).collect();
+    // When no artboard moves more than 1e-9 pt on either axis, or there is none, the document and
+    // its undo history stay as they are.
+    if deltas.iter().all(|dl| dl.x.abs() <= 1e-9 && dl.y.abs() <= 1e-9) {
+        return Ok(json!({ "artboards": count, "rows": rows, "columns": cols }));
+    }
+    // With moveArtwork, each top-level object moves with the artboard its center is on; locked and
+    // hidden art moves only when prefs moveLockedWithArtboard is on.
+    let art: Vec<(NodeId, Vec2)> = if move_art {
+        d.layers
+            .iter()
+            .filter(|l| l.rides_with_artboard(locked_and_hidden))
+            .flat_map(|l| l.children().into_iter().flatten())
+            .filter(|n| n.rides_with_artboard(locked_and_hidden))
+            .filter_map(|n| {
+                let c = n.geometric_bounds()?.center();
+                let dl = *rects.iter().position(|r| r.contains(c)).and_then(|i| deltas.get(i))?;
+                (dl != Vec2::ZERO).then_some((n.id, dl))
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+    let ids: Vec<NodeId> = art.iter().map(|(id, _)| *id).collect();
+    let sc = Scaling { patterns: super::object::transform_patterns(s, p, &ids)?, ..Scaling::default() };
     s.edit("Rearrange Artboards", |d, _| {
-        let rects: Vec<Rect> = d.artboards.iter().map(|a| a.rect).collect();
-        let Some(first) = rects.first().copied() else { return Ok(()) };
-        let sizes: Vec<(f64, f64)> = rects.iter().map(|r| (r.width(), r.height())).collect();
-        let origins = super::newdoc::grid_origins(&sizes, first.origin(), cols, spacing, by_col, false);
-        let deltas: Vec<Vec2> = rects.iter().zip(origins).map(|(r, o)| o - r.origin()).collect();
-        if move_art {
-            let tops: Vec<(NodeId, Point)> = d
-                .layers
-                .iter()
-                .filter(|l| l.rides_with_artboard(locked_and_hidden))
-                .flat_map(|l| l.children().into_iter().flatten())
-                .filter(|n| n.rides_with_artboard(locked_and_hidden))
-                .filter_map(|n| Some((n.id, n.geometric_bounds()?.center())))
-                .collect();
-            for (id, c) in tops {
-                if let Some(i) = rects.iter().position(|r| r.contains(c))
-                    && deltas[i] != Vec2::ZERO
-                    && let Some(n) = d.node_mut(id)
-                {
-                    n.transform(Affine::translate(deltas[i]), scale_strokes);
-                }
+        for (id, dl) in &art {
+            if let Some(n) = d.node_mut(*id) {
+                n.transform(Affine::translate(*dl), sc);
             }
         }
+        let mut moved = vec![];
         for (a, dl) in d.artboards.iter_mut().zip(&deltas) {
             a.rect = a.rect + *dl;
+            moved.push((a.id, *dl));
+        }
+        for (id, dl) in moved {
+            d.move_artboard_guides(id, dl);
         }
         Ok(())
     })?;
-    ok()
+    Ok(json!({ "artboards": count, "rows": rows, "columns": cols }))
 }

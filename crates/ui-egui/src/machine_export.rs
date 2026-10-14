@@ -30,7 +30,7 @@ fn pick(app: &mut VectorcraftApp, pick: FilePick) -> Result<String, String> {
     if io::is_web(app) {
         return Ok(pick.name);
     }
-    let picked = app.services.pick_save.as_mut().and_then(|f| f(&pick)).ok_or("cancelled")?;
+    let picked = crate::picks::save(app, &pick).ok_or("cancelled")?;
     if known(&fileio::extension(&picked)).is_some() {
         return Ok(picked);
     }

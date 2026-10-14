@@ -527,7 +527,8 @@ impl Lerp {
             (NodeKind::Mesh(ma), NodeKind::Mesh(mb)) if ma.rows == mb.rows && ma.cols == mb.cols && ma.points.len() == mb.points.len() => Shape::Mesh,
             (NodeKind::Text(_), NodeKind::Text(_))
             | (NodeKind::SymbolInstance { .. }, NodeKind::SymbolInstance { .. })
-            | (NodeKind::Image(_), NodeKind::Image(_)) => Shape::Placed,
+            | (NodeKind::Image(_), NodeKind::Image(_))
+            | (NodeKind::PlacedDocument(_), NodeKind::PlacedDocument(_)) => Shape::Placed,
             _ => match (node_path(a), node_path(b)) {
                 (Some((pa, ra, ma)), Some((pb, rb, mb))) => {
                     Shape::Path { pair: PathPair::new(&pa, &pb, starts), rules: (ra, rb), members: ma.zip(mb) }
@@ -561,7 +562,7 @@ impl Lerp {
                         }
                     }
                 }
-                n.mask = None;
+                n.extras_mut().mask = None;
                 n
             }
             Shape::Path { pair, rules, members } => {
@@ -586,9 +587,10 @@ impl Lerp {
                         *o = lerp_affine(*x, *y, t)
                     }
                     (NodeKind::Image(o), NodeKind::Image(x), NodeKind::Image(y)) => o.xf = lerp_affine(x.xf, y.xf, t),
+                    (NodeKind::PlacedDocument(o), NodeKind::PlacedDocument(x), NodeKind::PlacedDocument(y)) => o.xf = lerp_affine(x.xf, y.xf, t),
                     _ => {}
                 }
-                n.mask = None;
+                n.extras_mut().mask = None;
                 n
             }
             Shape::Other => {
@@ -612,12 +614,12 @@ impl Lerp {
                 for c in n.children_mut().into_iter().flatten() {
                     zero_ids(Arc::make_mut(c));
                 }
-                n.mask = None;
+                n.extras_mut().mask = None;
                 n
             }
         };
         n.id = NodeId(0);
-        n.appearance = lerp_appearance(&a.appearance, &b.appearance, t);
+        n.appearance = lerp_appearance(&a.appearance, &b.appearance, t).into();
         n.opacity = lerp_f32(a.opacity, b.opacity, t as f32);
         n.blend = base.blend;
         n.visible = true;
@@ -687,6 +689,7 @@ fn lerp_text(o: &mut TextObject, x: &TextObject, y: &TextObject, t: f64) {
     }
     if resized {
         o.cached_bounds = None;
+        o.cached_baselines.clear();
     }
 }
 
@@ -991,7 +994,7 @@ fn paints_opaquely(n: &Node) -> bool {
     };
     n.opacity >= 1.0
         && n.blend == vectorcraft_color::BlendMode::Normal
-        && n.mask.is_none()
+        && n.extras().mask.is_none()
         && n.appearance.effects.is_empty()
         && n.appearance
             .items

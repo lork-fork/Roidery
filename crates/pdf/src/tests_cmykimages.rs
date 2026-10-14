@@ -212,17 +212,94 @@ fn other_cmyk_images_keep_their_ink_amounts() {
 }
 
 #[test]
-fn cmyk_images_with_a_mask_or_odd_samples_open_in_rgb_with_a_warning() {
-    let inks = flat([0, 102, 255, 0], 4);
-    let mask = stream("/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8", &[255, 128, 255, 128]);
-    let source = pdf_with_images(&[(cmyk_dict(2, 2, "/SMask 6 0 R /Filter /FlateDecode"), crate::output::deflate(&inks).unwrap())], &[mask]);
-    let r = import_with_report(&source, &ImportOptions::default()).unwrap();
-    assert_eq!(blobs(&r.document)[0].mime, "image/png");
-    assert!(r.warnings.iter().any(|w| w == crate::import_image::MASKED), "{:?}", r.warnings);
+fn cmyk_images_with_odd_samples_open_in_rgb_with_a_warning() {
     let four_bits = cmyk_dict(2, 2, "").replace("/BitsPerComponent 8", "/BitsPerComponent 4");
     let r = import_with_report(&pdf_with_images(&[(four_bits, vec![0x0F; 8])], &[]), &ImportOptions::default()).unwrap();
     assert_eq!(blobs(&r.document)[0].mime, "image/png");
     assert!(r.warnings.iter().any(|w| w == crate::import_image::UNREAD), "{:?}", r.warnings);
+}
+
+/// An opacity mask's image: its blob and pixel size.
+type MaskImage<'d> = (&'d ImageBlob, u32, u32);
+
+/// The image nodes on the first layer: each one's blob and its opacity mask's image, if it has one.
+fn masked(d: &Document) -> Vec<(&ImageBlob, Option<MaskImage<'_>>)> {
+    let NodeKind::Layer { children, .. } = &d.layers[0].kind else { panic!() };
+    children
+        .iter()
+        .filter_map(|n| {
+            let NodeKind::Image(im) = &n.kind else { return None };
+            let mask = n.extras().mask.as_ref().map(|m| match &m.art.kind {
+                NodeKind::Image(a) => (&d.images[&a.key], a.width, a.height),
+                other => panic!("mask art is an image: {other:?}"),
+            });
+            Some((&d.images[&im.key], mask))
+        })
+        .collect()
+}
+
+#[test]
+fn masked_cmyk_images_keep_their_inks_and_carry_the_mask_as_an_opacity_mask() {
+    let inks = flat([0, 102, 255, 0], 4);
+    let z = |data: &[u8]| crate::output::deflate(data).unwrap();
+    // Object 6 (the first after the two images): a soft mask; image 2 a colour key masking its
+    // first two pixels.
+    let smask = stream("/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8", &[255, 128, 255, 128]);
+    let keyed: Vec<u8> = [[10, 20, 30, 40], [10, 20, 30, 40], [0, 102, 255, 0], [0, 102, 255, 0]].concat();
+    let images = [
+        (cmyk_dict(2, 2, "/SMask 7 0 R /Filter /FlateDecode"), z(&inks)),
+        (cmyk_dict(2, 2, "/Mask [10 10 20 20 30 30 40 40] /Filter /FlateDecode"), z(&keyed)),
+    ];
+    let source = pdf_with_images(&images, &[smask]);
+    let r = import_with_report(&source, &ImportOptions::default()).unwrap();
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    let m = masked(&r.document);
+    assert_eq!(m.len(), 2);
+    for ((blob, mask), (want, alpha)) in m.iter().zip([(&inks, [255, 128, 255, 128]), (&keyed, [0, 0, 255, 255])]) {
+        assert_eq!(blob.mime, "image/tiff");
+        assert!(close(&blob.cmyk().unwrap().data, want, 0), "the inks as they were");
+        let (mblob, mw, mh) = mask.expect("an opacity mask");
+        assert_eq!((mw, mh), (2, 2));
+        let grey = image::load_from_memory(&mblob.bytes).unwrap().to_luma8();
+        assert_eq!(grey.into_raw(), alpha, "the mask's values");
+    }
+    // The mask art covers the image exactly.
+    let NodeKind::Layer { children, .. } = &r.document.layers[0].kind else { panic!() };
+    let img = children.iter().find(|n| matches!(n.kind, NodeKind::Image(_))).unwrap();
+    assert_eq!(img.geometric_bounds(), img.extras().mask.as_ref().unwrap().art.geometric_bounds());
+    // Written as CMYK with the mask in grey; it opens with the same inks.
+    let out = export_with_report(&r.document, &opts(json!({}))).unwrap();
+    let w = written(&out.bytes);
+    assert!(w.iter().filter(|w| w.space == "DeviceCMYK").count() == 2 && w.iter().any(|w| w.space == "DeviceGray"), "{w:?}");
+    let back = import_with_report(&out.bytes, &ImportOptions::default()).unwrap();
+    let inked: Vec<Vec<u8>> = all_images(&back.document).iter().filter_map(|b| b.cmyk()).map(|i| i.data).collect();
+    assert!(inked.iter().any(|d| close(d, &inks, 3)) && inked.iter().any(|d| close(d, &keyed, 3)), "{:?}", back.warnings);
+    // A mask that hides nothing adds none.
+    let opaque = stream("/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8", &[255; 4]);
+    let r = import_with_report(
+        &pdf_with_images(&[(cmyk_dict(2, 2, "/SMask 6 0 R /Filter /FlateDecode"), z(&inks))], &[opaque]),
+        &ImportOptions::default(),
+    )
+    .unwrap();
+    assert!(masked(&r.document)[0].1.is_none());
+}
+
+/// Every image blob a document's art uses (mask art included).
+fn all_images(d: &Document) -> Vec<&ImageBlob> {
+    let mut keys = vec![];
+    d.walk(|n| {
+        if let NodeKind::Image(im) = &n.kind {
+            keys.push(im.key.clone());
+        }
+        if let Some(m) = &n.extras().mask {
+            m.art.walk(&mut |a| {
+                if let NodeKind::Image(im) = &a.kind {
+                    keys.push(im.key.clone());
+                }
+            });
+        }
+    });
+    keys.iter().filter_map(|k| d.images.get(k)).collect()
 }
 
 /// A document with CMYK image `blob` of `w` × `h` pixels placed 40 pt wide.
@@ -230,7 +307,7 @@ fn image_doc(blob: ImageBlob, w: u32, h: u32) -> Document {
     let mut d = Document::new_with_mode(100.0, 100.0, ColorMode::Cmyk);
     d.images.insert("img".into(), blob);
     let image = ImageObject { key: "img".into(), width: w, height: h, xf: Affine::scale(40.0 / w as f64), link: None, placement: Default::default() };
-    let n = Node::new(d.alloc_id(), NodeKind::Image(image));
+    let n = Node::new(d.alloc_id(), NodeKind::Image(Box::new(image)));
     let l = d.layers[0].id;
     d.insert(Some(l), 0, n).unwrap();
     d

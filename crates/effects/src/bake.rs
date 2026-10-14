@@ -39,7 +39,9 @@ fn clear_item_effects(item: &mut AppearanceItem) {
 
 /// Does anything in `n`'s subtree need baking?
 pub fn needs_bake(n: &Node) -> bool {
-    has_adjustment(n)
+    crate::has_revolve(n)
+        || crate::has_solid(n)
+        || has_adjustment(n)
         || has_crop_marks(n)
         || has_pathfinder(n)
         || has_own_paint(n)
@@ -90,6 +92,10 @@ fn bake_node(d: &mut Document, n: &Node) -> Option<Node> {
     }
     // Crop marks: the object and its marks.
     if let Some(m) = crop_marks_art(n) {
+        return Some(bake_pieces(d, m));
+    }
+    if let Some(m) = crate::revolve_art(n).or_else(|| crate::solid_art(n)) {
+        let m = evaluate_container(&m).unwrap_or(m);
         return Some(bake_pieces(d, m));
     }
     // Type, images, symbol instances and live objects: reshaped through their outlines.
@@ -158,24 +164,25 @@ pub fn fresh_ids(d: &mut Document, n: &mut Node, seen: &mut std::collections::Ha
 fn piece(d: &mut Document, n: &Node, path: PathData, rule: FillRule, item: AppearanceItem) -> Node {
     let id = d.alloc_id();
     let kind = path_kind(d, path, rule);
-    Node {
-        id,
-        name: None,
-        appearance: Appearance { items: vec![item], ..Default::default() },
-        opacity: 1.0,
-        blend: Default::default(),
-        isolate: false,
-        knockout: Default::default(),
-        knockout_shape: false,
-        mask: None,
-        trace: None,
-        wrap: None,
-        graph: None,
-        // The group keeps the URL (one link around the pieces).
-        attrs: None,
-        kind,
-        ..n.clone()
-    }
+    let mut out = n.clone();
+    out.id = id;
+    out.name = None;
+    out.appearance = Appearance { items: vec![item], ..Default::default() }.into();
+    out.opacity = 1.0;
+    out.blend = Default::default();
+    out.isolate = false;
+    out.knockout = Default::default();
+    out.knockout_shape = false;
+    out.kind = kind;
+    let mut extras = out.extras_mut();
+    extras.mask = None;
+    extras.trace = None;
+    extras.wrap = None;
+    extras.graph = None;
+    // The group keeps the URL (one link around the pieces).
+    extras.attrs = None;
+    drop(extras);
+    out
 }
 
 /// `n`'s geometry with its object-level geometry effects applied, its fill rule, the context of
@@ -226,6 +233,10 @@ pub type StrokeArt<'a> = &'a mut dyn FnMut(&mut Document, &PathData, FillRule, &
 /// without transparency or effects of its own takes `n`'s place itself. Hidden fills, strokes and
 /// effects are dropped. `None` for other kinds of objects.
 pub fn expand_leaf(d: &mut Document, n: &Node, stroke_art: StrokeArt) -> Option<Node> {
+    if let Some(m) = crate::revolve::expand_revolve_art(n).or_else(|| crate::solid_art(n)) {
+        let m = evaluate_container(&m).unwrap_or(m);
+        return Some(bake_pieces(d, m));
+    }
     let (g, rule, ctx, mut m) = leaf_base(n)?;
     m.appearance.effects.retain(|e| e.visible);
     let mut pieces = vec![];
@@ -289,6 +300,9 @@ pub fn expand_art(d: &mut Document, n: &mut Node, stroke_art: StrokeArt) {
 /// the members of a group keeping `n`'s id, transparency, opacity mask and raster effects. `None`
 /// when it has neither a stroke to outline nor a geometry effect, so bending first changes nothing.
 pub fn bake_appearance(n: &Node) -> Option<Node> {
+    if let Some(m) = crate::revolve_art(n).or_else(|| crate::solid_art(n)) {
+        return Some(m);
+    }
     if !matches!(n.kind, NodeKind::Path { clipping: false, guide: false, .. } | NodeKind::Compound { .. }) {
         return None;
     }
@@ -324,14 +338,19 @@ pub fn bake_appearance(n: &Node) -> Option<Node> {
     Some(m)
 }
 
-/// A copy of `doc` with every live geometry effect baked into plain paths, or `None` when the
-/// document has none (export it as is).
+/// A copy of `doc` ready to export: every live geometry effect baked into plain paths, and the
+/// resources of its placed documents' art added ([`Document::with_placed_art`]); `None` when
+/// there is nothing to do (export it as is).
 pub fn bake_document(doc: &Document) -> Option<Document> {
-    if !doc.layers.iter().any(|l| needs_bake(l)) {
-        return None;
+    let placed = doc.with_placed_art();
+    if !placed.layers.iter().any(|l| needs_bake(l)) {
+        return match placed {
+            std::borrow::Cow::Owned(d) => Some(d),
+            std::borrow::Cow::Borrowed(_) => None,
+        };
     }
-    let mut d = doc.clone();
-    let layers = doc.layers.clone();
+    let mut d = placed.into_owned();
+    let layers = d.layers.clone();
     d.layers = layers.iter().map(|l| bake_node(&mut d, l).map(Arc::new).unwrap_or_else(|| l.clone())).collect();
     Some(d)
 }

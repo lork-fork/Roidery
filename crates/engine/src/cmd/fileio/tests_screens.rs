@@ -105,6 +105,9 @@ fn density_buckets_go_into_sub_folders() {
     // A prefix names files, not folders.
     let r = export(&mut s, json!({"range": "2", "prefix": "../a\\b:", "formats": [{"format": "svg"}]}));
     assert_eq!(names(&r), ["..-a-b-Artboard-2.svg"]);
+    // So does a suffix: it can't open a folder or climb out of the export folder.
+    let r = export(&mut s, json!({"range": "2", "formats": [{"format": "svg", "suffix": "/../x\\..\\y"}, {"format": "png", "suffix": "-ok"}]}));
+    assert_eq!(names(&r), ["Artboard-2-..-x-..-y.svg", "Artboard-2-ok.png"]);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -118,6 +121,35 @@ fn sub_folders_are_made_in_the_export_folder() {
     assert_eq!(written, [format!("{folder}/1x/Artboard-1.png"), format!("{folder}/2x/Artboard-1@2x.png"), format!("{folder}/3x/Artboard-1@3x.png")]);
     assert_eq!(size(&std::fs::read(dir.join("3x").join("Artboard-1@3x.png")).unwrap()), (120, 90));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// #1713: whatever a suffix or prefix says (`..`, an absolute path, a drive, a share), every file
+/// lands directly in the export folder.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_hostile_suffix_or_prefix_stays_in_the_export_folder() {
+    let mut s = session(1);
+    let top = std::env::temp_dir().join(format!("vc-screens-escape-{}", std::process::id()));
+    let dir = top.join("out");
+    let folder = dir.to_string_lossy().replace('\\', "/");
+    for text in ["/../../up", "\\..\\up", "/etc/x", "C:\\Windows\\x", "\\\\server\\share\\x", "/..", ".."] {
+        for key in ["suffix", "prefix"] {
+            let mut p = json!({"folder": folder, "formats": [{"format": "svg"}]});
+            if key == "suffix" {
+                p["formats"][0][key] = json!(text);
+            } else {
+                p[key] = json!(text);
+            }
+            let r = export(&mut s, p);
+            let written = std::path::PathBuf::from(r["files"][0].as_str().unwrap());
+            assert!(written.is_file(), "{key} {text}");
+            assert_eq!(written.parent().unwrap().canonicalize().unwrap(), dir.canonicalize().unwrap(), "{key} {text}");
+        }
+    }
+    // Nothing beside the export folder, no folder inside it.
+    assert_eq!(std::fs::read_dir(&top).unwrap().count(), 1);
+    assert!(std::fs::read_dir(&dir).unwrap().all(|e| e.unwrap().path().is_file()));
+    let _ = std::fs::remove_dir_all(top);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

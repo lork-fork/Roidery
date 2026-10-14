@@ -5,20 +5,23 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use vectorcraft_doc::{Document, Node, NodeId, NodeKind};
+use vectorcraft_doc::{Document, Node, NodeId, NodeKind, SymbolBoxes};
 
 use crate::DocState;
 
 use super::super::*;
 use super::encode::single_artboard;
-use super::{ARTBOARD_PARAMS, Format, default_name, encode, encode_all, encode_with_warnings, merge, writable, write_encoded, write_or_return};
+use super::{
+    ARTBOARD_PARAMS, Format, default_name, encode, encode_all, encode_with_warnings, merge, with_black_output, writable, write_encoded,
+    write_or_return,
+};
 
 pub(super) fn serialize(s: &mut Session, p: &Value) -> Result<Value> {
     let f = writable("document.serialize", Some(str_param(p, "format").unwrap_or("vectorcraft")), None)?;
     let expanded = expand_presets(s, "document.serialize", p)?;
-    let p = &*expanded;
-    let doc = &*source(s, f, p, "document.serialize")?;
-    let enc = encode_all(doc, f.id, p)?;
+    let p = with_black_output(s, &expanded);
+    let doc = &*source(s, f, &p, "document.serialize")?;
+    let enc = encode_all(doc, f.id, &p)?;
     let files = enc.named(doc, &default_name(doc, f.extensions[0]));
     let (main, linked) = files.split_at(enc.files.len());
     // Text formats come back as text; an SVG in UTF-16 or ISO 8859-1 also as its bytes.
@@ -45,11 +48,14 @@ pub(super) fn serialize(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path");
+    if let Some(path) = path {
+        super::check_not_lossy_overwrite(s.doc()?, path, p, "document.export")?;
+    }
     let f = writable("document.export", str_param(p, "format"), path)?;
     let expanded = expand_presets(s, "document.export", p)?;
-    let p = &*expanded;
-    let doc = &*source(s, f, p, "document.export")?;
-    let enc = encode_all(doc, f.id, p)?;
+    let p = with_black_output(s, &expanded);
+    let doc = &*source(s, f, &p, "document.export")?;
+    let enc = encode_all(doc, f.id, &p)?;
     write_encoded(path, &default_name(doc, f.extensions[0]), doc, &enc, json!({ "format": f.id, "warnings": enc.warnings }))
 }
 
@@ -85,6 +91,34 @@ fn selected_part(n: &Node, keep: &HashSet<NodeId>) -> Option<Node> {
     let mut out = n.clone();
     *out.children_mut()? = kept;
     Some(out)
+}
+
+/// `doc` with only the art over `rect` (an artboard): objects whose visual bounds miss it are left
+/// out, at any depth of layers and sublayers, and objects that reach it stay whole (the file's
+/// bounds clip them), as DXF's crop leaves them. Symbol instances are measured by their art, and
+/// the box of one whose art holds brushed strokes grows by as far as their brush art can paint
+/// ([`SymbolBoxes::with_brush_art`]). An object that holds a symbol instance also stays when what
+/// the canvas paints for it reaches `rect` ([`vectorcraft_render::painted_bounds`]: the effects in
+/// the symbols' art and its own effects). A clipping layer keeps every object, its clipping path
+/// among them. An artboard's file then holds its own art, not a whole document of artboards.
+pub(super) fn art_over(doc: &Document, rect: vectorcraft_geom::Rect) -> Document {
+    fn kept(n: &Arc<Node>, doc: &Document, symbols: &SymbolBoxes, rect: vectorcraft_geom::Rect) -> Option<Arc<Node>> {
+        if matches!(n.kind, NodeKind::Layer { clip: false, .. }) {
+            let mut layer = Node::clone(n);
+            let children = layer.children_mut()?;
+            *children = children.iter().filter_map(|c| kept(c, doc, symbols, rect)).collect();
+            return Some(Arc::new(layer));
+        }
+        let over = |b: vectorcraft_geom::Rect| b.x0 <= rect.x1 && rect.x0 <= b.x1 && b.y0 <= rect.y1 && rect.y0 <= b.y1;
+        let mut holds_instance = false;
+        n.walk(&mut |c| holds_instance |= matches!(c.kind, NodeKind::SymbolInstance { .. }));
+        let painted = || holds_instance && vectorcraft_render::painted_bounds(doc, n).is_some_and(over);
+        (n.visual_bounds_with(symbols).is_none_or(over) || painted()).then(|| n.clone())
+    }
+    let symbols = doc.symbol_boxes().with_brush_art();
+    let mut d = doc.clone();
+    d.layers = doc.layers.iter().filter_map(|l| kept(l, doc, &symbols, rect)).collect();
+    d
 }
 
 /// `p` without its artboard choice, also inside its SVG options (for documents made of one
@@ -129,10 +163,12 @@ fn selection(s: &mut Session, cmd: &str) -> Result<(Document, vectorcraft_geom::
 }
 
 /// Objects `ids` of `doc` alone on one layer (in that order, back to front), with one artboard
-/// named `name`: their visual bounds (`None` when they have none).
+/// named `name`: their visual bounds, symbol instances measured by their art (`None` when they
+/// have none).
 pub(crate) fn isolated(doc: &Document, ids: &[NodeId], name: &str) -> Option<(Document, vectorcraft_geom::Rect)> {
     let nodes: Vec<Arc<Node>> = ids.iter().filter_map(|id| doc.node(*id).cloned().map(Arc::new)).collect();
-    let bounds = nodes.iter().filter_map(|n| n.visual_bounds()).reduce(|a, b| a.union(b))?;
+    let symbols = doc.symbol_boxes();
+    let bounds = nodes.iter().filter_map(|n| n.visual_bounds_with(&symbols)).reduce(|a, b| a.union(b))?;
     let mut d = single_artboard(doc, bounds, name);
     let mut layer = Node::layer(d.alloc_id(), name, vectorcraft_doc::LayerColor::Preset(0));
     if let Some(ch) = layer.children_mut() {
@@ -146,14 +182,17 @@ pub(crate) fn isolated(doc: &Document, ids: &[NodeId], name: &str) -> Option<(Do
 /// template layers are guides, not artwork, and are left out.
 pub(super) fn export_selection(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "document.exportSelection";
+    if let Some(path) = str_param(p, "path") {
+        super::check_not_lossy_overwrite(s.doc()?, path, p, C)?;
+    }
     let path = str_param(p, "path");
     let f = writable(C, str_param(p, "format"), path)?;
     let expanded = expand_presets(s, C, p)?;
-    let p = &*expanded;
+    let p = with_black_output(s, &expanded);
     let (d, bounds) = selection(s, C)?;
     // The encoder's warnings (options accepted but not applied, features approximated or left
     // out), as document.export reports them.
-    let (bytes, warnings) = encode_with_warnings(&d, f.id, &without_artboards(p))?;
+    let (bytes, warnings) = encode_with_warnings(&d, f.id, &without_artboards(&p))?;
     write_or_return(path, &bytes, json!({ "format": f.id, "warnings": warnings, "bounds": [bounds.x0, bounds.y0, bounds.width(), bounds.height()] }))
 }
 
@@ -161,6 +200,9 @@ pub(super) fn export_selection(s: &mut Session, p: &Value) -> Result<Value> {
 /// `transparent`.
 pub(super) fn export_for_office(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "document.exportForOffice";
+    if let Some(path) = str_param(p, "path") {
+        super::check_not_lossy_overwrite(s.doc()?, path, p, C)?;
+    }
     let path = str_param(p, "path");
     let ppi = f64_or(p, "ppi", 150.0);
     let doc = &s.doc()?.doc;
@@ -172,7 +214,8 @@ pub(super) fn export_for_office(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, format!("no artboard {artboard} (0-based; the document has {})", doc.artboards.len())));
     }
     let background = if bool_or(p, "transparent", false) { "transparent" } else { "white" };
-    let bytes = encode(doc, "png", &json!({ "ppi": ppi, "background": background, "artboard": artboard }))?;
+    let opts = with_black_output(s, &json!({ "ppi": ppi, "background": background, "artboard": artboard }));
+    let bytes = encode(doc, "png", &opts)?;
     // The pixel size, from the PNG header.
     let side = |at: usize| bytes.get(at..at + 4).and_then(|b| b.try_into().ok()).map_or(0, u32::from_be_bytes);
     write_or_return(path, &bytes, json!({ "width": side(16), "height": side(20) }))

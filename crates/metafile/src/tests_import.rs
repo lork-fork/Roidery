@@ -309,3 +309,19 @@ fn damaged_files_fail_or_import_partly() {
     let huge = hand_wmf(100, 100, &[(0x0324, le16(&[i16::MAX])), (0x0538, le16(&[-1]))]);
     assert!(import(&huge).is_ok());
 }
+
+#[test]
+fn clips_nest_only_so_deep() {
+    // Each clip inside the last one used to nest a clipping group one level deeper, past the stack.
+    let mut records = vec![(30, le(&[0, 0, 1500, 1500])); 200_000];
+    records.push((43, le(&[100, 100, 200, 200])));
+    let back = import(&hand_emf(5000, 3000, &records)).unwrap();
+    let mut depth = 0;
+    let mut n = back.document.layers[0].children().unwrap()[0].clone();
+    while let NodeKind::Group { children, clip: true } = &n.kind {
+        depth += 1;
+        n = children.last().unwrap().clone();
+    }
+    assert_eq!(depth, vectorcraft_doc::clipnest::MAX_NEST);
+    assert!(back.warnings.iter().any(|w| w.contains("clips nested more than")), "{:?}", back.warnings);
+}

@@ -2,7 +2,7 @@
 //! under Window → Swatch Libraries → User Defined) or a file picked in a save dialog (a download
 //! on the web). OK runs `swatch.library.save`.
 //!
-//! Fields: `name`, `format` (`vcswatches`, `gpl` or `css`), `user` (save to the user library
+//! Fields: `name`, `format` (`vcswatches`, `gpl`, `ase` or `css`), `user` (save to the user library
 //! folder), `selectedOnly` and `names` (the swatches selected in the Swatches panel), `__user`
 //! (there is a user library folder).
 //!
@@ -34,10 +34,15 @@ pub fn open(app: &mut VectorcraftApp, names: Vec<String>) -> Result<Value, Strin
 /// The fields a Save … Library dialog opens with: the document's name, Save To the user library
 /// folder when there is one (`user`), and the panel's selected `names`.
 pub(super) fn fields(app: &VectorcraftApp, user: bool, names: Vec<String>) -> Result<Value, String> {
-    let st = app.session.active().ok_or("no document open")?;
-    let title = st.title();
-    let name = title.rsplit_once('.').map_or(title.as_str(), |(s, _)| s).to_string();
+    let name = document_name(app).ok_or("no document open")?;
     Ok(json!({"name": name, "user": user, "__user": user, "selectedOnly": false, "names": names}))
+}
+
+/// The active document's name without its extension: the library name the save commands use when
+/// none is given.
+fn document_name(app: &VectorcraftApp) -> Option<String> {
+    let title = app.session.active()?.title();
+    Some(title.rsplit_once('.').map_or(title.as_str(), |(s, _)| s).to_string())
 }
 
 fn format_of(d: &Dialog) -> PaletteFormat {
@@ -61,6 +66,9 @@ fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     });
     if format_of(d) == PaletteFormat::Gpl {
         widgets::dim_label(ui, tl!("GPL palettes keep solid colours only, as RGB."));
+    }
+    if format_of(d) == PaletteFormat::Ase {
+        widgets::dim_label(ui, tl!("Swatch exchange files keep solid colors only."));
     }
     false
 }
@@ -104,8 +112,10 @@ pub(super) fn params(d: &Dialog) -> Value {
     p
 }
 
-/// Run save command `cmd` with `p`: into the user library folder, else to a file the user picks
-/// (extension `ext`).
+/// Run save command `cmd` with `p`: into the user library folder, else to a file the user picks.
+/// The save panel suggests the file name that a save into the user library folder uses: the name
+/// (the document's when it is empty) with extension `ext`. The web downloads the file under that
+/// name.
 pub(super) fn save(app: &mut VectorcraftApp, d: &Dialog, cmd: &str, ext: &str, p: Value) -> Result<Value, String> {
     if p["user"] == json!(true) {
         let r = run_and_close(app, cmd, p)?;
@@ -113,7 +123,9 @@ pub(super) fn save(app: &mut VectorcraftApp, d: &Dialog, cmd: &str, ext: &str, p
         return Ok(r);
     }
     app.ui.dialog = None;
-    crate::io::save_command_output(app, cmd, ext, p).map(|path| json!({ "path": path }))
+    let name = Some(d.str("name").trim().to_string()).filter(|n| !n.is_empty()).or_else(|| document_name(app)).unwrap_or_default();
+    let file = vectorcraft_engine::cmd::swatchlib::library_file_name(&name, ext);
+    crate::io::save_command_output_named(app, cmd, &file, p).map(|path| json!({ "path": path }))
 }
 
 fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {

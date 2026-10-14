@@ -111,7 +111,8 @@ pointers are offsets into the module's memory.
 - `name`: the menu label (1–64 printable characters). `kind`: `"filter"` (object filter) or `"effect"` (live effect).
 - `params`: in dialog order. Names are `[A-Za-z0-9_]`, not starting with `_`, and not `id`, `ids`, `params` or
   `preview`. The host validates the user's values before calling: missing values take the default, numbers are
-  clamped to `min..max` (ints rounded), a wrong type or an unknown choice is an error.
+  clamped to `min..max` (ints rounded), a wrong type or an unknown choice is an error. Numeric defaults
+  are also clamped to their range, including the implicit zero default of an `int` parameter.
 
 ### Input
 

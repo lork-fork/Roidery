@@ -6,8 +6,9 @@
 //! a width point's centre slides it along the path; Alt-dragging the centre slides a copy; dropping
 //! either onto another width point makes a discontinuous point (the width steps there). Shift-click
 //! adds width points to the selection (or takes them out), and dragging one of several selected
-//! points moves or widens them all. Double-clicking a width point opens Width Point Edit (the
-//! `widthPoint` dialog). Delete/Backspace removes the selected width points.
+//! points moves or widens them all. Double-clicking a stroke opens Width Point Edit (the
+//! `widthPoint` dialog), editing a hit point or creating one on confirmation. Delete/Backspace
+//! removes the selected width points.
 //!
 //! Gestures preview `stroke.widthPoint.set {id, t, left, right, index?}` (side widths in points),
 //! `stroke.widthPoint.copy {id, index, t}` or, for several points, `stroke.widthProfile.set {ids,
@@ -296,9 +297,12 @@ impl Tool for WidthTool {
             }
             PointerKind::DoubleClick => {
                 let Some(spot) = Self::spot_at(cx, p) else { return vec![] };
-                let Some((w, _)) = Self::hit(cx, &spot, p) else { return vec![] };
+                let Some((w, _)) = Self::hit(cx, &spot, p) else {
+                    self.selected = Some((spot.owner, vec![spot.t]));
+                    return vec![Action::Dialog("widthPoint".into(), json!({"id": spot.owner.0, "t": spot.t}))];
+                };
                 self.selected = Some((spot.owner, vec![w.t]));
-                vec![Action::Dialog("widthPoint".into(), json!({"id": spot.owner.0, "index": w.index}))]
+                vec![Action::Dialog("widthPoint".into(), json!({"id": spot.owner.0, "index": w.index, "adjustAdjoining": ev.mods.shift}))]
             }
             PointerKind::Down => {
                 let Some(spot) = Self::spot_at(cx, p) else {
@@ -612,7 +616,7 @@ mod tests {
             std::sync::Arc::new(Node::path(id, path, Appearance::basic(vectorcraft_color::Paint::None, vectorcraft_color::Paint::None, 0.0)))
         };
         let mut comp = Node::new(c, NodeKind::Compound { children: vec![line(a, 200.0), line(b, 300.0)], rule: Default::default() });
-        comp.appearance = Appearance::default_art();
+        comp.appearance = Appearance::default_art().into();
         let st = comp.appearance.stroke_mut().unwrap();
         st.width = 10.0;
         st.profile = Some(WidthProfile { points: vec![(0.0, 1.0, 1.0), (0.5, 1.0, 1.0), (1.0, 1.0, 1.0)] });
@@ -694,9 +698,15 @@ mod tests {
         let (d, id) = doc_three_points();
         let (s, p) = (Selection::default(), paint());
         let c = cx(&d, &s, &p);
-        let mut t = WidthTool::default();
-        let acts = t.pointer(&c, &ev(PointerKind::DoubleClick, 200.0, 195.0, Mods::default()));
-        assert_eq!(acts, vec![Action::Dialog("widthPoint".into(), json!({"id": id.0, "index": 2}))]);
-        assert!(t.pointer(&c, &ev(PointerKind::DoubleClick, 120.0, 200.0, Mods::default())).is_empty(), "not on a width point");
+        for shift in [false, true] {
+            let mut t = WidthTool::default();
+            let mods = Mods { shift, ..Default::default() };
+            let acts = t.pointer(&c, &ev(PointerKind::DoubleClick, 200.0, 195.0, mods));
+            let [Action::Dialog(kind, p)] = acts.as_slice() else { panic!("expected Width Point Edit: {acts:?}") };
+            assert_eq!(kind, "widthPoint");
+            assert_eq!((&p["id"], &p["index"]), (&json!(id.0), &json!(2)));
+            assert_eq!(p.get("adjustAdjoining").and_then(serde_json::Value::as_bool).unwrap_or(false), shift);
+            assert!(t.pointer(&c, &ev(PointerKind::DoubleClick, 120.0, 250.0, mods)).is_empty(), "not on a stroked path");
+        }
     }
 }

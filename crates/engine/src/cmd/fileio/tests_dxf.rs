@@ -52,7 +52,7 @@ fn export_writes_dxf_of_the_chosen_version() {
     let dxf = text(&r);
     assert_eq!(header(&dxf, "$ACADVER").as_deref(), Some("AC1032"));
     assert_eq!(header(&dxf, "$INSUNITS").as_deref(), Some("4"), "millimetres by default");
-    assert_eq!(entities(&dxf), ["HATCH", "HATCH"], "the whole document, origin at the first artboard");
+    assert_eq!(entities(&dxf), ["LWPOLYLINE", "HATCH", "LWPOLYLINE", "HATCH"], "the whole document, origin at the first artboard");
     for (v, acadver) in [("R12", "AC1009"), ("R14", "AC1014"), ("2000", "AC1015"), ("2004", "AC1018"), ("2013", "AC1027")] {
         let r = s.execute("document.exportDxf", &json!({"version": v})).unwrap();
         assert_eq!(header(&text(&r), "$ACADVER").as_deref(), Some(acadver), "{v}");
@@ -71,11 +71,11 @@ fn use_artboards_writes_one_drawing_per_artboard() {
     let names: Vec<&str> = files.iter().map(|f| f["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Untitled-1-Artboard-1.dxf", "Untitled-1-Artboard-2.dxf"]);
     for f in files {
-        assert_eq!(entities(&text(f)), ["HATCH"], "each holds the art over its artboard");
+        assert_eq!(entities(&text(f)), ["LWPOLYLINE", "HATCH"], "each holds the art over its artboard");
     }
     let r = s.execute("document.export", &json!({"format": "dxf", "useArtboards": true, "range": "2"})).unwrap();
     assert!(r.get("files").is_none());
-    assert_eq!(entities(&text(&r)), ["HATCH"]);
+    assert_eq!(entities(&text(&r)), ["LWPOLYLINE", "HATCH"]);
     // Without artboards: the origin at the art's bounds.
     let r = s.execute("document.export", &json!({"format": "dxf", "useArtboards": false, "unit": "pt"})).unwrap();
     let dxf = text(&r);

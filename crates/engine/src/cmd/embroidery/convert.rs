@@ -61,7 +61,7 @@ fn convert_by(s: &mut Session, p: &Value, c: &'static str, method: medial::Metho
                 let mut n = Node::new(nid, super::super::create::path_kind(path, None));
                 look.apply(d, &mut n);
                 n.name = Some(if k == 0 { "Satin".into() } else { format!("Satin {}", k + 1) });
-                n.attrs = Some(Box::new(vectorcraft_doc::ObjectAttributes { stitch: Some(stitch.clone()), ..Default::default() }));
+                n.extras_mut().attrs = Some(Box::new(vectorcraft_doc::ObjectAttributes { stitch: Some(stitch.clone()), ..Default::default() }));
                 // Sewn just after the shape, in order.
                 d.insert(parent, index + 1 + k, n)?;
                 made.push(nid);

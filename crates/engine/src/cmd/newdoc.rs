@@ -345,9 +345,22 @@ pub fn color_mode_id(m: ColorMode) -> &'static str {
 /// each column as wide and each row as tall as its largest artboard; `by_column` fills columns
 /// top to bottom first, `rtl` puts the first column at the right.
 pub(crate) fn grid_origins(sizes: &[(f64, f64)], origin: Point, columns: usize, spacing: f64, by_column: bool, rtl: bool) -> Vec<Point> {
-    let n = sizes.len();
-    let cols = columns.clamp(1, n.max(1));
-    let rows = n.div_ceil(cols).max(1);
+    let n = sizes.len().max(1);
+    let cols = columns.clamp(1, n);
+    grid_origins_rc(sizes, origin, (n.div_ceil(cols), cols), spacing, by_column, rtl)
+}
+
+/// [`grid_origins`] on a grid of `rows` × `cols` cells (at least enough for every artboard when
+/// filled the `by_column` way).
+pub(crate) fn grid_origins_rc(
+    sizes: &[(f64, f64)],
+    origin: Point,
+    (rows, cols): (usize, usize),
+    spacing: f64,
+    by_column: bool,
+    rtl: bool,
+) -> Vec<Point> {
+    let (rows, cols) = (rows.max(1), cols.max(1));
     // Grid cell (row, column) of artboard i.
     let cell = |i: usize| {
         let (r, c) = if by_column { (i % rows, i / rows) } else { (i / cols, i % cols) };
@@ -362,7 +375,7 @@ pub(crate) fn grid_origins(sizes: &[(f64, f64)], origin: Point, columns: usize, 
         }
     }
     let offset = |spans: &[f64], k: usize| spans.iter().take(k).map(|s| s + spacing).sum::<f64>();
-    (0..n)
+    (0..sizes.len())
         .map(|i| {
             let (r, c) = cell(i);
             Point::new(origin.x + offset(&col_w, c), origin.y + offset(&row_h, r))
@@ -568,6 +581,7 @@ pub(crate) fn file_new(s: &mut Session, p: &Value) -> Result<Value> {
         settings.name = "Custom".into();
     }
     let mut d = settings.document();
+    d.grid = s.prefs.grid();
     d.title = match str_param(p, "name").or(str_param(p, "title")).map(str::trim).filter(|t| !t.is_empty()) {
         // New Document offers the next untitled name: taking it uses it up.
         Some(t) if t == s.peek_untitled() => s.next_untitled(),

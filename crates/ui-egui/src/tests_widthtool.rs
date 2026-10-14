@@ -12,7 +12,7 @@ fn the_width_tool_has_its_own_cursors() {
     let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
         let painter = ui.painter().clone();
         for c in [Cursor::Width, Cursor::WidthAdd, Cursor::WidthPoint] {
-            assert!(crate::cursors::paint(&painter, c, egui::pos2(50.0, 50.0)), "{c:?} is drawn");
+            assert!(crate::cursors::paint(&painter, c, egui::pos2(50.0, 50.0), 1.0), "{c:?} is drawn");
         }
     });
     out.textures_delta.clear();

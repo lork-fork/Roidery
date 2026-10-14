@@ -36,6 +36,12 @@ pub fn paint_mark(ui: &Ui, r: Rect) {
     ui.painter().image(texture(ui.ctx()).id(), r, uv, Color32::WHITE);
 }
 
+/// The mark's texture id (tests: find the painted marks among the shapes).
+#[cfg(test)]
+pub fn texture_id(ctx: &Context) -> egui::TextureId {
+    texture(ctx).id()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,6 +61,9 @@ mod tests {
         let ctx = Context::default();
         crate::theme::install_fonts(&ctx);
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        // The system title bar hides the in-app mark (the OS draws its own icon), so paint the
+        // app-drawn bar here.
+        app.custom_titlebar = true;
         let mut frame = || {
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| crate::chrome::app_bar(&mut app, ui));
             let uploads = out.textures_delta.set.values().flat_map(|d| d.iter()).filter(|d| d.image.size() == [128, 128]).count();
@@ -72,7 +81,7 @@ mod tests {
         let (uploads, marks) = frame();
         assert_eq!(uploads, 1);
         assert_eq!(marks.len(), 1);
-        assert_eq!(marks[0].size(), egui::vec2(22.0, 22.0));
+        assert_eq!(marks[0].size(), egui::vec2(18.0, 18.0));
         // Later frames reuse the texture.
         let (uploads, marks) = frame();
         assert_eq!((uploads, marks.len()), (0, 1));

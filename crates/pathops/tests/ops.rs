@@ -412,13 +412,14 @@ fn join_single_path_closes() {
 
 #[test]
 fn grid_split() {
-    let g = split_into_grid(Rect::new(0.0, 0.0, 100.0, 50.0), 2, 3, 5.0);
+    let g = split_into_grid(Rect::new(0.0, 0.0, 100.0, 50.0), 2, 3, (7.0, 5.0));
     assert_eq!(g.len(), 6);
     let w = (100.0 - 10.0) / 3.0;
-    let h = (50.0 - 5.0) / 2.0;
+    let h = (50.0 - 7.0) / 2.0;
     assert!(g.iter().all(|c| close(ar(c), w * h, 1e-9)));
     assert_eq!(g[5].bounds().unwrap().x1, 100.0);
-    assert!(split_into_grid(Rect::new(0.0, 0.0, 10.0, 10.0), 0, 3, 1.0).is_empty());
+    assert!(split_into_grid(Rect::new(0.0, 0.0, 10.0, 10.0), 0, 3, (1.0, 1.0)).is_empty());
+    assert!(split_into_grid(Rect::new(0.0, 0.0, 10.0, f64::NAN), 2, 3, (1.0, 1.0)).is_empty());
 }
 
 #[test]

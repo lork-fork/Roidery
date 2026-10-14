@@ -91,9 +91,9 @@ fn real_text_lands_within_half_a_point_of_the_outlines() {
     turned.xf *= Affine::rotate(-0.5) * Affine::skew(0.2, 0.0);
     let mut mixed = TextObject::point(Point::new(200.0, 60.0), "", style(20.0));
     mixed.runs = vec![
-        TextRun { text: "x".into(), style: style(20.0) },
-        TextRun { text: "2".into(), style: CharStyle { baseline_shift: 8.0, v_scale: 140.0, ..style(12.0) } },
-        TextRun { text: " ok".into(), style: CharStyle { rotation: 20.0, ..style(20.0) } },
+        TextRun { text: "x".into(), style: style(20.0), inline: None },
+        TextRun { text: "2".into(), style: CharStyle { baseline_shift: 8.0, v_scale: 140.0, ..style(12.0) }, inline: None },
+        TextRun { text: " ok".into(), style: CharStyle { rotation: 20.0, ..style(20.0) }, inline: None },
     ];
     let mut on_path = TextObject::point(Point::ZERO, "along the arc", style(18.0));
     on_path.kind = TextKind::OnPath { path: arc(), start: 0.0, end: None };
@@ -108,6 +108,58 @@ fn real_text_lands_within_half_a_point_of_the_outlines() {
         assert!(off < 0.5, "{what}: {a:?} vs {b:?}");
         assert_eq!(texts(&import_as(&pdf(&d, false).bytes, TextAs::Text)).concat().replace(' ', ""), what.replace(' ', ""), "{what}");
     }
+}
+
+/// A run shifted two billion points off its baseline is left out, as real text or outlines, and
+/// the rest of the type is written. On a page 50 points high, the page's y flip puts the shifted
+/// run's baseline at -2,147,483,648, which the PDF writer panics on in builds with overflow checks.
+#[test]
+fn a_run_shifted_two_billion_points_is_left_out() {
+    let mut t = TextObject::point(Point::new(5.0, 40.0), "", style(12.0));
+    t.runs = vec![
+        TextRun { text: "in".into(), style: style(12.0), inline: None },
+        TextRun { text: "out".into(), style: CharStyle { baseline_shift: -2_147_483_649.0, ..style(12.0) }, inline: None },
+    ];
+    let mut d = doc(vec![t]);
+    d.artboards[0].rect = Rect::new(0.0, 0.0, 50.0, 50.0);
+    assert_eq!(texts(&import_as(&pdf(&d, false).bytes, TextAs::Text)), ["in"]);
+    let b = ink(&import_as(&pdf(&d, true).bytes, TextAs::Outlines));
+    assert!(b.y0 > 0.0 && b.y1 < 50.0, "{b:?}");
+}
+
+/// An overprinting run is written, or left out, as the same run is without overprint: the form
+/// marked to overprint the run holds the type's transform. For type moved 2,147,483,689 points down
+/// with its run shifted back onto a page 50 points high, a form placed through that transform would
+/// sit at y = -2,147,483,648, which the PDF writer panics on in builds with overflow checks. For
+/// type scaled 3 times, a form without that transform would hold a run shifted 500,000,000 points
+/// up, and the export would write the run 1,500,000,000 points up.
+#[test]
+fn overprinting_runs_are_written_or_left_out_as_other_runs_are() {
+    let moved = |overprint_fill| {
+        let back = CharStyle { baseline_shift: 2_147_483_649.0, overprint_fill, ..style(12.0) };
+        TextObject::point(Point::new(5.0, 2_147_483_689.0), "moved", back)
+    };
+    let scaled = |overprint_fill| {
+        let mut t = TextObject::point(Point::new(5.0, 40.0), "", style(12.0));
+        t.xf *= Affine::scale(3.0);
+        let up = CharStyle { baseline_shift: 500_000_000.0, overprint_fill, ..style(12.0) };
+        t.runs = vec![TextRun { text: "in".into(), style: style(12.0), inline: None }, TextRun { text: "out".into(), style: up, inline: None }];
+        t
+    };
+    let written = |mut t: TextObject| {
+        // The export culls type by the laid-out bounds that the engine keeps in `cached_bounds`.
+        t.cached_bounds = Some(vectorcraft_text::layout(FontDb::global(), &t).bounds);
+        let mut d = doc(vec![t]);
+        d.artboards[0].rect = Rect::new(0.0, 0.0, 50.0, 50.0);
+        pdf(&d, false).bytes
+    };
+    let text_of = |bytes: &[u8]| texts(&import_as(bytes, TextAs::Text));
+    let (on, off) = (written(moved(true)), written(moved(false)));
+    assert!(String::from_utf8_lossy(&on).contains("/VCop gs"), "an overprinting form");
+    assert_eq!(text_of(&on), ["moved"]);
+    assert_eq!(text_of(&off), ["moved"]);
+    assert_eq!(text_of(&written(scaled(true))), ["in"]);
+    assert_eq!(text_of(&written(scaled(false))), ["in"]);
 }
 
 /// A named instance of a variable font is real text in that instance: its embedded subset draws
@@ -227,4 +279,167 @@ fn a_variable_font_instance_comes_back_in_its_own_style() {
         }
     });
     assert_eq!(styles, ["Bold"]);
+}
+
+/// The export of `text` (one point type object) with its ToUnicode map rewritten so that the
+/// digits map to U+FFFD, as some files have it (#708). Each `<003D>` of a digit becomes `<FFFD>`, so
+/// the file's offsets still hold.
+fn digits_unnamed(text: &str) -> Vec<u8> {
+    let d = doc(vec![TextObject::point(Point::new(20.0, 50.0), text, style(24.0))]);
+    let bytes = pdf(&d, false).bytes;
+    let at = bytes.windows(11).position(|w| w == b"beginbfchar").expect("a readable ToUnicode map");
+    let end = at + bytes[at..].windows(9).position(|w| w == b"endbfchar").unwrap();
+    let mut out = bytes.clone();
+    for i in at..end.saturating_sub(5) {
+        // `<0030>` … `<0039>` after a space: a digit's character (each line's code comes first).
+        if &bytes[i..i + 4] == b"<003" && bytes[i + 4].is_ascii_digit() && bytes[i + 5] == b'>' && bytes[i - 1] == b' ' {
+            out[i + 1..i + 5].copy_from_slice(b"FFFD");
+        }
+    }
+    assert_ne!(out, bytes, "digits were mapped");
+    out
+}
+
+/// #708, #811: a glyph whose ToUnicode value is U+FFFD isn't type showing "�". This subset font
+/// has no character map of its own, but the font is installed: each digit is found by its outline
+/// there, so the whole text stays one type object, with no outlines left behind.
+#[test]
+fn unnamed_glyphs_of_an_installed_font_are_found_by_their_outline() {
+    let bytes = digits_unnamed("Tel 02-12345");
+    let report = import_with_report(&bytes, &ImportOptions { text_as: TextAs::Text, ..Default::default() }).unwrap();
+    assert_eq!(texts(&report.document), ["Tel 02-12345"]);
+    let mut paths = 0;
+    report.document.walk(|n| paths += usize::from(matches!(n.kind, NodeKind::Path { .. } | NodeKind::Compound { .. })));
+    assert_eq!(paths, 0, "no outlines left: {:?}", report.warnings);
+    assert!(!report.warnings.iter().any(|w| w.contains("U+FFFD")), "{:?}", report.warnings);
+}
+
+/// #811: an outline is named only by a glyph that draws it exactly; one moved off its place, or an
+/// empty glyph (which every space draws), stays unnamed and keeps its outlines.
+#[test]
+fn glyphs_are_named_only_by_an_exact_outline() {
+    let db = FontDb::global();
+    let face = db.face("Source Sans 3", "Regular").unwrap();
+    let k = 1000.0 / face.units_per_em();
+    let pdf_space = |c: char| Affine::new([k, 0.0, 0.0, -k, 0.0, 0.0]) * db.outline(&face, face.glyph_for(c)).as_ref().clone();
+    for c in ['R', 'a', '7', '&', 'é'] {
+        assert_eq!(crate::import::identify_glyph(&face, &pdf_space(c)), Some(c));
+    }
+    assert_eq!(crate::import::identify_glyph(&face, &(Affine::translate((100.0, 0.0)) * pdf_space('R'))), None);
+    assert_eq!(crate::import::identify_glyph(&face, &BezPath::new()), None);
+}
+
+/// #708: where the embedded font program has a character map, a glyph's character comes from it.
+#[test]
+fn an_embedded_fonts_own_cmap_names_its_glyphs() {
+    let data = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts/SourceSans3-Regular.ttf")).unwrap();
+    let chars = crate::import::font_chars(&data).unwrap();
+    use skrifa::MetadataProvider;
+    let font = skrifa::FontRef::new(&data).unwrap();
+    for c in ['0', '7', 'A', 'z'] {
+        let g = font.charmap().map(c).unwrap().to_u32();
+        assert_eq!(chars.get(&g), Some(&c));
+    }
+    assert!(crate::import::font_chars(b"not a font").is_none());
+}
+
+/// Type whose text matrix shears its glyphs (slanted as a whole, as Illustrator writes type
+/// turned and skewed) reopens as type that still leans: drawn, it covers what its outlines do.
+#[test]
+fn slanted_type_reopens_as_type_that_still_leans() {
+    for (turn, lean) in [(0.0, 0.25), (-0.2, 0.25), (0.3, -0.15)] {
+        let mut t = TextObject::point(Point::new(80.0, 150.0), "LEAN", style(60.0));
+        t.xf *= Affine::rotate(turn) * Affine::skew(lean, 0.0);
+        let d = doc(vec![t]);
+        let reopened = import_as(&pdf(&d, false).bytes, TextAs::Text);
+        assert_eq!(texts(&reopened), ["LEAN"], "{turn} {lean}: reopened as type");
+        let (a, b) = (ink(&import_as(&pdf(&reopened, true).bytes, TextAs::Outlines)), ink(&import_as(&pdf(&d, true).bytes, TextAs::Outlines)));
+        let off = [a.x0 - b.x0, a.y0 - b.y0, a.x1 - b.x1, a.y1 - b.y1].iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        assert!(off < 0.5, "{turn} {lean}: {a:?} vs {b:?}");
+    }
+}
+
+/// Type set in an installed font's older version (a library keeps both, one name) reopens as type
+/// in that version: the file's glyphs are matched to it rather than kept as outlines, and the type
+/// names the version, which the family and style alone don't pick.
+#[test]
+fn type_in_another_installed_version_reopens_in_that_version() {
+    use vectorcraft_text::test_fonts::{TWIN_FAMILY, TWIN_VERSIONS, twin_font};
+    // The newer version first: the one the family and style resolve to.
+    FontDb::global().add_font(twin_font(true).unwrap());
+    FontDb::global().add_font(twin_font(false).unwrap());
+    for version in [None, Some(TWIN_VERSIONS[0])] {
+        let st = CharStyle { font_family: TWIN_FAMILY.into(), font_version: version.map(Into::into), ..style(40.0) };
+        let d = doc(vec![TextObject::point(Point::new(20.0, 80.0), "Hamburgefonstiv", st)]);
+        let back = import_as(&pdf(&d, false).bytes, TextAs::Text);
+        let mut found = vec![];
+        back.walk(|n| {
+            if let NodeKind::Text(t) = &n.kind {
+                found.push((t.plain_text(), t.first_style().font_version.clone()));
+            }
+        });
+        assert_eq!(found, [("Hamburgefonstiv".to_string(), version.map(String::from))], "{version:?}");
+    }
+}
+
+/// The glyph origins of the type objects of `d`, in document space, in order.
+fn origins(d: &Document) -> Vec<Point> {
+    let mut out = vec![];
+    d.walk(|n| {
+        if let NodeKind::Text(t) = &n.kind {
+            out.extend(vectorcraft_text::layout(FontDb::global(), t).glyphs.iter().map(|g| t.xf * g.origin));
+        }
+    });
+    out
+}
+
+/// Type spaced glyph by glyph (character tightening, optical kerning) comes back with each glyph
+/// in its place, not evened out by one tracking value; evenly spaced type keeps one run.
+#[test]
+fn glyphs_spaced_each_their_own_way_keep_their_place() {
+    let runs = [("T", 0.0), ("i", -120.0), ("g", 160.0), ("h", -60.0), ("tl", 0.0), ("y", 0.0)];
+    let mut t = TextObject::point(Point::new(20.0, 100.0), "", style(40.0));
+    t.runs = runs.iter().map(|(s, tr)| TextRun { text: s.to_string(), style: CharStyle { tracking: *tr, ..style(40.0) }, inline: None }).collect();
+    let d = doc(vec![t]);
+    let want = origins(&d);
+    let back = import_as(&pdf(&d, false).bytes, TextAs::default());
+    let got = origins(&back);
+    assert_eq!(got.len(), want.len(), "{:?}", texts(&back));
+    for (g, w) in got.iter().zip(&want) {
+        assert!((g.x - w.x).abs() < 0.1 && (g.y - w.y).abs() < 0.1, "{got:?}\nvs {want:?}");
+    }
+    let mut runs_back = 0;
+    back.walk(|n| {
+        if let NodeKind::Text(t) = &n.kind {
+            runs_back += t.runs.len();
+        }
+    });
+    assert!(runs_back > 1, "one tracking can't place them");
+    // Evenly tracked: one run.
+    let even = doc(vec![TextObject::point(Point::new(20.0, 100.0), "Tightly", CharStyle { tracking: -50.0, ..style(40.0) })]);
+    let back = import_as(&pdf(&even, false).bytes, TextAs::default());
+    back.walk(|n| {
+        if let NodeKind::Text(t) = &n.kind {
+            assert_eq!(t.runs.len(), 1, "{:?}", t.runs.iter().map(|r| r.style.tracking).collect::<Vec<_>>());
+        }
+    });
+}
+
+/// Evenly tracked type on a path comes back with its tracking: each glyph where it was along the
+/// curve, not closed up to the font's advances.
+#[test]
+fn evenly_tracked_type_on_a_path_keeps_its_length() {
+    let mut arc = BezPath::new();
+    arc.move_to((40.0, 200.0));
+    arc.curve_to((100.0, 80.0), (260.0, 80.0), (320.0, 200.0));
+    let mut t = TextObject::point(Point::ORIGIN, "ARCHING TYPE", CharStyle { tracking: 80.0, ..style(24.0) });
+    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&arc), start: 0.0, end: None };
+    let d = doc(vec![t]);
+    let want = origins(&d);
+    let back = import_as(&pdf(&d, false).bytes, TextAs::default());
+    let got = origins(&back);
+    assert_eq!(got.len(), want.len(), "{:?}", texts(&back));
+    for (g, w) in got.iter().zip(&want) {
+        assert!(g.distance(*w) < 0.3, "{got:?}\nvs {want:?}");
+    }
 }

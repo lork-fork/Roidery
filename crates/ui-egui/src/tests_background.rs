@@ -70,8 +70,9 @@ fn a_50k_path_save_returns_at_once_and_the_file_appears_later() {
     assert!(written(&files).is_empty(), "nothing written yet");
     assert_eq!(app.background.jobs.len(), 1);
     assert!(app.ui.status.starts_with("Saving big.vectorcraft"));
-    // The document is saved once the file is written.
-    assert!(app.session.doc().unwrap().is_dirty() && app.session.doc().unwrap().path.is_none());
+    // The file is the document's once it is written (and its dates are stamped then, #1721: until
+    // then this document, never edited, is as it was).
+    assert!(!app.session.doc().unwrap().is_dirty() && app.session.doc().unwrap().path.is_none());
     gate.open();
     background::wait_all(&mut app);
     assert_eq!(written(&files), ["/docs/big.vectorcraft"]);

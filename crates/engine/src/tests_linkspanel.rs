@@ -17,6 +17,38 @@ fn place_embedded(s: &mut Session, path: &str) -> NodeId {
     NodeId(r["ids"][0].as_u64().unwrap())
 }
 
+/// A PNG that says it is `w` × `h` 1-bit grey pixels (its header and no rows, which is all that
+/// placing and listing read).
+fn png_header(w: u32, h: u32) -> Vec<u8> {
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let ihdr: Vec<u8> = [&b"IHDR"[..], &w.to_be_bytes(), &h.to_be_bytes(), &[1, 0, 0, 0, 0]].concat();
+    for chunk in [&ihdr[..], b"IDAT\x78\x9c", b"IEND"] {
+        out.extend((chunk.len() as u32 - 4).to_be_bytes());
+        out.extend(chunk);
+        out.extend(crc32fast::hash(chunk).to_be_bytes());
+    }
+    out
+}
+
+/// An image past what a decode may take isn't drawn: Place and Open say so and the Links panel's
+/// row carries the note, where the image used to be blank with no word (#1479).
+#[test]
+fn an_image_too_large_to_draw_is_reported() {
+    const NOTE: &str = "an image of 200000 × 200000 pixels is too large to draw";
+    let dir = Folder::new("huge");
+    let (big, small) = (dir.file("wall.png"), dir.file("small.png"));
+    write(&big, &png_header(200_000, 200_000));
+    write(&small, &png(40, 20, BLUE));
+    let mut s = session();
+    assert_eq!(run(&mut s, "file.place", json!({"path": big, "at": [200, 150], "link": false}))["warnings"], json!([NOTE]));
+    assert_eq!(run(&mut s, "file.place", json!({"path": small, "at": [20, 20], "link": false}))["warnings"], json!([]));
+    let l = run(&mut s, "links.list", json!({}));
+    let notes: Vec<&Value> = l["links"].as_array().unwrap().iter().map(|r| &r["note"]).collect();
+    assert_eq!(notes, [&Value::Null, &json!(NOTE)], "top first: the small image has nothing to say");
+    // Opened as a document: said too. An image that decodes (16,000 px square) has no note.
+    assert_eq!(crate::cmd::fileio::load("wall.png", &png_header(200_000, 200_000)).unwrap().warnings, [NOTE]);
+    assert!(crate::cmd::fileio::load("fine.png", &png_header(16_000, 16_000)).unwrap().warnings.is_empty());
+}
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-6
 }

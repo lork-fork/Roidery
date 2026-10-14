@@ -4,7 +4,7 @@
 //! Delete: click an anchor to remove it, re-fitting the neighbouring curve (Alt = add).
 //! Anchor Point: click a smooth anchor → corner; drag an anchor → pull out smooth handles; drag a
 //! handle → move it independently (Shift: at 45° steps round its anchor); drag a segment → reshape
-//! the curve.
+//! the curve, a selected blend's spine's too, straight or curved (#1111).
 //! Scissors: click a path to split it there.
 
 use serde_json::json;
@@ -12,21 +12,45 @@ use vectorcraft_doc::NodeId;
 use vectorcraft_geom::Point;
 
 use super::{hit_anchor, hit_segment, insert_anchor, remove_anchor};
+use crate::direct::hit_handle;
+use crate::guides::HandleSnap;
 use crate::{Action, Cursor, Mods, Overlay, PointerEvent, PointerKind, Tool, ToolContext};
 
 #[derive(Clone, Copy, Debug)]
 enum State {
     Idle,
-    Convert { id: NodeId, si: usize, ai: usize, start: Point, began: bool },
-    Handle { id: NodeId, si: usize, ai: usize, out: bool, began: bool },
-    Reshape { id: NodeId, si: usize, seg: usize, t: f64, start: Point, began: bool },
+    Convert {
+        id: NodeId,
+        si: usize,
+        ai: usize,
+        start: Point,
+        began: bool,
+    },
+    Handle {
+        id: NodeId,
+        si: usize,
+        ai: usize,
+        out: bool,
+        began: bool,
+    },
+    /// Bending a segment: a path's, or (`spine`) a selected blend's spine's.
+    Reshape {
+        id: NodeId,
+        si: usize,
+        seg: usize,
+        t: f64,
+        start: Point,
+        began: bool,
+        spine: bool,
+    },
 }
 
 pub struct AnchorTool {
     id: &'static str,
     state: State,
-    /// Smart guides of the handle being dragged.
+    /// Smart guides of the handle being dragged, and what it snaps to.
     guides: Vec<Overlay>,
+    snap: HandleSnap,
 }
 
 impl AnchorTool {
@@ -37,32 +61,16 @@ impl AnchorTool {
             "scissors" => "scissors",
             _ => "addAnchor",
         };
-        Self { id, state: State::Idle, guides: vec![] }
+        Self { id, state: State::Idle, guides: vec![], snap: HandleSnap::default() }
     }
 
     fn add(cx: &ToolContext, p: Point) -> Vec<Action> {
-        hit_segment(cx, p, cx.tol(4.0)).map(insert_anchor).into_iter().collect()
+        hit_segment(cx, p, cx.pick_tol()).map(insert_anchor).into_iter().collect()
     }
 
     fn delete(cx: &ToolContext, p: Point) -> Vec<Action> {
-        hit_anchor(cx, p, cx.tol(4.0)).map(remove_anchor).into_iter().collect()
+        hit_anchor(cx, p, cx.point_tol()).map(remove_anchor).into_iter().collect()
     }
-}
-
-/// A direction handle of a selected path under `p`: (id, subpath, anchor, is_out).
-fn hit_handle(cx: &ToolContext, p: Point, tol: f64) -> Option<(NodeId, usize, usize, bool)> {
-    for id in &cx.selection.objects {
-        let Some(pd) = cx.doc.node(*id).and_then(|n| n.path_data()) else { continue };
-        for (si, ai, a) in pd.anchors() {
-            if a.has_out() && a.h_out.distance(p) <= tol {
-                return Some((*id, si, ai, true));
-            }
-            if a.has_in() && a.h_in.distance(p) <= tol {
-                return Some((*id, si, ai, false));
-            }
-        }
-    }
-    None
 }
 
 impl Tool for AnchorTool {
@@ -74,7 +82,8 @@ impl Tool for AnchorTool {
     }
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
         let p = ev.pos;
-        let tol = cx.tol(4.0);
+        // Anchors and handle ends are picked from a little further than segments.
+        let (tol, point) = (cx.pick_tol(), cx.point_tol());
         match (self.id, ev.kind) {
             ("addAnchor", PointerKind::Down) => {
                 if ev.mods.alt {
@@ -91,7 +100,7 @@ impl Tool for AnchorTool {
                 }
             }
             ("scissors", PointerKind::Down) => {
-                if let Some((id, si, ai)) = hit_anchor(cx, p, tol) {
+                if let Some((id, si, ai)) = hit_anchor(cx, p, point) {
                     return vec![Action::Exec("path.split".into(), json!({"id": id.0, "subpath": si, "anchor": ai}))];
                 }
                 match hit_segment(cx, p, tol) {
@@ -100,12 +109,15 @@ impl Tool for AnchorTool {
                 }
             }
             ("anchorPoint", PointerKind::Down) => {
-                if let Some((id, si, ai, out)) = hit_handle(cx, p, tol) {
+                if let Some((id, si, ai, out)) = hit_handle(cx, p, point) {
                     self.state = State::Handle { id, si, ai, out, began: false };
-                } else if let Some((id, si, ai)) = hit_anchor(cx, p, tol) {
+                    self.snap = HandleSnap::default();
+                } else if let Some((id, si, ai)) = hit_anchor(cx, p, point) {
                     self.state = State::Convert { id, si, ai, start: p, began: false };
                 } else if let Some((id, si, seg, t)) = hit_segment(cx, p, tol) {
-                    self.state = State::Reshape { id, si, seg, t, start: p, began: false };
+                    self.state = State::Reshape { id, si, seg, t, start: p, began: false, spine: false };
+                } else if let Some((id, seg, t, _)) = crate::direct::hit_spine_segment(cx, p, tol) {
+                    self.state = State::Reshape { id, si: 0, seg, t, start: p, began: false, spine: true };
                 }
                 vec![]
             }
@@ -132,13 +144,17 @@ impl Tool for AnchorTool {
                         json!({"id": id.0, "subpath": si, "anchor": ai, "to": "smooth", "x": p.x, "y": p.y}),
                     ),
                     State::Handle { id, si, ai, out, .. } => {
-                        let (q, guides) = crate::guides::snap_handle(cx, (id, si, ai), p, ev.mods.shift);
+                        let (q, guides) = self.snap.snap(cx, (id, si, ai), p, ev.mods.shift);
                         self.guides = guides;
                         Action::Preview(
                             "path.setHandle".into(),
                             json!({"id": id.0, "subpath": si, "anchor": ai, "which": if out { "out" } else { "in" }, "x": q.x, "y": q.y, "independent": true}),
                         )
                     }
+                    State::Reshape { id, seg, t, start, spine: true, .. } => Action::Preview(
+                        "object.blend.spine.reshapeSegment".into(),
+                        json!({"id": id.0, "segment": seg, "t": t, "dx": p.x - start.x, "dy": p.y - start.y}),
+                    ),
                     State::Reshape { id, si, seg, t, start, .. } => Action::Preview(
                         "path.reshapeSegment".into(),
                         json!({"id": id.0, "subpath": si, "segment": seg, "t": t, "dx": p.x - start.x, "dy": p.y - start.y}),
@@ -190,7 +206,7 @@ impl Tool for AnchorTool {
             "deleteAnchor" if !m.alt => Cursor::PenDelete,
             "deleteAnchor" => Cursor::PenAdd,
             "scissors" => {
-                if hit_segment(cx, p, cx.tol(4.0)).is_some() {
+                if hit_segment(cx, p, cx.pick_tol()).is_some() {
                     Cursor::Crosshair
                 } else {
                     Cursor::NotAllowed
@@ -254,5 +270,39 @@ mod tests {
         t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 150.0, 200.0));
         let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 150.0, 230.0));
         assert!(matches!(&a[1], Action::Preview(c, v) if c == "path.reshapeSegment" && v["dy"] == 30.0));
+    }
+
+    /// #494: the Anchor Point tool picks within Selection & Anchor Display → Tolerance, and drags
+    /// only the handles shown.
+    #[test]
+    fn anchor_point_picks_within_the_tolerance_and_drags_shown_handles() {
+        let (mut d, _) = doc_with_rect();
+        let l = d.layers[0].id;
+        let id = d.alloc_id();
+        let mut sp = vectorcraft_geom::SubPath::polyline(&[Point::new(100.0, 300.0), Point::new(200.0, 300.0), Point::new(300.0, 300.0)], false);
+        sp.anchors[1] = vectorcraft_geom::Anchor::smooth(Point::new(200.0, 300.0), Point::new(240.0, 300.0));
+        let path = vectorcraft_geom::PathData::single(sp);
+        d.insert(Some(l), 1, vectorcraft_doc::Node::path(id, path, vectorcraft_doc::Appearance::default_art())).unwrap();
+        let mut s = Selection::default();
+        s.set([id]);
+        let p = paint();
+        let press = |c: &ToolContext, x: f64, y: f64| {
+            let mut t = AnchorTool::new("anchorPoint");
+            t.pointer(c, &PointerEvent::new(PointerKind::Down, x, y));
+            t.pointer(c, &PointerEvent::new(PointerKind::Drag, x + 10.0, y + 30.0))
+        };
+        let dragged = |a: Vec<Action>| match a.as_slice() {
+            [Action::Begin(_), Action::Preview(c, _)] => c.clone(),
+            _ => String::new(),
+        };
+        // The segment 6 px off: picked with an 8 px tolerance, not with the default 3 px.
+        assert_eq!(dragged(press(&cx(&d, &s, &p), 150.0, 306.0)), "");
+        let wide = ToolContext { selection_tolerance: 8.0, ..cx(&d, &s, &p) };
+        assert_eq!(dragged(press(&wide, 150.0, 306.0)), "path.reshapeSegment");
+        // The middle anchor's handle drags; with Show handles when multiple anchors are selected
+        // off it's hidden (three anchors selected) and the press finds the segment under it.
+        assert_eq!(dragged(press(&cx(&d, &s, &p), 240.0, 301.0)), "path.setHandle");
+        let single = ToolContext { handles_multiple: false, ..cx(&d, &s, &p) };
+        assert_eq!(dragged(press(&single, 240.0, 301.0)), "path.reshapeSegment");
     }
 }

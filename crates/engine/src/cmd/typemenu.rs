@@ -16,7 +16,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Change Case",
             ["Type", "Change Case"],
             None,
-            "{case: \"upper\"|\"lower\"|\"title\"|\"sentence\", ids?} → {ids}",
+            "{case: \"upper\"|\"lower\"|\"title\"|\"sentence\", ids?|id?} → {ids}",
             has_selection,
             change_case
         ),
@@ -34,7 +34,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Convert To Area Type",
             ["Type"],
             None,
-            "{ids?} point type → area type framed by its current layout bounds → {ids}",
+            "{ids?|id?} point type → area type framed by its current layout bounds → {ids}",
             has_selection,
             to_area
         ),
@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Convert To Point Type",
             ["Type"],
             None,
-            "{ids?} area type → point type; soft line wraps become line breaks → {ids}",
+            "{ids?|id?} area type → point type; soft line wraps become line breaks → {ids}",
             has_selection,
             to_point
         ),
@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Type on a Path Options…",
             ["Type", "Type on a Path"],
             None,
-            "{ids?, start?: 0..1, end?: 0..1|null, flip?: bool, effect?: rainbow|skew|3dRibbon|stairStep|gravity, alignToPath?: ascender|descender|center|baseline, spacing?: pt} set the selected type on a path's options: start and end place its start and end brackets as fractions of the path's length (end null: the end of the path, or once round a closed path), and flip then turns the type to the other side of its path (the path runs the other way, the brackets swap ends); none given: query → the first object's {start, end, flip: false, effect, alignToPath, spacing}",
+            "{ids?|id?, start?: 0..1, end?: 0..1|null, flip?: bool, effect?: rainbow|skew|3dRibbon|stairStep|gravity, alignToPath?: ascender|descender|center|baseline, spacing?: pt} set the selected type on a path's options: start and end place its start and end brackets as fractions of the path's length (end null: the end of the path, or once round a closed path), and flip then turns the type to the other side of its path (the path runs the other way, the brackets swap ends); none given: query → the first object's {start, end, flip: false, effect, alignToPath, spacing}",
             has_selection,
             path_options
         ),
@@ -61,7 +61,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fill with Placeholder Text",
             ["Type"],
             None,
-            "{ids?} replace selected text with placeholder text (area type is filled to its frame) → {ids}",
+            "{ids?|id?} replace selected text with placeholder text (area type is filled to its frame) → {ids}",
             has_selection,
             fill_placeholder
         ),
@@ -70,7 +70,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Character",
             ["Type"],
             None,
-            "{char: \"bullet\"|\"copyright\"|\"ellipsis\"|\"paragraph\"|\"registered\"|\"section\"|\"trademark\"|\"emDash\"|\"enDash\"|\"discretionaryHyphen\"|\"nonBreakingHyphen\"|\"doubleLeftQuote\"|\"doubleRightQuote\"|\"singleLeftQuote\"|\"singleRightQuote\"|\"emSpace\"|\"enSpace\"|\"hairSpace\"|\"sixthSpace\"|\"thinSpace\"|\"nonBreakingSpace\"|\"figureSpace\"|\"punctuationSpace\"|\"thirdSpace\"|\"quarterSpace\"|\"tab\"|\"forcedLineBreak\"|\"paragraphReturn\" | text: string} append to the selected text objects",
+            "{char: \"bullet\"|\"copyright\"|\"ellipsis\"|\"paragraph\"|\"registered\"|\"section\"|\"trademark\"|\"emDash\"|\"enDash\"|\"discretionaryHyphen\"|\"nonBreakingHyphen\"|\"doubleLeftQuote\"|\"doubleRightQuote\"|\"singleLeftQuote\"|\"singleRightQuote\"|\"emSpace\"|\"enSpace\"|\"hairSpace\"|\"sixthSpace\"|\"thinSpace\"|\"nonBreakingSpace\"|\"figureSpace\"|\"punctuationSpace\"|\"thirdSpace\"|\"quarterSpace\"|\"tab\"|\"forcedLineBreak\"|\"paragraphReturn\" | text: string, ids?|id?: object ids (default: the selection)} append to the selected text objects",
             has_selection,
             insert_char
         ),
@@ -132,15 +132,17 @@ fn ids_json(ids: &[NodeId]) -> Value {
     json!({ "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>() })
 }
 
-/// Rewrite every run of the given text objects with `f(run text, state)`.
+/// Rewrite every run of the given text objects with `f(run text, state)`. When no run changes, the
+/// document and its undo history stay as they are.
 fn edit_runs<S: Default>(s: &mut Session, label: &str, ids: &[NodeId], f: impl Fn(&str, &mut S) -> String) -> Result<usize> {
-    s.edit(label, |d, _| {
+    super::overprint::edit_counted(s, label, |d| {
         let mut changed = 0;
         for id in ids {
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
             let mut st = S::default();
             let mut any = false;
-            for r in &mut t.runs {
+            // Inline graphics are art, not characters to rewrite.
+            for r in t.runs.iter_mut().filter(|r| r.inline.is_none()) {
                 let n = f(&r.text, &mut st);
                 if n != r.text {
                     r.text = n;
@@ -259,6 +261,11 @@ fn smart_punctuation(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn to_area(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = texts(s, p, "type.convertToAreaType")?;
+    // With no point type among the objects, the document and its undo history stay as they are.
+    let d = &s.doc()?.doc;
+    if !ids.iter().any(|id| matches!(d.node(*id).map(|n| &n.kind), Some(NodeKind::Text(t)) if matches!(t.kind, TextKind::Point))) {
+        return Ok(ids_json(&ids));
+    }
     s.edit("Convert To Area Type", |d, _| {
         for id in &ids {
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
@@ -272,7 +279,7 @@ fn to_area(s: &mut Session, p: &Value) -> Result<Value> {
             let top = lay.lines.first().map(|l| l.baseline - l.ascent).unwrap_or(b.y0).min(b.y0);
             let slack = size * 0.5;
             // Slack goes where the alignment leaves room, so the text doesn't move or rewrap.
-            let (sl, sr) = match t.para.justify {
+            let (sl, sr) = match t.para_at(0).justify {
                 Justify::Center | Justify::JustifyCenter => (slack * 0.5, slack * 0.5),
                 Justify::Right | Justify::JustifyRight => (slack, 0.0),
                 Justify::Auto if lay.lines.first().is_some_and(|l| l.rtl) => (slack, 0.0),
@@ -301,6 +308,11 @@ fn locate(runs: &[TextRun], byte: usize) -> Option<(usize, usize)> {
 
 fn to_point(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = texts(s, p, "type.convertToPointType")?;
+    // With no area type among the objects, the document and its undo history stay as they are.
+    let d = &s.doc()?.doc;
+    if !ids.iter().any(|id| matches!(d.node(*id).map(|n| &n.kind), Some(NodeKind::Text(t)) if matches!(t.kind, TextKind::Area { .. }))) {
+        return Ok(ids_json(&ids));
+    }
     s.edit("Convert To Point Type", |d, _| {
         for id in &ids {
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
@@ -315,20 +327,33 @@ fn to_point(s: &mut Session, p: &Value) -> Result<Value> {
             breaks.sort_unstable();
             breaks.dedup();
             for b in breaks.into_iter().rev() {
+                // Each wrapped line becomes a paragraph with its paragraph's attributes.
                 if plain.as_bytes().get(b - 1) == Some(&b' ') {
                     if let Some((ri, bi)) = locate(&t.runs, b - 1) {
+                        t.splice_paras(b - 1, b, "\n");
                         t.runs[ri].text.replace_range(bi..bi + 1, "\n");
                     }
                 } else if let Some((ri, bi)) = locate(&t.runs, b) {
-                    t.runs[ri].text.insert(bi, '\n');
+                    t.splice_paras(b, b, "\n");
+                    // Never inside an inline graphic's run: at the end of the run before it, or a
+                    // run of its own.
+                    match t.runs.get(ri) {
+                        Some(r) if r.inline.is_some() => match ri.checked_sub(1).and_then(|p| t.runs.get_mut(p)) {
+                            Some(prev) if prev.inline.is_none() => prev.text.push('\n'),
+                            _ => {
+                                let style = t.runs.get(ri).map(|r| r.style.clone()).unwrap_or_default();
+                                t.runs.insert(ri, TextRun::new("\n", style));
+                            }
+                        },
+                        _ => t.runs[ri].text.insert(bi, '\n'),
+                    }
                 }
             }
             // The point origin sits where the alignment anchors the first line.
-            let (x0, x1) = lay
-                .lines
-                .first()
-                .map_or((fb.x0, fb.x1), |l| (l.avail.0 - t.para.left_indent - t.para.first_line_indent, l.avail.1 + t.para.right_indent));
-            let ox = match t.para.justify {
+            let p0 = t.para_at(0);
+            let (x0, x1) =
+                lay.lines.first().map_or((fb.x0, fb.x1), |l| (l.avail.0 - p0.left_indent - p0.first_line_indent, l.avail.1 + p0.right_indent));
+            let ox = match p0.justify {
                 Justify::Center | Justify::JustifyCenter => (x0 + x1) * 0.5,
                 Justify::Right | Justify::JustifyRight => x1,
                 Justify::Auto if lay.lines.first().is_some_and(|l| l.rtl) => x1,
@@ -404,6 +429,22 @@ fn path_options(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let spacing = p.get("spacing").and_then(Value::as_f64).filter(|x| x.is_finite()).map(|x| x.clamp(-1000.0, 1000.0));
+    // Without a flip, when every object already has every value given, the document and its undo
+    // history stay as they are.
+    let has_values = |t: &TextObject| match &t.kind {
+        TextKind::OnPath { start: st, end: en, .. } => {
+            start.is_none_or(|v| v == *st)
+                && end.is_none_or(|v| v == *en)
+                && effect.is_none_or(|e| t.path_effect == e)
+                && align.is_none_or(|a| t.path_align == a)
+                && spacing.is_none_or(|v| t.path_spacing == v)
+        }
+        _ => true,
+    };
+    let d = &s.doc()?.doc;
+    if !flip && ids.iter().all(|id| path_text(d.node(*id)).is_none_or(has_values)) {
+        return options(s);
+    }
     s.edit("Type on a Path Options", |d, _| {
         for id in &ids {
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
@@ -443,13 +484,18 @@ start as rough drafts like this one. Keep going until the frame is full and the 
 
 fn fill_placeholder(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = texts(s, p, "type.fillPlaceholder")?;
-    s.edit("Fill with Placeholder Text", |d, _| {
+    // When filling leaves every object as it was, the document and its undo history stay as they
+    // are.
+    super::overprint::edit_counted(s, "Fill with Placeholder Text", |d| {
+        let mut changed = 0;
         for id in &ids {
             if let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) {
+                let before = t.clone();
                 fill_with_placeholder(t);
+                changed += usize::from(*t != before);
             }
         }
-        Ok(())
+        Ok(changed)
     })?;
     Ok(ids_json(&ids))
 }
@@ -479,7 +525,7 @@ pub(crate) fn fill_with_placeholder(t: &mut TextObject) {
         }
         _ => PLACEHOLDER.split(". ").next().unwrap_or(PLACEHOLDER).to_string() + ".",
     };
-    t.runs = vec![TextRun { text, style }];
+    t.runs = vec![TextRun { text, style, inline: None }];
     refresh_bounds(t);
 }
 
@@ -525,12 +571,27 @@ fn insert_char(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad(C, "give `char` or `text`")),
     };
     let ids = texts(s, p, C)?;
+    // When `text` is empty and every object ends with a run of text, the document and its undo
+    // history stay as they are.
+    let d = &s.doc()?.doc;
+    let ends_with_text = |id: &NodeId| match d.node(*id).map(|n| &n.kind) {
+        Some(NodeKind::Text(t)) => t.runs.last().is_some_and(|r| r.inline.is_none()),
+        _ => false,
+    };
+    if text.is_empty() && ids.iter().all(ends_with_text) {
+        return Ok(ids_json(&ids));
+    }
     s.edit("Typing", |d, _| {
         for id in &ids {
             let Some(NodeKind::Text(t)) = d.node_mut(*id).map(|n| &mut n.kind) else { continue };
             match t.runs.last_mut() {
-                Some(r) => r.text.push_str(&text),
-                None => t.runs.push(TextRun { text: text.clone(), style: CharStyle::default() }),
+                Some(r) if r.inline.is_none() => r.text.push_str(&text),
+                // After an inline graphic: a run of its own, in its style.
+                Some(r) => {
+                    let style = r.style.clone();
+                    t.runs.push(TextRun::new(text.clone(), style));
+                }
+                None => t.runs.push(TextRun { text: text.clone(), style: CharStyle::default(), inline: None }),
             }
             refresh_bounds(t);
         }
@@ -645,8 +706,8 @@ fn find_next(s: &mut Session, p: &Value) -> Result<Value> {
 fn strip_formatting(n: &mut vectorcraft_doc::Node) {
     if let NodeKind::Text(t) = &mut n.kind {
         let text = t.plain_text();
-        t.runs = vec![TextRun { text, style: CharStyle::default() }];
-        t.para = Default::default();
+        t.runs = vec![TextRun { text, style: CharStyle::default(), inline: None }];
+        t.set_all_paras(Default::default());
         refresh_bounds(t);
     }
     if let Some(ch) = n.children_mut() {

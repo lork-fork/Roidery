@@ -241,7 +241,10 @@ pub(crate) fn describe(paint: &Paint, global: bool, spot: bool) -> String {
             };
             crate::i18n::fmt(tl!("{kind}, {model}"), &[("kind", kind), ("model", color.model_name())])
         }
-        Paint::Gradient(g) => crate::i18n::fmt(tl!("{kind} Gradient"), &[("kind", tl!(g.gradient.kind.label()))]),
+        Paint::Gradient(g) => crate::i18n::fmt(
+            tl!("{kind} Gradient"),
+            &[("kind", crate::i18n::tr_ctx(crate::i18n::current(), "gradient-kind", g.gradient.kind.label()))],
+        ),
         Paint::Pattern { .. } => tl!("Pattern").into(),
         Paint::None => tl!("None").into(),
     }
@@ -511,7 +514,7 @@ fn move_params(d: &Document, names: &[String], target: Option<&str>, after: bool
         Some(t) => {
             let (group, list) = match d.swatch_group_of(t) {
                 Some(g) => (Some(d.swatch_groups[g].name.as_str()), &d.swatch_groups[g].swatches),
-                None => (None, &d.swatches),
+                None => (None, &*d.swatches),
             };
             (group, list.iter().position(|w| w.name == t).map(|i| i + usize::from(after)))
         }
@@ -581,6 +584,7 @@ pub(crate) fn drag_preview(app: &VectorcraftApp, ctx: &egui::Context) {
             None => return,
         },
         PanelDrag::Brush { def, .. } => return pointer_chip(ctx, |ui, r| super::brushes::chip(ui, r, def)),
+        PanelDrag::LibraryGraphic { library, item } => return pointer_chip(ctx, |ui, r| super::libraries::chip(app, ui, r, library, item)),
     };
     pointer_chip(ctx, |ui, r| {
         if registration {
@@ -641,7 +645,10 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, salt: &'static str) {
         }
     });
     ui.add_space(4.0);
-    super::recent_colors_row(app, ui);
+    // A recent colour paints the active proxy (Alt: the inactive one), as a swatch does.
+    if let Some(c) = super::recent_colors_row(app, ui) {
+        super::apply_click(app, ui, json!({"color": super::color_json(&c)}));
+    }
     widgets::divider(ui);
     widgets::subheader(ui, tl!("Swatch Tiles"));
     let query = if pstate(ui.ctx(), "swatch-show-find") { widgets::search_field(ui, find_id(), tl!("Find")) } else { String::new() };
@@ -1088,8 +1095,10 @@ impl LibraryKind for SwatchLibraries {
     }
     fn menu_tail(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.separator();
+        // As a command, so its file dialog, shown off the UI thread, loads the library when it
+        // answers.
         if menu_item(ui, tl!("Other Library…"), true, false)
-            && let Err(e) = other_library(app, None)
+            && let Err(e) = app.run("window.swatchLibrary.other", json!({}))
         {
             app.status(e);
         }
@@ -1406,7 +1415,7 @@ mod tests {
         let d = &app.session.active().unwrap().doc;
         let list = match group {
             Some(g) => &d.swatch_groups.iter().find(|x| x.name == g).unwrap().swatches,
-            None => &d.swatches,
+            None => &*d.swatches,
         };
         list.iter().map(|w| w.name.clone()).collect()
     }

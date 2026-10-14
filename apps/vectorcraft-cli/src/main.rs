@@ -1,17 +1,20 @@
 //! `vectorcraft-cli`: VectorCraft from the command line.
 //!
 //! ```text
-//! vectorcraft-cli mcp [--connect 127.0.0.1:7979 | --headless]
+//! vectorcraft-cli mcp [--connect 127.0.0.1:7979 | --headless] [--automation-read-root DIR] [--automation-write-root DIR]
 //! vectorcraft-cli run [--in FILE] [--cmd id [--params '{json}']]... [--export out.svg]... [--scale 2]
 //! vectorcraft-cli commands
-//! vectorcraft-cli convert IN OUT [--scale 2] [--artboard 0 | --range 1-3,5] [--outline-text]
+//! vectorcraft-cli convert IN OUT [--scale 2] [--artboard 0 | --range 1-3,5] [--outline-text] [--decimals N] [--replace-lossy] [--editing-data]
 //! vectorcraft-cli info FILE
 //! vectorcraft-cli bench FILE [--size 2880x1800] [--iters 5]
-//! vectorcraft-cli perf [--paths 50000]
+//! vectorcraft-cli perf [--paths 50000] [--deep]
 //! ```
-#![forbid(unsafe_code)]
+// Denied, not forbidden: the font listers shared with the desktop app allow it for their
+// DirectWrite (Windows) and CoreText (macOS) calls, and nothing else may.
+#![deny(unsafe_code)]
 
 use std::io::Write;
+use std::path::Path;
 use std::process::ExitCode;
 
 /// `println!` / `print!` that end the program quietly when stdout is closed
@@ -34,9 +37,21 @@ macro_rules! out {
     }};
 }
 
+/// The desktop app's CoreText font lister, shared: exports and MCP find the same fonts.
+#[cfg(target_os = "macos")]
+#[path = "../../vectorcraft/src/mac_fonts.rs"]
+mod mac_fonts;
 mod perf;
+/// The desktop app's settings folder, shared: exports and MCP read the same Fonts folder.
+#[path = "../../vectorcraft/src/prefs_dir.rs"]
+mod prefs_dir;
+/// The desktop app's DirectWrite font lister, shared: exports and MCP find the same fonts.
+#[cfg(all(windows, not(target_vendor = "win7")))]
+#[path = "../../vectorcraft/src/system_fonts.rs"]
+mod system_fonts;
 
 use serde_json::{Value, json};
+use vectorcraft_engine::file_access::{self, AutomationRoots};
 use vectorcraft_mcp::{Backend, DEFAULT_ADDR, Headless, Remote, Server};
 
 /// stdout went away. A reader that stopped early (a closed pipe) ends the program quietly, as
@@ -53,9 +68,13 @@ const USAGE: &str = "\
 vectorcraft-cli — VectorCraft automation
 
 USAGE:
-  vectorcraft-cli mcp [--connect ADDR | --headless]
+  vectorcraft-cli mcp [--connect ADDR | --headless] [--automation-read-root DIR] [--automation-write-root DIR]
       Run the MCP server on stdio. Default: connect to a running app at 127.0.0.1:7979
       (vectorcraft --control 7979), falling back to a headless in-process session.
+      --automation-read-root / --automation-write-root confine the files the agent's commands read
+      (open, place, relink, library loads…) and write (save, export, package, library saves…) to
+      DIR, links followed; a root left out grants none of its access. They imply --headless: a
+      running app enforces its own (vectorcraft --control PORT --automation-read-root DIR …).
 
   vectorcraft-cli run [--in FILE] [--cmd ID [--params JSON]]... [--export FILE]... [--scale N]
       Headless batch: open FILE (any readable format) or start a new document, run commands in
@@ -65,22 +84,32 @@ USAGE:
   vectorcraft-cli commands
       Print the command catalogue as JSON.
 
-  vectorcraft-cli convert IN OUT [--scale N] [--artboard I | --range R] [--outline-text]
+  vectorcraft-cli convert IN OUT [--scale N] [--artboard I | --range R] [--outline-text] [--decimals N] [--replace-lossy] [--editing-data]
       Open IN (any readable format) and export OUT in the format its extension picks (see Writable
       formats). --artboard is 0-based, --range 1-based (\"1-3,5\"); a PDF gets every artboard
       unless one of them is given, EPS the bounds of the art, the other formats the first artboard.
-      Live effects are kept; --outline-text writes SVG text as paths.
+      Live effects are kept, and hidden layers and objects (written hidden in SVG and PSD), with
+      SVG's data-* attributes; --outline-text writes SVG text as paths, --decimals sets SVG's coordinate
+      precision (1–7, default 3). OUT may not be IN when reading
+      IN left things out (hidden text, art or layers it could not read; the notes say which) unless
+      --replace-lossy is given. --editing-data opens a .ai from its editing copy even where that
+      draws differently from its PDF part (which can be older), as long as it can be read. The
+      result has the export's warnings, and importWarnings for what reading IN left out.
 
   vectorcraft-cli info FILE
-      Print a JSON summary: title, colour mode, units, artboards, object counts by kind, fonts.
+      Print a JSON summary: the import warnings (what didn't come in as it was, such as an EPS
+      read from its preview and why), title, colour mode, units, artboards, object counts by
+      kind, fonts.
 
   vectorcraft-cli bench FILE [--size WxH] [--iters N]
       Render FILE (any readable format) fitted to WxH (default 2880x1800) and print ms per frame
       (warm), multithreaded and single-threaded.
 
-  vectorcraft-cli perf [--paths N]
-      Check the performance budgets (render, pan, hit test, save/load, SVG, Pathfinder) on a
-      synthetic N-path document (default 50000). Exits non-zero if a budget is exceeded.
+  vectorcraft-cli perf [--paths N] [--deep]
+      Check the performance budgets (render, pan, hit test, save/load, SVG, Pathfinder, handle
+      and segment drags) on a synthetic N-path document (default 50000). Exits non-zero if a
+      budget is exceeded, unless the report says the machine is busy. --deep also times work with
+      no budget yet and prints memory use (the working set on Windows).
 ";
 
 /// The usage text plus the formats `document.open` reads and `document.export` writes.
@@ -90,6 +119,12 @@ fn usage() -> String {
 }
 
 fn main() -> ExitCode {
+    // Before any font lookup: the fonts font services load (#579).
+    #[cfg(all(windows, not(target_vendor = "win7")))]
+    system_fonts::install();
+    #[cfg(target_os = "macos")]
+    mac_fonts::install();
+    prefs_dir::install_fonts();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("mcp") => mcp(&args[1..]),
@@ -121,18 +156,42 @@ fn main() -> ExitCode {
 fn mcp(args: &[String]) -> Result<(), String> {
     let mut connect: Option<String> = None;
     let mut headless = false;
+    let (mut read_root, mut write_root): (Option<String>, Option<String>) = (None, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        match a.as_str() {
+        // The roots also come as `--flag=DIR`, as the other Craft apps take them.
+        let (flag, inline) = match a.split_once('=') {
+            Some((f, v)) if f.starts_with("--automation-") => (f, Some(v.to_string())),
+            _ => (a.as_str(), None),
+        };
+        match flag {
             "--connect" => connect = Some(it.next().cloned().ok_or("--connect needs an address")?),
             "--headless" => headless = true,
+            "--automation-read-root" | "--automation-write-root" => {
+                let dir = inline.or_else(|| it.next().cloned()).ok_or_else(|| format!("{flag} needs a folder"))?;
+                let slot = if flag == "--automation-read-root" { &mut read_root } else { &mut write_root };
+                if slot.replace(dir).is_some() {
+                    return Err(format!("{flag} is given twice: it takes one folder"));
+                }
+            }
             other => return Err(format!("unknown mcp option `{other}`")),
         }
     }
     if headless && connect.is_some() {
         return Err("use either --connect or --headless".into());
     }
-    let backend: Box<dyn Backend> = if headless {
+    let roots = AutomationRoots::new(read_root.as_deref().map(Path::new), write_root.as_deref().map(Path::new))?;
+    if roots.is_some() && connect.is_some() {
+        return Err("--automation-read-root and --automation-write-root confine the headless server; a running app enforces its own roots:                     start it with `vectorcraft --control <port> --automation-read-root <dir> --automation-write-root <dir>`"
+            .into());
+    }
+    let backend: Box<dyn Backend> = if let Some(roots) = roots {
+        // Every thread of this process, not only the server's: nothing reaches past the roots.
+        file_access::confine_process(roots.clone());
+        let show = |root: Option<&Path>| root.map_or_else(|| "none".to_string(), |r| r.display().to_string());
+        eprintln!("vectorcraft-cli: files confined: read root {}, write root {}", show(roots.read_root()), show(roots.write_root()));
+        Box::new(Headless::with_document().with_automation_roots(Some(roots)))
+    } else if headless {
         Box::new(Headless::with_document())
     } else if let Some(addr) = connect {
         // Explicit address: fail loudly if the app isn't there.
@@ -161,7 +220,9 @@ fn commands() -> Result<(), String> {
 
 fn convert(args: &[String]) -> Result<(), String> {
     let mut files = vec![];
-    let (mut scale, mut artboard, mut range, mut outline_text) = (1.0f64, None::<u64>, None::<String>, false);
+    let (mut scale, mut artboard, mut range, mut outline_text, mut replace_lossy, mut editing_data) =
+        (1.0f64, None::<u64>, None::<String>, false, false, false);
+    let mut decimals = None::<u64>;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -169,18 +230,32 @@ fn convert(args: &[String]) -> Result<(), String> {
             "--artboard" | "-a" => artboard = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--artboard needs an index")?),
             "--range" | "-r" => range = Some(it.next().cloned().ok_or("--range needs artboards such as 1-3,5")?),
             "--outline-text" => outline_text = true,
+            "--decimals" => decimals = Some(it.next().and_then(|v| v.parse::<u64>().ok()).ok_or("--decimals needs a number")?),
+            "--replace-lossy" => replace_lossy = true,
+            "--editing-data" => editing_data = true,
             f => files.push(f.to_string()),
         }
     }
     let [input, output] = <[String; 2]>::try_from(files).map_err(|_| "convert needs IN and OUT")?;
     let mut h = Headless::new();
-    h.call("app.open", json!({"path": input})).map_err(|e| format!("open {input}: {e}"))?;
-    let r = h
-        .call(
-            "engine.execute",
-            json!({"command": "document.export", "params": {"path": output, "scale": scale, "artboard": artboard, "range": range, "outlineText": outline_text}}),
-        )
-        .map_err(|e| format!("export {output}: {e}"))?;
+    let opened = if editing_data {
+        let params = json!({"path": input, "editingData": "always"});
+        h.call("engine.execute", json!({"command": "document.open", "params": params})).map_err(|e| format!("open {input}: {e}"))?
+    } else {
+        h.call("app.open", json!({"path": input})).map_err(|e| format!("open {input}: {e}"))?
+    };
+    // A conversion keeps hidden layers and objects, written hidden, where the format can (SVG,
+    // PSD).
+    let mut params = json!({"path": output, "scale": scale, "artboard": artboard, "range": range, "outlineText": outline_text, "hiddenLayers": true, "acknowledgeLoss": replace_lossy});
+    if let Some(decimals) = decimals {
+        params["decimals"] = json!(decimals);
+    }
+    let mut r = h.call("engine.execute", json!({"command": "document.export", "params": params})).map_err(|e| format!("export {output}: {e}"))?;
+    // What reading the input left out (a missing linked file, an unsupported filter…) matters as
+    // much as what writing the output did.
+    if let (Some(w), Some(out)) = (opened.get("warnings").filter(|w| w.as_array().is_some_and(|a| !a.is_empty())), r.as_object_mut()) {
+        out.insert("importWarnings".into(), w.clone());
+    }
     outln!("{r}");
     Ok(())
 }
@@ -188,7 +263,7 @@ fn convert(args: &[String]) -> Result<(), String> {
 fn info(args: &[String]) -> Result<(), String> {
     let file = args.first().ok_or("info needs a FILE")?;
     let mut h = Headless::new();
-    h.call("app.open", json!({"path": file})).map_err(|e| format!("open {file}: {e}"))?;
+    let opened = h.call("app.open", json!({"path": file})).map_err(|e| format!("open {file}: {e}"))?;
     let base = h.call("engine.execute", json!({"command": "file.info", "params": {}}))?;
     let doc = h.session.doc().map_err(|e| e.to_string())?.doc.clone();
     let mut kinds: std::collections::BTreeMap<&'static str, usize> = Default::default();
@@ -196,7 +271,8 @@ fn info(args: &[String]) -> Result<(), String> {
     let fonts = h.call("engine.execute", json!({"command": "text.fonts", "params": {}})).unwrap_or(Value::Null);
     let artboards: Vec<Value> =
         doc.artboards.iter().map(|a| json!({"name": a.name, "rect": [a.rect.x0, a.rect.y0, a.rect.width(), a.rect.height()]})).collect();
-    let v = json!({"file": file, "info": base, "artboards": artboards, "kinds": kinds, "fonts": fonts});
+    // What didn't come in as it was (an EPS read from its preview says why).
+    let v = json!({"file": file, "warnings": opened["warnings"], "info": base, "artboards": artboards, "kinds": kinds, "fonts": fonts});
     outln!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
     Ok(())
 }
@@ -238,24 +314,44 @@ fn run(args: &[String]) -> Result<(), String> {
 
     let mut h = Headless::new();
     let mut out = std::io::stdout().lock();
-    let mut emit = |v: Value| writeln!(out, "{v}").map_err(|e| e.to_string());
+    // A reader that stopped early (a closed pipe) isn't an error, and the batch goes on: its later
+    // steps (an export…) still run, unprinted.
+    let mut closed = false;
+    let mut emit = |v: Value| {
+        if closed {
+            return Ok(());
+        }
+        match writeln!(out, "{v}") {
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                closed = true;
+                Ok(())
+            }
+            r => r.map_err(|e| e.to_string()),
+        }
+    };
     if let Some(path) = &input {
         let r = h.call("app.open", json!({"path": path})).map_err(|e| format!("open {path}: {e}"))?;
         emit(json!({"step": "open", "path": path, "result": r}))?;
     } else if !matches!(steps.first(), Some(Step::Cmd(id, _)) if id == "file.new") {
         h.ensure_document();
     }
+    // Each step's result, for later steps to refer to (`"$1.id"`, see `vectorcraft_engine::steps`).
+    let mut results = vec![];
     for step in steps {
-        match step {
+        let r = match step {
             Step::Cmd(id, params) => {
+                let params = vectorcraft_engine::steps::resolve(&params, &results).map_err(|e| format!("{id}: {e}"))?;
                 let r = h.call("engine.execute", json!({"command": id, "params": params})).map_err(|e| format!("{id}: {e}"))?;
                 emit(json!({"step": "cmd", "command": id, "result": r}))?;
+                r
             }
             Step::Export(path) => {
                 let r = h.call("app.export", json!({"path": path, "scale": scale})).map_err(|e| format!("export {path}: {e}"))?;
                 emit(json!({"step": "export", "result": r}))?;
+                r
             }
-        }
+        };
+        results.push(r);
     }
     Ok(())
 }

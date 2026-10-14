@@ -107,10 +107,10 @@ fn attrs_refs(attrs: &Map<String, Value>, f: Visit) {
 fn node_refs(n: &Node, f: Visit) {
     n.walk(&mut |m| {
         appearance_refs(&m.appearance, f);
-        if let Some(id) = m.graphic_style {
+        if let Some(id) = m.extras().graphic_style {
             f(Ref::Style(id));
         }
-        if let Some(mask) = &m.mask {
+        if let Some(mask) = &m.extras().mask {
             node_refs(&mask.art, f);
         }
         match &m.kind {
@@ -122,11 +122,12 @@ fn node_refs(n: &Node, f: Visit) {
                         f(Ref::Name(Res::CharStyle, s));
                     }
                 }
-                if let Some(s) = &t.para.style_name {
+                for s in t.para_styles().filter_map(|pa| pa.style_name.as_ref()) {
                     f(Ref::Name(Res::ParaStyle, s));
                 }
             }
             NodeKind::Image(im) => f(Ref::Name(Res::Image, &im.key)),
+            NodeKind::PlacedDocument(pl) => f(Ref::Name(Res::Image, &pl.key)),
             NodeKind::SymbolInstance { symbol, .. } => f(Ref::Name(Res::Symbol, symbol)),
             _ => {}
         }
@@ -426,8 +427,8 @@ impl Relink {
     /// Relink a node tree (the mirror of [`node_refs`]).
     fn node(&self, n: &mut Node) {
         self.appearance(&mut n.appearance);
-        n.graphic_style = n.graphic_style.and_then(|id| self.styles.get(&id).copied());
-        if let Some(m) = &mut n.mask {
+        n.extras_mut().graphic_style = n.extras().graphic_style.and_then(|id| self.styles.get(&id).copied());
+        if let Some(m) = n.extras_if_any().and_then(|e| e.mask.as_mut()) {
             self.node(Arc::make_mut(&mut m.art));
         }
         match &mut n.kind {
@@ -439,11 +440,14 @@ impl Relink {
                         self.name(Res::CharStyle, s);
                     }
                 }
-                if let Some(s) = &mut t.para.style_name {
-                    self.name(Res::ParaStyle, s);
+                for pa in t.para_styles_mut() {
+                    if let Some(s) = &mut pa.style_name {
+                        self.name(Res::ParaStyle, s);
+                    }
                 }
             }
             NodeKind::Image(im) => self.name(Res::Image, &mut im.key),
+            NodeKind::PlacedDocument(pl) => self.name(Res::Image, &mut pl.key),
             NodeKind::SymbolInstance { symbol, .. } => self.name(Res::Symbol, symbol),
             _ => {}
         }

@@ -59,7 +59,7 @@ enum Hit {
 fn edited(cx: &ToolContext) -> Option<(NodeId, SubPath, SubPath)> {
     let [id] = cx.selection.objects.as_slice() else { return None };
     let n = cx.doc.node(*id)?;
-    let kind = n.attrs.as_ref()?.stitch.as_ref()?.get("type")?.as_str()?;
+    let kind = n.extras().attrs.as_ref()?.stitch.as_ref()?.get("type")?.as_str()?;
     if kind != "satinBlocks" {
         return None;
     }
@@ -466,7 +466,8 @@ mod tests {
             bp.line_to((100.0, y));
         }
         let mut n = vectorcraft_doc::Node::path(id, vectorcraft_geom::PathData::from_bezpath(&bp), vectorcraft_doc::Appearance::default_art());
-        n.attrs = Some(Box::new(vectorcraft_doc::ObjectAttributes { stitch: Some(json!({"type": "satinBlocks"})), ..Default::default() }));
+        n.extras_mut().attrs =
+            Some(Box::new(vectorcraft_doc::ObjectAttributes { stitch: Some(json!({"type": "satinBlocks"})), ..Default::default() }));
         d.insert(Some(l), 0, n).unwrap();
         let mut sel = vectorcraft_doc::Selection::default();
         sel.set([id]);

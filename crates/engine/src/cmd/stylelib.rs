@@ -15,7 +15,7 @@ use vectorcraft_doc::{Document, GraphicStyle, PatternDef, StyleLibrary};
 
 use super::menucmds::squash;
 use super::swatch::str_list;
-use super::swatchlib::{LibraryFile, LibraryInfo, stem};
+use super::swatchlib::{FileData, LibraryFile, LibraryInfo, stem};
 use super::*;
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -61,7 +61,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Other Library…",
             ["Window", "Graphic Style Libraries"],
             None,
-            "{path? | data?: file text | dataBase64?, name?: file name (default: the path's)} load a .vcstyles library, or the graphic styles of any document VectorCraft opens (see document.formats), for the library panel (Window → Graphic Style Libraries lists it until the app quits) → {library: id, name, count}",
+            "{path? | data?: file text | dataBase64?, name?: file name (default: the path's)} load a .vcstyles library, or the graphic styles of any document VectorCraft opens (see document.formats), for the library panel (Window → Graphic Style Libraries lists it until the app quits; a file of the user library folder, or a file with the same extension and bytes as one there, opens as that User Defined library) → {library: id, name, count}",
             always,
             load
         ),
@@ -70,8 +70,8 @@ pub fn specs() -> Vec<CommandSpec> {
 
 impl LibraryFile for StyleLibrary {
     const EXTS: &'static [&'static str] = &[STYLES_EXT];
-    fn read(text: &str, stem: &str) -> std::result::Result<Self, String> {
-        style_libs::read(text, stem)
+    fn read(bytes: &[u8], stem: &str) -> std::result::Result<Self, String> {
+        style_libs::read(&String::from_utf8_lossy(bytes), stem)
     }
     fn name(&self) -> &str {
         &self.name
@@ -211,7 +211,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).map_or_else(|| stem(&st.title()).to_string(), str::to_string);
     let lib = StyleLibrary::from_document(&st.doc, &str_list(p, "names"), name).map_err(|e| bad(C, e))?;
     let mut out = json!({ "count": lib.len() });
-    s.style_libraries.write(p, &lib.name, STYLES_EXT, style_libs::write(&lib), &mut out, C)?;
+    s.style_libraries.write(p, &lib.name, STYLES_EXT, FileData::Text(style_libs::write(&lib)), &mut out, C)?;
     Ok(out)
 }
 
@@ -222,8 +222,11 @@ fn load(s: &mut Session, p: &Value) -> Result<Value> {
         match std::str::from_utf8(bytes).ok().filter(|t| style_libs::sniff(t)) {
             Some(t) => style_libs::read(t, stem(file)).map_err(|e| bad(C, e)),
             None => {
-                let doc = super::fileio::load(file, bytes).map_err(|e| bad(C, e.to_string()))?.doc;
-                StyleLibrary::from_document(&doc, &[], stem(file).to_string()).map_err(|e| bad(C, e))
+                let loaded = super::fileio::load(file, bytes).map_err(|e| bad(C, e.to_string()))?;
+                if loaded.preview_only {
+                    return Err(bad(C, "only this Affinity file's embedded preview could be read; use File › Open to see it with its warning"));
+                }
+                StyleLibrary::from_document(&loaded.doc, &[], stem(file).to_string()).map_err(|e| bad(C, e))
             }
         }
     })?;

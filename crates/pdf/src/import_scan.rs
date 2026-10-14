@@ -1,12 +1,14 @@
 //! What the interpreter doesn't tell the import, read from the file itself: the optional content
 //! groups (layers) with their states and nesting, which group each marked-content sequence belongs
-//! to, the isolate and knockout flags of transparency groups, and the names of the fonts.
+//! to, the isolate and knockout flags of transparency groups, the overprint parameters each path
+//! and each stretch of text is painted with, and the names of the fonts.
 //!
 //! hayro-interpret reports a marked-content sequence by its tag alone and a transparency group
 //! without its flags, and skips the content of groups that are off. So each page's content is
 //! walked here in the interpreter's order (page content, then form XObjects as they are drawn,
 //! skipping what it skips): the k-th `BDC`/`BMC` it reports is the k-th one found here (its tag
-//! checks that), and the k-th form transparency group is the k-th group found here. To import
+//! checks that), the k-th form transparency group is the k-th group found here, and the k-th
+//! path it fills or strokes is the k-th one painted here (the page's count checks that). To import
 //! content that is off as hidden layers, [`all_on`] gives the file an update that turns every
 //! group on.
 
@@ -219,6 +221,39 @@ pub(crate) struct Scan {
     pub groups: Vec<(bool, bool)>,
     /// The walk stopped at [`MAX_OPS`] or [`MAX_TAGS`]: the rest of the page isn't told apart.
     pub cut: bool,
+    /// Each fill and each stroke of a path the interpreter draws (a fill-and-stroke operator is
+    /// a fill, then a stroke; `sh` is a fill): whether it overprints.
+    pub paints: Vec<bool>,
+    /// How the text shown before each of [`Self::paints`] (since the one before it) overprints,
+    /// and last the text after them all: one more entry than `paints`.
+    pub texts: Vec<TextOverprint>,
+    /// Something on the page overprints (when nothing does, `paints` and `texts` aren't used).
+    pub overprints: bool,
+    /// Something overprints with overprint mode 0, where a `DeviceCMYK` colour's zero components
+    /// knock out; the document's overprint is the nonzero one (mode 1).
+    pub zero_mode: bool,
+}
+
+/// How the text shown between two painted paths overprints.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum TextOverprint {
+    /// No text is shown there.
+    #[default]
+    None,
+    /// All of it is shown with these parameters.
+    All { fill: bool, stroke: bool },
+    /// Text is shown with different parameters, which can't be told apart by glyph.
+    Mixed,
+}
+
+/// The overprint parameters of the graphics state (ISO 32000-1 §8.6.7; `OP`, `op` and `OPM` in
+/// Table 58).
+#[derive(Clone, Copy, Default)]
+struct Overprint {
+    stroke: bool,
+    fill: bool,
+    /// Overprint mode 1 (nonzero overprint).
+    nonzero: bool,
 }
 
 /// A marked-content tag as [`Scan::tags`] keeps it: its FNV-1a hash (the tags are only compared,
@@ -248,13 +283,18 @@ struct Walker<'w, 'p> {
     /// The groups that are off for the interpreter (none once [`all_on`] turned them on).
     off: HashSet<ObjectIdentifier>,
     xref: &'p hayro_syntax::xref::XRef,
-    fonts: &'w mut HashMap<u128, String>,
+    fonts: &'w mut FontNames,
     visible: Vec<bool>,
     ops: usize,
     max_ops: usize,
     out: Scan,
     /// A form XObject hidden by its own optional content was met.
     hidden_form: bool,
+    /// The saved graphics states' overprint parameters, the current one last, pushed and popped
+    /// as the interpreter does its states.
+    states: Vec<Overprint>,
+    /// The text shown since the last painted path.
+    text: TextOverprint,
 }
 
 impl Walker<'_, '_> {
@@ -291,18 +331,70 @@ impl Walker<'_, '_> {
         self.begin(on);
     }
 
+    fn state(&self) -> Overprint {
+        self.states.last().copied().unwrap_or_default()
+    }
+
+    fn save(&mut self) {
+        self.states.push(self.state());
+    }
+
+    /// The interpreter never pops its first state.
+    fn restore(&mut self) {
+        if self.states.len() > 1 {
+            self.states.pop();
+        }
+    }
+
+    fn overprinting(&mut self, on: bool) {
+        self.out.overprints |= on;
+        self.out.zero_mode |= on && !self.state().nonzero;
+    }
+
+    /// The interpreter draws a path: a fill (or a `stroke`) of the current one.
+    fn painted(&mut self, stroke: bool) {
+        if !self.is_visible() {
+            return;
+        }
+        let s = self.state();
+        let on = if stroke { s.stroke } else { s.fill };
+        self.overprinting(on);
+        self.out.paints.push(on);
+        self.out.texts.push(std::mem::take(&mut self.text));
+    }
+
+    /// The interpreter shows text.
+    fn shown(&mut self) {
+        if !self.is_visible() {
+            return;
+        }
+        let s = self.state();
+        self.overprinting(s.fill || s.stroke);
+        let now = TextOverprint::All { fill: s.fill, stroke: s.stroke };
+        self.text = if self.text == TextOverprint::None || self.text == now { now } else { TextOverprint::Mixed };
+    }
+
     fn note_fonts(&mut self, res: &Resources<'_>) {
         for (key, _) in res.fonts.entries() {
             if let Some(f) = res.fonts.get::<Dict<'_>>(key.as_ref())
                 && let Some(name) = f.get::<Name<'_>>(b"BaseFont")
             {
-                self.fonts.entry(f.cache_key()).or_insert_with(|| String::from_utf8_lossy(name.as_ref()).into_owned());
+                self.fonts.entry(f.cache_key()).or_insert_with(|| (String::from_utf8_lossy(name.as_ref()).into_owned(), embeds_glyphs(&f)));
             }
         }
     }
 
     fn walk(&mut self, mut iter: TypedIter<'_>, res: &Resources<'_>, depth: u32) {
         self.note_fonts(res);
+        // The interpreter saves the state for each content stream, and restores what the stream
+        // left saved when it ends.
+        let saved = self.states.len();
+        self.save();
+        self.walk_ops(&mut iter, res, depth);
+        self.states.truncate(saved);
+    }
+
+    fn walk_ops(&mut self, iter: &mut TypedIter<'_>, res: &Resources<'_>, depth: u32) {
         while let Some(op) = iter.next() {
             self.ops += 1;
             if self.ops > self.max_ops || self.out.tags.len() >= MAX_TAGS {
@@ -338,6 +430,40 @@ impl Walker<'_, '_> {
                 TypedInstruction::EndMarkedContent(_) => {
                     self.visible.pop();
                 }
+                TypedInstruction::SaveState(_) => self.save(),
+                TypedInstruction::RestoreState(_) => self.restore(),
+                TypedInstruction::SetGraphicsState(gs) => {
+                    if let Some(d) = res.get_ext_g_state(gs.0)
+                        && let Some(s) = self.states.last_mut()
+                    {
+                        let stroke = d.get::<bool>(b"OP");
+                        s.stroke = stroke.unwrap_or(s.stroke);
+                        // Without `/op`, `/OP` sets both.
+                        s.fill = d.get::<bool>(b"op").or(stroke).unwrap_or(s.fill);
+                        s.nonzero = d.get::<u8>(b"OPM").map_or(s.nonzero, |m| m != 0);
+                    }
+                }
+                TypedInstruction::FillPathEvenOdd(_) | TypedInstruction::FillPathNonZero(_) | TypedInstruction::FillPathNonZeroCompatibility(_) => {
+                    self.painted(false);
+                }
+                TypedInstruction::StrokePath(_) | TypedInstruction::CloseAndStrokePath(_) => self.painted(true),
+                TypedInstruction::FillAndStrokeEvenOdd(_)
+                | TypedInstruction::FillAndStrokeNonZero(_)
+                | TypedInstruction::CloseFillAndStrokeEvenOdd(_)
+                | TypedInstruction::CloseFillAndStrokeNonZero(_) => {
+                    self.painted(false);
+                    self.painted(true);
+                }
+                // Drawn when the interpreter can read the shading: the page's count tells.
+                TypedInstruction::Shading(s) => {
+                    if res.get_shading(s.0).is_some() {
+                        self.painted(false);
+                    }
+                }
+                TypedInstruction::ShowText(_)
+                | TypedInstruction::ShowTexts(_)
+                | TypedInstruction::NextLineAndShowText(_)
+                | TypedInstruction::ShowTextWithParameters(_) => self.shown(),
                 TypedInstruction::XObject(x) => {
                     if !self.is_visible() || depth >= MAX_DEPTH {
                         continue;
@@ -359,8 +485,11 @@ impl Walker<'_, '_> {
                         {
                             self.out.groups.push((g.get::<bool>(b"I").unwrap_or(false), g.get::<bool>(b"K").unwrap_or(false)));
                         }
-                        let inner = Resources::from_parent(d.get::<Dict<'_>>(b"Resources").unwrap_or_default(), res.clone());
+                        // (Its own resources, or without any those of what draws it: as the interpreter reads them.)
+                        let inner = d.get::<Dict<'_>>(b"Resources").map(Resources::new).unwrap_or_else(|| res.clone());
+                        self.save();
                         self.walk(TypedIter::new(data.as_ref()), &inner, depth + 1);
+                        self.restore();
                     }
                     if oc.is_some() {
                         self.visible.pop();
@@ -372,16 +501,48 @@ impl Walker<'_, '_> {
     }
 }
 
+/// The fonts of a document by cache key: base font name, and whether the file carries the glyphs
+/// ([`embeds_glyphs`]).
+pub(crate) type FontNames = HashMap<u128, (String, bool)>;
+
+/// Whether font `f` carries its own glyphs: a font program in its descriptor (a composite font's in
+/// its descendant's), or a Type 3 font's glyph procedures. A font that doesn't is drawn with a
+/// stand-in, whose glyphs say nothing about which installed face the document means.
+fn embeds_glyphs(f: &Dict<'_>) -> bool {
+    if f.get::<Name<'_>>(b"Subtype").is_some_and(|s| s.as_ref() == b"Type3") {
+        return true;
+    }
+    // A font program is a stream, so always an indirect object.
+    let program = |d: &Dict<'_>| {
+        d.get::<Dict<'_>>(b"FontDescriptor").is_some_and(|fd| [&b"FontFile"[..], b"FontFile2", b"FontFile3"].iter().any(|k| fd.get_ref(*k).is_some()))
+    };
+    program(f) || f.get::<Array<'_>>(b"DescendantFonts").and_then(|a| a.iter::<Dict<'_>>().next()).is_some_and(|d| program(&d))
+}
+
 /// Walk `page` as the interpreter will: `all_on` when [`all_on`] turned every group on. Fonts
-/// found are noted in `fonts` (their cache key → base font name).
-pub(crate) fn scan_page(page: &Page<'_>, ocgs: &mut Ocgs, all_on: bool, fonts: &mut HashMap<u128, String>) -> Scan {
+/// found are noted in `fonts` (their cache key → base font name, and whether the file carries its
+/// glyphs).
+pub(crate) fn scan_page(page: &Page<'_>, ocgs: &mut Ocgs, all_on: bool, fonts: &mut FontNames) -> Scan {
     walk_page(page, ocgs, all_on, fonts).out
 }
 
-fn walk_page<'w, 'p>(page: &Page<'p>, ocgs: &'w mut Ocgs, all_on: bool, fonts: &'w mut HashMap<u128, String>) -> Walker<'w, 'p> {
+fn walk_page<'w, 'p>(page: &Page<'p>, ocgs: &'w mut Ocgs, all_on: bool, fonts: &'w mut FontNames) -> Walker<'w, 'p> {
     let off = if all_on { HashSet::new() } else { ocgs.off.clone() };
-    let mut w = Walker { ocgs, off, xref: page.xref(), fonts, visible: vec![], ops: 0, max_ops: max_ops(), out: Scan::default(), hidden_form: false };
+    let mut w = Walker {
+        ocgs,
+        off,
+        xref: page.xref(),
+        fonts,
+        visible: vec![],
+        ops: 0,
+        max_ops: max_ops(),
+        out: Scan::default(),
+        hidden_form: false,
+        states: vec![Overprint::default()],
+        text: TextOverprint::None,
+    };
     w.walk(page.typed_operations(), page.resources(), 0);
+    w.out.texts.push(w.text);
     w
 }
 

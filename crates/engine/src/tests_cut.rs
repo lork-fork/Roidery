@@ -119,6 +119,24 @@ fn line_cut_that_misses_changes_nothing() {
 }
 
 #[test]
+fn rect_cut_rejects_non_numeric_rectangle_elements_without_modifying_art() {
+    let mut s = session();
+    let id = rect(&mut s, 0.0, 0.0, 100.0, 100.0);
+    select(&mut s, &[id]);
+    let original = bounds(&s, id);
+    let history = undo_depth(&s);
+    // The old parser dropped the string and used the four remaining values.
+    for params in [json!([0, "ignored", 10, 50, 50]), json!([0, 10, 50, null, 50]), json!([0, 10, 50, 50, 5])] {
+        assert!(s.execute("path.rectCut", &json!({"rect": params})).is_err());
+        assert!(near(bounds(&s, id), original), "failed cut must not change geometry");
+        assert_eq!(undo_depth(&s), history, "failed cut must not add undo history");
+    }
+    // Proper rectangular cuts still work.
+    s.execute("path.rectCut", &json!({"rect": [10, 10, 70, 70]})).unwrap();
+    assert!(near(bounds(&s, id), Rect::new(10.0, 10.0, 80.0, 80.0)));
+}
+
+#[test]
 fn rect_cut_crops_to_real_geometry() {
     let mut s = session();
     let a = rect(&mut s, 0.0, 0.0, 100.0, 100.0);

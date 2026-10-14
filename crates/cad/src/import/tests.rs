@@ -128,6 +128,20 @@ fn units_choose_the_default_scale() {
     let um = info(&drawing(&[(9, "$INSUNITS"), (70, "13")], &[], &[], LINE)).unwrap();
     assert_eq!((um.unit, um.units.as_str()), (Unit::Millimeters, "Microns"));
     assert!((um.scale - 1000.0).abs() < 1e-6);
+    // #1011: US survey inches, yards and miles (from the survey foot, 1200/3937 m), not unitless.
+    let survey_ft = 72.0 / 0.0254 * 1200.0 / 3937.0;
+    for (code, name, pt) in [
+        ("21", "US survey feet", survey_ft),
+        ("22", "US survey inches", survey_ft / 12.0),
+        ("23", "US survey yards", survey_ft * 3.0),
+        ("24", "US survey miles", survey_ft * 5280.0),
+    ] {
+        let i = info(&drawing(&[(9, "$INSUNITS"), (70, code)], &[], &[], LINE)).unwrap();
+        assert_eq!((i.unit, i.units.as_str()), (Unit::Millimeters, name));
+        assert!((i.scale * pt - 72.0 / 25.4).abs() < 1e-9, "{name}: 1 mm is {} units", i.scale);
+    }
+    let survey_in = open(&drawing(&[(9, "$INSUNITS"), (70, "22")], &[], &[], LINE), &ImportOptions::default()).document;
+    assert!((survey_in.artboards[0].rect.width() - 7200.0144000288).abs() < 1e-6, "{:?}", survey_in.artboards[0].rect);
     let imperial = info(&drawing(&[(9, "$MEASUREMENT"), (70, "0")], &[], &[], LINE)).unwrap();
     assert_eq!((imperial.unit, imperial.scale), (Unit::Inches, 1.0));
     // A ratio: 1 cm = 10 units is 1:1 in millimetres again.
@@ -254,6 +268,53 @@ fn nurbs_splines_stay_within_a_hundredth() {
     let [s] = &leaves(&doc)[..] else { panic!() };
     let h = height(&doc);
     assert!(path_points(s).iter().any(|p| p.distance(Point::new(50.0, h - 40.0)) < 1e-9));
+}
+
+#[test]
+fn control_point_splines_honor_closed_flags_without_changing_their_curves() {
+    for returns in [false, true] {
+        for rational in [false, true] {
+            let mut original_curves = None;
+            for closed in [false, true] {
+                let flags = 8 | if rational { 4 } else { 0 } | i32::from(closed);
+                let mut e = vec![(0, "SPLINE".to_string()), (70, flags.to_string()), (71, "3".into()), (72, "11".into()), (73, "7".into())];
+                for k in [0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2] {
+                    e.push((40, k.to_string()));
+                }
+                let end = if returns { (20.0, 20.0) } else { (50.0, 25.0) };
+                for ((x, y), weight) in [(20.0, 20.0), (80.0, 0.0), (80.0, 80.0), (20.0, 80.0), (0.0, 80.0), (0.0, 20.0), end]
+                    .into_iter()
+                    .zip([1.0, 0.7, 0.7, 1.0, 0.9, 0.9, 1.0])
+                {
+                    e.extend([(10, x.to_string()), (20, y.to_string()), (30, "0".into())]);
+                    if rational {
+                        e.push((41, weight.to_string()));
+                    }
+                }
+                let e: Vec<_> = e.iter().map(|(c, v)| (*c, v.as_str())).collect();
+                let doc = open(&entities(&e), &points()).document;
+                let [n] = &leaves(&doc)[..] else { panic!("one spline") };
+                let path = n.path_data().unwrap();
+                assert_eq!(path.subpaths.len(), 1);
+                assert_eq!(path.subpaths[0].closed, closed, "flags {flags}, returns {returns}");
+                let curves: Vec<_> = path.to_bezpath().elements().iter().filter(|e| matches!(e, kurbo::PathEl::CurveTo(..))).copied().collect();
+                assert!(!curves.is_empty());
+                if let Some(original) = &original_curves {
+                    assert_eq!(&curves, original, "closure preserves the rational/non-rational curves");
+                } else {
+                    original_curves = Some(curves);
+                }
+            }
+        }
+    }
+    for flags in [8, 9] {
+        let flags_text = flags.to_string();
+        let e =
+            [(0, "SPLINE"), (70, flags_text.as_str()), (71, "3"), (74, "3"), (11, "0"), (21, "0"), (11, "50"), (21, "40"), (11, "100"), (21, "0")];
+        let doc = open(&entities(&e), &points()).document;
+        let [n] = &leaves(&doc)[..] else { panic!("one fit-point spline") };
+        assert_eq!(n.path_data().unwrap().subpaths[0].closed, flags & 1 != 0, "fit-point fallback stays closed/open");
+    }
 }
 
 /// A square with a round hole: a polyline loop and a loop of one edge (a whole arc).
@@ -588,6 +649,27 @@ fn inserts_become_symbol_instances_with_their_transform() {
     assert!(a.distance(Point::new(100.0, h - 50.0)) < 1e-9, "{a:?}");
     assert!(b.distance(Point::new(100.0, h - 70.0)) < 1e-9, "{b:?}");
     assert_eq!(stroke_rgb(art), [255, 0, 0, 255], "the block's own colour");
+}
+
+#[test]
+fn an_insert_is_measured_clicked_and_marqueed_by_its_blocks_art() {
+    let inserts = [(0, "INSERT"), (8, "Doors"), (2, "Door"), (10, "100"), (20, "50"), (41, "2"), (42, "3"), (50, "90")];
+    let doc = open(&with_door(DOOR_LINE, &inserts), &points()).document;
+    let [inst] = &leaves(&doc)[..] else { panic!() };
+    let h = height(&doc);
+    // The line, 20 units up from the insertion point: a box with no width at x 100. The 20 × 20
+    // square placed by the insert's transform would be a 60 × 40 box from x 70 to 130.
+    let b = doc.bounds_of(&[inst.id], false).unwrap();
+    assert!(close(b, Rect::new(100.0, h - 70.0, 100.0, h - 50.0), 1e-9), "{b:?}");
+    // A click 25 pt right of the line, inside that square's box, selects nothing; one on the line
+    // selects the insert.
+    let hit = |x: f64| vectorcraft_doc::hit::hit_test(&doc, Point::new(x, h - 60.0), vectorcraft_doc::hit::HitOptions::default()).map(|h| h.leaf);
+    assert_eq!(hit(125.0), None);
+    assert_eq!(hit(100.0), Some(inst.id));
+    // A marquee beside the line leaves it out; one across it takes it.
+    let marquee = |r: Rect| vectorcraft_doc::hit::marquee(&doc, r, None, false);
+    assert!(marquee(Rect::new(115.0, h - 65.0, 125.0, h - 55.0)).is_empty());
+    assert_eq!(marquee(Rect::new(90.0, h - 62.0, 110.0, h - 58.0)), vec![inst.id]);
 }
 
 #[test]

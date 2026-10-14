@@ -11,8 +11,11 @@
 //! - Save / Export trigger a browser download;
 //! - dropped files are read asynchronously by `web::WebShell` and delivered through the inbox.
 //!
-//! URL query flag: `?webgl` forces the WebGL2 backend instead of WebGPU.
+//! URL query flags: `?webgl` forces the WebGL2 backend instead of WebGPU; `?lang=es` (any
+//! language code) stands in for the browser's languages when the interface language is Automatic.
 
+#[cfg(target_arch = "wasm32")]
+mod fonts;
 #[cfg(target_arch = "wasm32")]
 mod locks;
 #[cfg(target_arch = "wasm32")]

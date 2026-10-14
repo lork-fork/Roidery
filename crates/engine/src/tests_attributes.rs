@@ -52,13 +52,13 @@ fn each_attribute_sets_reads_back_and_undoes_in_one_step() {
         assert_eq!(i[k], v, "{k}");
     }
     let n = s.doc().unwrap().doc.node(a).unwrap().clone();
-    let at = n.attrs.as_deref().unwrap();
+    let at = n.extras().attrs.as_deref().unwrap();
     assert_eq!((at.show_center, at.image_map, n.url()), (Some(false), ImageMap::Rectangle, Some("https://example.com")));
     assert!(!n.shows_center());
     // One undo step takes everything back, and the attributes go away entirely.
     run(&mut s, "edit.undo", json!({}));
     let n = s.doc().unwrap().doc.node(a).unwrap().clone();
-    assert!(n.attrs.is_none() && !n.has_overprint());
+    assert!(n.extras().attrs.is_none() && !n.has_overprint());
     // Nothing to change: no undo step; bad values are refused.
     let before = s.doc().unwrap().revision;
     assert_eq!(run(&mut s, "attributes.set", json!({"showCenter": true}))["changed"], 0);
@@ -68,7 +68,7 @@ fn each_attribute_sets_reads_back_and_undoes_in_one_step() {
     // Clearing the URL and note drops the attributes.
     run(&mut s, "attributes.set", json!({"url": "u", "note": "n"}));
     run(&mut s, "attributes.set", json!({"url": "", "note": ""}));
-    assert!(s.doc().unwrap().doc.node(a).unwrap().attrs.is_none());
+    assert!(s.doc().unwrap().doc.node(a).unwrap().extras().attrs.is_none());
 }
 
 #[test]
@@ -168,8 +168,8 @@ fn attributes_survive_a_native_round_trip() {
     run(&mut s, "attributes.set", json!({"showCenter": false, "imageMap": "polygon", "url": "https://example.com/x", "note": "keep"}));
     let doc = s.doc().unwrap().doc.clone();
     let back = vectorcraft_format::load(&vectorcraft_format::save(&doc, false)).unwrap();
-    assert_eq!(back.node(a).unwrap().attrs, doc.node(a).unwrap().attrs);
-    assert!(back.node(a).unwrap().attrs.is_some());
+    assert_eq!(back.node(a).unwrap().extras().attrs, doc.node(a).unwrap().extras().attrs);
+    assert!(back.node(a).unwrap().extras().attrs.is_some());
 }
 
 #[test]
@@ -189,4 +189,28 @@ fn svg_export_links_objects_and_import_reads_the_links_back() {
         }
     });
     assert_eq!(urls, [Some("https://example.com/?a=1&b=2".to_string()), None], "the link wraps the path alone");
+}
+
+/// #522: an object's own data (SVG `data-*` attributes) is set with `object.setProps {data}`,
+/// undone in one step, written to SVG and kept by the native format.
+#[test]
+fn object_data_is_set_saved_and_written_to_svg() {
+    let mut s = session();
+    let a = rect(&mut s, 10.0);
+    let data = |s: &Session| s.doc().unwrap().doc.node(a).unwrap().extras().attrs.as_deref().map(|x| x.data.clone()).unwrap_or_default();
+    let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+    run(&mut s, "object.setProps", json!({"data": {"pivot": "60,100", "z": 3}}));
+    assert_eq!(data(&s), [pair("pivot", "60,100"), pair("z", "3")], "values are text");
+    run(&mut s, "object.setProps", json!({"data": {"data-pivot": "1,2", "z": null}}));
+    assert_eq!(data(&s), [pair("pivot", "1,2")], "a data- prefix is optional; null removes a key");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(data(&s).len(), 2, "one step");
+    for bad in [json!({"data": {"vc-x": "1"}}), json!({"data": {"name": "x"}}), json!({"data": {"a b": "1"}}), json!({"data": "pivot"})] {
+        assert!(s.execute("object.setProps", &bad).is_err(), "{bad}");
+    }
+    let svg = run(&mut s, "document.serialize", json!({"format": "svg"}))["text"].as_str().unwrap().to_string();
+    assert!(svg.contains("data-pivot=\"60,100\" data-z=\"3\""), "{svg}");
+    let native = vectorcraft_format::save(&s.doc().unwrap().doc, false);
+    let back = vectorcraft_format::load(&native).unwrap();
+    assert_eq!(back.node(a).unwrap().extras().attrs, s.doc().unwrap().doc.node(a).unwrap().extras().attrs);
 }

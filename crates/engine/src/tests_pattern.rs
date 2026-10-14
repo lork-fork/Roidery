@@ -205,6 +205,45 @@ fn transform_patterns_only_moves_placement() {
     assert_eq!(xf.as_coeffs(), [2.0, 0.0, 0.0, 2.0, 5.0, 0.0]);
 }
 
+/// #1448, #1460: with Transform Objects off, the transform commands leave the art where it is and
+/// move only its pattern tiles (Transform Patterns on), or nothing at all; Transform Again repeats
+/// that.
+#[test]
+fn transforms_without_transform_objects_move_only_the_pattern() {
+    let mut s = session();
+    make_dots(&mut s);
+    let big = rect(&mut s, 100.0, 100.0, 50.0, 50.0);
+    s.execute("paint.setFill", &json!({"ids": [big.0], "swatch": "Dots"})).unwrap();
+    s.execute("select.set", &json!({"ids": [big.0]})).unwrap();
+    let before = node(&s, big).geometric_bounds();
+    let tiles = |s: &Session| {
+        let n = node(s, big);
+        let Paint::Pattern { xf, .. } = n.appearance.fill_paint() else { panic!() };
+        xf.as_coeffs()
+    };
+    for (cmd, p, want) in [
+        ("object.move", json!({"dx": 5, "dy": 0}), [1.0, 0.0, 0.0, 1.0, 5.0, 0.0]),
+        ("object.transformAgain", json!({}), [1.0, 0.0, 0.0, 1.0, 10.0, 0.0]),
+        ("object.reflect", json!({"axis": "vertical", "origin": [0, 0]}), [-1.0, 0.0, 0.0, 1.0, -10.0, 0.0]),
+        ("object.transformEach", json!({"moveH": 10, "reference": 0}), [-1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+    ] {
+        // Transform Again repeats the move as it was made, options included.
+        if cmd != "object.transformAgain" {
+            let mut off = p.clone();
+            off["objects"] = json!(false);
+            off["patterns"] = json!(false);
+            s.execute(cmd, &off).unwrap();
+            assert_eq!(node(&s, big).geometric_bounds(), before, "{cmd}: neither transforms");
+            off["patterns"] = json!(true);
+            s.execute(cmd, &off).unwrap();
+        } else {
+            s.execute(cmd, &p).unwrap();
+        }
+        assert_eq!(node(&s, big).geometric_bounds(), before, "{cmd}");
+        assert_eq!(tiles(&s), want, "{cmd}");
+    }
+}
+
 #[test]
 fn list_reports_patterns_and_edit_state() {
     let mut s = session();
@@ -349,6 +388,52 @@ fn expand_yields_n_copies() {
     u.sort();
     u.dedup();
     assert_eq!(u.len(), ids.len());
+}
+
+/// #1756: Object → Expand turns radial, grid and mirror repeats into groups of their instances, in
+/// one undo step, as Expand Repeat does.
+#[test]
+fn object_expand_expands_repeats() {
+    for (cmd, opts) in [("object.repeat.radial", json!({"instances": 5})), ("object.repeat.grid", json!({})), ("object.repeat.mirror", json!({}))] {
+        let mut s = session();
+        let r = rect(&mut s, 195.0, 95.0, 10.0, 10.0);
+        sel(&mut s, &[r]);
+        let id = id_of(&s.execute(cmd, &opts).unwrap());
+        let NodeKind::Repeat(spec) = node(&s, id).kind else { panic!("{cmd}") };
+        let n = spec.expand().len();
+        assert_eq!(s.execute("object.expand.info", &json!({})).unwrap()["object"], json!(true), "{cmd}");
+        let undo = s.doc().unwrap().history.undo.len();
+        s.execute("object.expand", &json!({"fill": false, "stroke": false})).unwrap();
+        let g = node(&s, id);
+        assert!(matches!(g.kind, NodeKind::Group { .. }), "{cmd}");
+        assert_eq!(g.children().unwrap().len(), n, "{cmd}");
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1, "{cmd}");
+        assert_eq!(s.doc().unwrap().selection.objects, vec![id], "{cmd}");
+        // Nothing left to expand: the instances are plain rectangles.
+        assert_eq!(s.execute("object.expand.info", &json!({})).unwrap()["object"], json!(false), "{cmd}");
+    }
+}
+
+/// Expand reaches repeats inside a selected group, and with every option on also outlines the
+/// instances' strokes.
+#[test]
+fn object_expand_expands_repeats_in_groups() {
+    let mut s = session();
+    let r = rect(&mut s, 195.0, 95.0, 10.0, 10.0);
+    sel(&mut s, &[r]);
+    let rep = id_of(&s.execute("object.repeat.radial", &json!({"instances": 4})).unwrap());
+    let other = rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    sel(&mut s, &[rep, other]);
+    s.execute("object.group", &json!({})).unwrap();
+    s.execute("object.expand", &json!({})).unwrap();
+    let mut repeats = 0;
+    for l in &doc(&s).layers {
+        l.walk(&mut |c| repeats += usize::from(matches!(c.kind, NodeKind::Repeat(_))));
+    }
+    assert_eq!(repeats, 0);
+    let g = node(&s, rep);
+    assert_eq!(g.children().unwrap().len(), 4);
+    assert!(g.children().unwrap().iter().all(|c| c.appearance.stroke_paint().is_none()));
 }
 
 #[test]

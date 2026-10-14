@@ -5,7 +5,10 @@
 //! at release makes a copy: Alt-drag). Alt-click (the release of a click made with Alt) sets the
 //! point and opens the tool's dialog; double-click or Return opens the dialog too. A clicked or
 //! Alt-clicked point snaps to the nearest anchor or centre (Snap to Point / Smart Guides), labelled
-//! while hovering, so transforms pivot exactly on a corner.
+//! while hovering, so transforms pivot exactly on a corner. A drag starts from the point it grabbed
+//! snapped the same way, and the pointer snaps as a drawn point does (Smart Guides: the other
+//! objects' anchors, centres and edges; or the grid, pixels, Snap to Point), so a corner dragged
+//! onto another object's anchor scales exactly onto it.
 
 use serde_json::{Value, json};
 use vectorcraft_doc::NodeId;
@@ -13,7 +16,7 @@ use vectorcraft_geom::{Affine, Point, Rect, Vec2};
 
 use super::target_overlays;
 use crate::bbox::rotate_for_drag;
-use crate::guides::snap_pick;
+use crate::guides::{PointSnap, Targets, snap_pick};
 use crate::select::{matrix_json, selection_bounds, selection_box};
 use crate::{Action, Cursor, Mods, Overlay, PointerEvent, PointerKind, Tool, ToolContext, ToolKey};
 
@@ -57,7 +60,8 @@ impl TransformKind {
 #[derive(Clone, Copy, Debug)]
 struct Drag {
     start: Point,
-    /// The pressed point snapped to an anchor or centre (becomes the reference point on a click).
+    /// The pressed point snapped to an anchor or centre: the reference point on a click, where a
+    /// drag starts from.
     pick: Point,
     origin: Point,
     began: bool,
@@ -73,12 +77,20 @@ pub struct TransformTool {
     origin: Option<(Point, Vec<NodeId>)>,
     drag: Option<Drag>,
     measure: Option<(Point, String)>,
-    /// Snap feedback while hovering ("anchor" / "center" label).
+    /// Snap feedback while hovering ("anchor" / "center" label), and for the dragged pointer.
     hover: Vec<Overlay>,
+    /// What the dragged pointer snaps to, gathered when the drag begins.
+    snap: Option<PointSnap>,
 }
 
 fn about(o: Point, a: Affine) -> Affine {
     Affine::translate(o.to_vec2()) * a * Affine::translate(-o.to_vec2())
+}
+
+/// The transform `m` of the selection (of a copy with `copy`): of the anchors selected with Direct
+/// Selection alone, when there are some.
+fn preview(m: Affine, copy: bool) -> Action {
+    Action::Preview("object.transform".into(), json!({ "matrix": matrix_json(m), "copy": copy, "anchors": true }))
 }
 
 /// Reflection across the line through the origin at angle `theta` (radians, screen space).
@@ -88,7 +100,7 @@ pub fn reflect_matrix(o: Point, theta: f64) -> Affine {
 
 impl TransformTool {
     pub fn new(kind: TransformKind) -> Self {
-        Self { kind, origin: None, drag: None, measure: None, hover: vec![] }
+        Self { kind, origin: None, drag: None, measure: None, hover: vec![], snap: None }
     }
 
     /// The effective reference point: the custom one if it belongs to the current selection,
@@ -100,7 +112,8 @@ impl TransformTool {
         {
             return Some(*p);
         }
-        selection_box(cx).map(|b| b.center())
+        // Anchors selected with Direct Selection transform alone, about their own centre.
+        cx.selection.anchor_bounds(cx.doc, cx.preview_bounds).map(|b| b.center()).or_else(|| selection_box(cx).map(|b| b.center()))
     }
 
     /// Transform for dragging from `start` to `p` about `o`; returns the matrix and a readout.
@@ -150,6 +163,14 @@ impl TransformTool {
         }
     }
 
+    /// Ends the drag, its snapping and readouts with it.
+    fn end_drag(&mut self) -> Option<Drag> {
+        self.measure = None;
+        self.snap = None;
+        self.hover.clear();
+        self.drag.take()
+    }
+
     fn dialog(&self, o: Point) -> Action {
         Action::Dialog(self.kind.id().into(), self.kind.dialog_fields(o))
     }
@@ -185,21 +206,24 @@ impl Tool for TransformTool {
                         return out;
                     }
                     d.began = true;
+                    // The selection moves, so only the other objects are targets.
+                    self.snap = Some(PointSnap::new(cx, || Targets::collect(cx.doc, &cx.selection.objects, None)));
                     out.push(Action::Begin(self.kind.label().into()));
                 }
-                let (m, text) = self.matrix_for(d.origin, d.start, p, ev.mods.shift, d.bounds);
+                let (p, guides) = self.snap.as_ref().map_or((p, vec![]), |s| s.snap(cx, p));
+                self.hover = guides;
+                let (m, text) = self.matrix_for(d.origin, d.pick, p, ev.mods.shift, d.bounds);
                 d.last = m;
                 self.drag = Some(d);
                 self.measure = Some((p, text));
-                out.push(Action::Preview("object.transform".into(), json!({ "matrix": matrix_json(m), "copy": ev.mods.alt })));
+                out.push(preview(m, ev.mods.alt));
                 out
             }
             PointerKind::Up => {
-                let Some(d) = self.drag.take() else { return vec![] };
-                self.measure = None;
+                let Some(d) = self.end_drag() else { return vec![] };
                 if d.began {
                     // The Alt state at release decides whether the result is a copy.
-                    vec![Action::Preview("object.transform".into(), json!({ "matrix": matrix_json(d.last), "copy": ev.mods.alt })), Action::Commit]
+                    vec![preview(d.last, ev.mods.alt), Action::Commit]
                 } else {
                     // A click sets the reference point; with Alt, it opens the dialog too.
                     self.origin = Some((d.pick, cx.selection.objects.clone()));
@@ -207,14 +231,16 @@ impl Tool for TransformTool {
                 }
             }
             PointerKind::DoubleClick => {
-                self.drag = None;
+                self.end_drag();
                 match self.reference_point(cx) {
                     Some(o) => vec![self.dialog(o)],
                     None => vec![],
                 }
             }
             PointerKind::Move => {
-                self.hover = if self.drag.is_none() && !cx.selection.is_empty() { snap_pick(cx, p).1 } else { vec![] };
+                if self.drag.is_none() {
+                    self.hover = if cx.selection.is_empty() { vec![] } else { snap_pick(cx, p).1 };
+                }
                 vec![]
             }
         }
@@ -223,8 +249,7 @@ impl Tool for TransformTool {
     fn key(&mut self, cx: &ToolContext, key: ToolKey, _mods: Mods) -> Vec<Action> {
         match key {
             ToolKey::Escape if self.busy() => {
-                self.drag = None;
-                self.measure = None;
+                self.end_drag();
                 vec![Action::Cancel]
             }
             ToolKey::Enter => self.reference_point(cx).map(|o| vec![self.dialog(o)]).unwrap_or_default(),
@@ -248,7 +273,7 @@ impl Tool for TransformTool {
         {
             o.push(Overlay::Line { a: d.origin, b: *p, color: super::CYAN, dashed: true });
         }
-        if let Some((p, t)) = &self.measure {
+        if let (Some((p, t)), true) = (&self.measure, cx.transform_tools_guides) {
             o.push(Overlay::Measure { p: *p + Vec2::new(cx.tol(12.0), cx.tol(12.0)), text: t.clone() });
         }
         o
@@ -278,7 +303,7 @@ impl Tool for TransformTool {
     }
 
     fn deactivate(&mut self, _cx: &ToolContext) -> Vec<Action> {
-        if self.drag.take().is_some_and(|d| d.began) { vec![Action::Cancel] } else { vec![] }
+        if self.end_drag().is_some_and(|d| d.began) { vec![Action::Cancel] } else { vec![] }
     }
 }
 
@@ -426,6 +451,43 @@ mod tests {
         t.pointer(&c, &ev(PointerKind::Down, 102.0, 98.0).with_mods(alt()));
         let a = t.pointer(&c, &ev(PointerKind::Up, 102.0, 98.0).with_mods(alt()));
         assert!(matches!(&a[0], Action::Dialog(_, v) if v["origin"] == json!([102.0, 98.0])));
+    }
+
+    /// Smart Guides while a transform tool drags (#482): the drag starts from the selection's
+    /// anchor it grabbed and the pointer lands on another object's anchor, so the scale is exact.
+    #[test]
+    fn scale_drag_snaps_from_an_anchor_onto_another_objects_anchor() {
+        use vectorcraft_doc::{Appearance, Node};
+        let (mut d, id) = doc_with_rect();
+        let l = d.layers[0].id;
+        let other = d.alloc_id();
+        d.insert(
+            Some(l),
+            1,
+            Node::path(other, vectorcraft_geom::shapes::rectangle(Rect::new(300.0, 260.0, 340.0, 300.0)), Appearance::default_art()),
+        )
+        .unwrap();
+        let mut s = Selection::default();
+        s.add(id);
+        let p = paint();
+        let mut c = cx(&d, &s, &p);
+        let mut t = TransformTool::new(TransformKind::Scale);
+        // The reference point on the top-left corner, then a drag from near the bottom-right one
+        // to near the other rect's top-left corner.
+        t.pointer(&c, &ev(PointerKind::Down, 100.0, 100.0));
+        t.pointer(&c, &ev(PointerKind::Up, 100.0, 100.0));
+        t.pointer(&c, &ev(PointerKind::Down, 199.0, 198.0));
+        let a = t.pointer(&c, &ev(PointerKind::Drag, 302.0, 262.0));
+        let m = matrix(&a[1]);
+        assert!((m * Point::new(200.0, 200.0)).distance(Point::new(300.0, 260.0)) < 1e-9, "{m:?}");
+        assert!(t.overlays(&c).iter().any(|o| matches!(o, Overlay::Label { text, p, .. } if text == "anchor" && *p == Point::new(300.0, 260.0))));
+        t.pointer(&c, &ev(PointerKind::Up, 302.0, 262.0));
+        assert!(!t.overlays(&c).iter().any(|o| matches!(o, Overlay::Label { .. })));
+        // Smart Guides and Snap to Point off: the pointer is where it is.
+        (c.smart_guides, c.snap_to_point) = (false, false);
+        t.pointer(&c, &ev(PointerKind::Down, 200.0, 200.0));
+        let a = t.pointer(&c, &ev(PointerKind::Drag, 302.0, 262.0));
+        assert!((matrix(&a[1]) * Point::new(200.0, 200.0)).distance(Point::new(302.0, 262.0)) < 1e-9);
     }
 
     #[test]

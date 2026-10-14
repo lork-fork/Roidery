@@ -26,7 +26,7 @@ fn style(family: &str, font_style: &str) -> CharStyle {
 
 fn text(at: Point, runs: &[(&str, CharStyle)]) -> Node {
     let mut t = TextObject::point(at, "", runs[0].1.clone());
-    t.runs = runs.iter().map(|(s, st)| TextRun { text: (*s).into(), style: st.clone() }).collect();
+    t.runs = runs.iter().map(|(s, st)| TextRun { text: (*s).into(), style: st.clone(), inline: None }).collect();
     Node::new(vectorcraft_doc::NodeId(0), NodeKind::Text(Box::new(t)))
 }
 
@@ -138,7 +138,7 @@ fn tiny_has_no_filters_masks_symbols_or_style_sheets() {
     add(&mut d, a);
     let mut b = Node::path(vectorcraft_doc::NodeId(0), shapes::rectangle(Rect::new(80.0, 10.0, 130.0, 60.0)), fill(0, 0, 255));
     b.blend = BlendMode::Multiply;
-    b.mask =
+    b.extras_mut().mask =
         Some(Box::new(OpacityMask::new(Node::path(d.alloc_id(), shapes::ellipse(Rect::new(80.0, 10.0, 130.0, 60.0)), fill(255, 255, 255)), true)));
     add(&mut d, b);
     let art = Node::path(d.alloc_id(), shapes::rectangle(Rect::new(-5.0, -5.0, 5.0, 5.0)), fill(0, 128, 0));

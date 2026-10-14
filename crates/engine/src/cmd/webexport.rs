@@ -32,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save for Web",
             [],
             None,
-            "{path?, preset?: a webExport.presets name (its settings, then these keys), format?: gif (default)|jpg|png8|png24, gif/png8: reduction?: perceptual|selective (default)|adaptive|web|blackWhite|gray, colors?: 128 (2–256), dither?: none|diffusion (default)|pattern|noise, ditherAmount?: 100, webSnap?: 0 (0–100 %: colours that close to a web-safe one become it), lossy?: 0 (0–100, gif), colorTable?: {locked?: [\"#rrggbb\"…] (kept when reducing), transparent?: [\"#rrggbb\"…] (become transparent), webShift?: [\"#rrggbb\"…] (become web-safe), sort?: none|hue|luminance|popularity} (colours as the preview's colors[].source), transparency?: true (gif/png8/png24), matte?: white (default)|black|none|\"#rrggbb\" (what edges blend into; jpg and opaque png24: the background), interlaced?: false (gif/png8/png24), jpg: quality?: 60 (0–100), progressive?: false, optimized?: true, embedProfile?: false (sRGB profile), width?: px | height?: px | percent?: 100 (the image size, proportional; width wins over height, height over percent), antiAlias?: none|art (default)|type, clipToArtboard?: true (the artboard; false: the art and the slices), artboard?: 0 (0-based), convertToSrgb?: true (PNG files say they are sRGB), metadata?: none|copyright (default)|contact|all (File Info written as PNG text, a GIF or JPEG comment), slices?: all (default)|selected|none (one image per slice: images/<slice name>.<ext>), output?: images (default)|html (an HTML page placing the image or slices, <stem>.html)} → {path, files: [path…], bytes (total), width, height}; no path → {files: [{name, dataBase64}], bytes, width, height} (names such as page.html, images/page_01.gif). A single image without HTML is written at path itself",
+            "{path?, preset?: a webExport.presets name (its settings, then these keys), format?: gif (default)|jpg|png8|png24, reduction?: perceptual|selective (default)|adaptive|web|blackWhite|gray (gif/png8, as the next five), colors?: 128 (2–256), dither?: none|diffusion (default)|pattern|noise, ditherAmount?: 100, webSnap?: 0 (0–100 %: colours that close to a web-safe one become it), lossy?: 0 (0–100, gif), colorTable?: {locked?: [\"#rrggbb\"…] (kept when reducing), transparent?: [\"#rrggbb\"…] (become transparent), webShift?: [\"#rrggbb\"…] (become web-safe), sort?: none|hue|luminance|popularity} (colours as the preview's colors[].source), transparency?: true (gif/png8/png24), matte?: white (default)|black|none|\"#rrggbb\" (what edges blend into; jpg and opaque png24: the background), interlaced?: false (gif/png8/png24), quality?: 60 (jpg: 0–100), progressive?: false (jpg), optimized?: true (jpg), embedProfile?: false (jpg: sRGB profile), width?: px | height?: px | percent?: 100 (the image size, proportional; width wins over height, height over percent), antiAlias?: none|art (default)|type, clipToArtboard?: true (the artboard; false: the art and the slices), artboard?: 0 (0-based), convertToSrgb?: true (PNG files say they are sRGB), metadata?: none|copyright (default)|contact|all (File Info written as PNG text, a GIF or JPEG comment), slices?: all (default)|selected|none (one image per slice: images/<slice name>.<ext>), output?: images (default)|html (an HTML page placing the image or slices, <stem>.html)} → {path, files: [path…], bytes (total), width, height}; no path → {files: [{name, dataBase64}], bytes, width, height} (names such as page.html, images/page_01.gif). A single image without HTML is written at path itself",
             has_doc,
             export
         ),
@@ -140,6 +140,17 @@ fn ser_key<T: Keyed, S: Serializer>(v: &T, s: S) -> std::result::Result<S::Ok, S
 fn de_key<'de, T: Keyed, D: Deserializer<'de>>(d: D) -> std::result::Result<T, D::Error> {
     let s = String::deserialize(d)?;
     T::parse(&s).ok_or_else(|| D::Error::custom(format!("`{s}`: {}", T::KEYS)))
+}
+
+/// A size in pixels: a number, rounded to whole pixels (`300.0` is 300).
+fn de_pixels<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Option<u32>, D::Error> {
+    let Some(v) = Option::<f64>::deserialize(d)? else { return Ok(None) };
+    let px = v.round();
+    if !(px.is_finite() && px >= 0.0 && px <= f64::from(u32::MAX)) {
+        return Err(D::Error::custom(format!("{v} is not a size in pixels")));
+    }
+    // In range and whole: the cast is exact.
+    Ok(Some(px as u32))
 }
 
 /// The file format.
@@ -361,8 +372,10 @@ pub struct WebSettings {
     /// JPEG: embed the sRGB profile.
     pub embed_profile: bool,
     /// The image width in pixels (the height follows).
+    #[serde(deserialize_with = "de_pixels")]
     pub width: Option<u32>,
     /// The image height in pixels (the width follows).
+    #[serde(deserialize_with = "de_pixels")]
     pub height: Option<u32>,
     /// The image size in percent of the art's size in points.
     pub percent: Option<f64>,
@@ -569,7 +582,14 @@ pub fn render(doc: &Document, s: &WebSettings) -> std::result::Result<WebRender,
     let doc = doc.without_edit_modes();
     let (region, scale) = region(&doc, s)?;
     let page = (doc.setup.background == vectorcraft_doc::Background::White).then_some([255; 4]);
-    let opts = vectorcraft_render::RenderOptions { background: page, skip_templates: true, anti_alias: s.anti_alias, ..Default::default() };
+    let opts = vectorcraft_render::RenderOptions {
+        background: page,
+        skip_templates: true,
+        anti_alias: s.anti_alias,
+        precise: true,
+        supersample: true,
+        ..Default::default()
+    };
     let img = vectorcraft_render::Renderer::new().render_region_with(&doc, region, scale, &opts);
     Ok(WebRender { rgba: img.to_straight(), width: img.width, height: img.height, region, scale })
 }

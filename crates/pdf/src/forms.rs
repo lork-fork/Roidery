@@ -11,7 +11,9 @@ use std::io::Read;
 use krilla::geom::PathBuilder;
 use krilla::graphic::Graphic;
 use krilla::surface::Surface;
-use vectorcraft_doc::{Document, NodeKind};
+use std::sync::Arc;
+
+use vectorcraft_doc::{Document, Node, NodeKind};
 
 use crate::encrypt::{Lexer, Obj, StreamSpans, Tok, int, stream_spans};
 use crate::output::{deflate, text_string};
@@ -21,10 +23,34 @@ use crate::{PdfError, PdfSettings, Standard};
 /// What a marked form is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Mark {
-    /// The art of top-level layer `i` (`Document::layers`).
+    /// The art of layer `i` of [`pdf_layers`].
     Layer(usize),
     /// A fill or stroke that overprints.
     Overprint,
+}
+
+/// A layer written as a PDF layer (an optional content group).
+pub(crate) struct PdfLayer<'a> {
+    pub node: &'a Node,
+    /// Its parent layer's index in [`pdf_layers`] (none for a top-level layer).
+    pub parent: Option<usize>,
+}
+
+/// The layers written as PDF layers: the top-level layers and their sublayers, but template layers
+/// (and what they hold), each before its sublayers, in paint order (bottom first).
+pub(crate) fn pdf_layers(doc: &Document) -> Vec<PdfLayer<'_>> {
+    fn add<'a>(nodes: &'a [Arc<Node>], parent: Option<usize>, out: &mut Vec<PdfLayer<'a>>) {
+        for n in nodes {
+            if let NodeKind::Layer { template: false, children, .. } = &n.kind {
+                let i = out.len();
+                out.push(PdfLayer { node: n, parent });
+                add(children, Some(i), out);
+            }
+        }
+    }
+    let mut out = vec![];
+    add(&doc.layers, None, &mut out);
+    out
 }
 
 /// The x coordinate of a layer mark's first point (its y is the layer index).
@@ -199,7 +225,7 @@ fn mark_layers(content: &[u8], forms: &HashMap<&[u8], usize>) -> Option<(Vec<u8>
 }
 
 /// Finish the marked forms of `pdf` (as [`crate::export`] writes `doc` with `set`): with
-/// `layers`, each top-level layer (but template layers) becomes an optional content group —
+/// `layers`, each layer and sublayer (but template layers) becomes an optional content group —
 /// named as the layer, off when it is hidden, not printed (`/PrintState /OFF`) when its Print
 /// option is off, locked when it is locked — and the uses of its forms its optional content;
 /// with `overprint`, the overprinting forms get a graphics state that overprints (`/OP`, `/op`,
@@ -228,6 +254,11 @@ pub(crate) fn finish(pdf: Vec<u8>, doc: &Document, set: &PdfSettings, layers: bo
     }
     if layers {
         write_layers(&pdf, &xref, &objects, &marks, &mut patch, doc, set)?;
+        for (n, _) in marks.iter().filter(|(_, m)| matches!(m, Mark::Layer(_))) {
+            if let Some(o) = objects.get(n) {
+                unbox(&pdf, o, &mut patch)?;
+            }
+        }
     }
     let pdf = patch.apply(&pdf, &xref)?;
     // The file still is what its standard says.
@@ -235,8 +266,9 @@ pub(crate) fn finish(pdf: Vec<u8>, doc: &Document, set: &PdfSettings, layers: bo
     Ok(pdf)
 }
 
-/// The optional content groups of `doc`'s top-level layers, the uses of their forms marked as
-/// their content, and the catalog's `/OCProperties`.
+/// The optional content groups of `doc`'s layers and sublayers ([`pdf_layers`]), the uses of their
+/// forms marked as their content, and the catalog's `/OCProperties`, listing sublayers under their
+/// layers.
 fn write_layers(
     pdf: &[u8],
     xref: &Xref,
@@ -247,11 +279,16 @@ fn write_layers(
     set: &PdfSettings,
 ) -> Result<(), PdfError> {
     // One group per layer, in paint order (bottom first).
+    let layers = pdf_layers(doc);
     let mut groups: HashMap<usize, u32> = HashMap::new();
     let (mut all, mut off, mut locked) = (vec![], vec![], vec![]);
-    for (i, l) in doc.layers.iter().enumerate() {
-        let NodeKind::Layer { template: false, printable, .. } = l.kind else { continue };
-        let name = l.name.clone().unwrap_or_else(|| format!("Layer {}", i + 1));
+    // Each layer's sublayers, and the top-level layers, in paint order.
+    let mut children: HashMap<Option<usize>, Vec<usize>> = HashMap::new();
+    for (i, PdfLayer { node: l, parent }) in layers.iter().enumerate() {
+        let siblings = children.entry(*parent).or_default();
+        siblings.push(i);
+        let name = l.name.clone().unwrap_or_else(|| format!("Layer {}", siblings.len()));
+        let printable = matches!(l.kind, NodeKind::Layer { printable: true, .. });
         let on = |b: bool| if b { "ON" } else { "OFF" };
         let g = patch.add_object(
             format!("<</Type/OCG/Name{}/Usage<</View<</ViewState/{}>>/Print<</PrintState/{}>>>>>>", text_string(&name), on(l.visible), on(printable))
@@ -295,9 +332,7 @@ fn write_layers(
         add_resources(patch, res, "Properties", &entries)?;
     }
     let refs = |v: &[u32]| v.iter().map(|g| format!("{g} 0 R")).collect::<Vec<_>>().join(" ");
-    // Layers panels list the top layer first.
-    let order: Vec<u32> = all.iter().rev().copied().collect();
-    let mut config = format!("/Name(Layers)/Order[{}]", refs(&order));
+    let mut config = format!("/Name(Layers)/Order[{}]", order(&children, &groups, None));
     if !off.is_empty() {
         config.push_str(&format!("/OFF[{}]", refs(&off)));
     }
@@ -312,4 +347,36 @@ fn write_layers(
     let Some(Object { dict: Obj::Dict { start, .. }, .. }) = root else { return Err(bad("the written PDF has no catalog")) };
     patch.replace(start + 2, start + 2, format!("/OCProperties<</OCGs[{}]/D<<{config}>>>>", refs(&all)).into_bytes());
     Ok(())
+}
+
+/// A form's box as large as a page can be: the box of a layer's form is only the bounds of its
+/// art, and a reader that makes a clipping group of a form's box (as importers do) would gather a
+/// layer's art and its sublayers' in one group, which no layer can hold. A box round the whole
+/// page clips nothing.
+const UNBOXED: &[u8] = b"[-32767 -32767 32767 32767]";
+
+/// Give the layer's form `o` the [`UNBOXED`] box.
+fn unbox(pdf: &[u8], o: &Object<'_>, patch: &mut Patch) -> Result<(), PdfError> {
+    let Obj::Dict { start, end, .. } = o.dict else { return Err(bad("a layer's form has no dictionary")) };
+    let dict = pdf.get(start..end).ok_or_else(|| bad("a layer's form can't be read"))?;
+    // The writer writes the box as an array of numbers.
+    let at = dict.windows(5).position(|w| w == b"/BBox").ok_or_else(|| bad("a layer's form has no box"))? + 5;
+    let open = at + dict.get(at..).and_then(|d| d.iter().position(|&c| c == b'[')).ok_or_else(|| bad("a layer's form box isn't an array"))?;
+    let close = open + dict.get(open..).and_then(|d| d.iter().position(|&c| c == b']')).ok_or_else(|| bad("a layer's form box isn't an array"))? + 1;
+    patch.replace(start + open, start + close, UNBOXED.to_vec());
+    Ok(())
+}
+
+/// The `/Order` entries of `parent`'s sublayers (the top-level layers for none), the top one first
+/// as Layers panels list them, each followed by an array of its own sublayers when it has some.
+fn order(children: &HashMap<Option<usize>, Vec<usize>>, groups: &HashMap<usize, u32>, parent: Option<usize>) -> String {
+    let mut out = vec![];
+    for &i in children.get(&parent).into_iter().flatten().rev() {
+        let Some(g) = groups.get(&i) else { continue };
+        out.push(format!("{g} 0 R"));
+        if children.contains_key(&Some(i)) {
+            out.push(format!("[{}]", order(children, groups, Some(i))));
+        }
+    }
+    out.join(" ")
 }

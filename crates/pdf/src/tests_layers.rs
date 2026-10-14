@@ -131,6 +131,57 @@ fn pdf_layers_import_back_as_layers() {
     }
 }
 
+/// The rows of `nodes` in paint order, depth first: `depth name visible` for layers, `depth fill`
+/// for art.
+fn tree(nodes: &[std::sync::Arc<Node>], depth: usize, out: &mut Vec<String>) {
+    for n in nodes {
+        match &n.kind {
+            NodeKind::Layer { children, .. } => {
+                out.push(format!("{depth} {} {}", n.name.clone().unwrap_or_default(), n.visible));
+                tree(children, depth + 1, out);
+            }
+            _ => out.push(format!("{depth} {:?}", n.appearance.fill().and_then(|f| f.paint.color()))),
+        }
+    }
+}
+
+/// Sublayers are PDF layers listed under their layer's, hidden ones off with their art, and they
+/// import back as sublayers (#372: other apps read a `.ai` file's PDF part).
+#[test]
+fn sublayers_are_nested_pdf_layers_and_import_back() {
+    let mut d = Document::new(200.0, 100.0);
+    d.layers.clear();
+    let layer = |d: &mut Document, name: &str, visible: bool, children: Vec<Node>| {
+        let mut l = Node::layer(d.alloc_id(), name, LayerColor::Preset(0));
+        l.visible = visible;
+        if let NodeKind::Layer { children: c, .. } = &mut l.kind {
+            c.extend(children.into_iter().map(std::sync::Arc::new));
+        }
+        l
+    };
+    let deep = vec![rect(&mut d, 90.0, GREEN)];
+    let deep = layer(&mut d, "Deep", true, deep);
+    let sub = vec![rect(&mut d, 50.0, BLUE), deep];
+    let sub = layer(&mut d, "Sub", false, sub);
+    let main = vec![rect(&mut d, 10.0, RED), sub];
+    let main = layer(&mut d, "Main", true, main);
+    d.layers.push(main.into());
+    let r = export(&d, json!({"createLayers": true, "compression": {"compressText": false}}));
+    oc_properties(&r.bytes, None, |props, xref| {
+        let props = props.expect("/OCProperties");
+        assert_eq!(names(xref, props.get(b"OCGs")), ["Main", "Sub", "Deep"]);
+        assert_eq!(names(xref, props.get::<Dict<'_>>(b"D").unwrap().get(b"OFF")), ["Sub"]);
+    });
+    let text = String::from_utf8_lossy(&r.bytes);
+    let order = text.split("/Order").nth(1).and_then(|o| o.split("]/").next()).unwrap().to_string();
+    assert_eq!(order.matches('[').count(), 3, "each layer's sublayers in an array after it: {order}");
+    let mut got = vec![];
+    tree(&import(&r.bytes).unwrap().layers, 0, &mut got);
+    // Paint order, as it was.
+    let fill = |depth, c: Color| format!("{depth} {:?}", Some(c));
+    assert_eq!(got, ["0 Main true".to_string(), fill(1, RED), "1 Sub false".into(), fill(2, BLUE), "2 Deep true".into(), fill(3, GREEN)]);
+}
+
 #[test]
 fn identical_layers_stay_apart() {
     let mut d = Document::new(200.0, 100.0);
@@ -280,9 +331,11 @@ fn pdf_a_overprint_mode_is_0() {
 #[test]
 fn overprinting_art_imports_as_it_was_drawn() {
     let d = overprinting(RED);
-    let plain = leaves(&import(&export(&d, json!({"advanced": {"overprint": "discard"}})).bytes).unwrap());
+    // What is drawn (a form's bounds may come back as an unpainted clipping path).
+    let painted = |bytes: &[u8]| leaves(&import(bytes).unwrap()).into_iter().filter(|l| l.2.is_some()).collect::<Vec<_>>();
+    let plain = painted(&export(&d, json!({"advanced": {"overprint": "discard"}})).bytes);
     for v in [json!({}), json!({"createLayers": true})] {
-        assert_eq!(leaves(&import(&export(&d, v.clone()).bytes).unwrap()), plain, "{v}: the marks draw nothing");
+        assert_eq!(painted(&export(&d, v.clone()).bytes), plain, "{v}: the marks draw nothing");
     }
 }
 

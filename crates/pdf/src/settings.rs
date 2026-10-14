@@ -226,7 +226,7 @@ pub struct PdfSettings {
     pub fast_web_view: bool,
     /// The app opens the written file (frontends only; the writer ignores it).
     pub view_after_saving: bool,
-    /// Write top-level layers as PDF layers (optional content).
+    /// Write layers and sublayers as PDF layers (optional content).
     pub create_layers: bool,
     /// Keep the layers whose Print option is off (they are left out otherwise, unless
     /// `create_layers` is on).
@@ -373,7 +373,7 @@ pub struct AdvancedSettings {
 
 impl Default for AdvancedSettings {
     fn default() -> Self {
-        Self { font_subset_percent: 100.0, outline_text: true, overprint: Overprint::Preserve }
+        Self { font_subset_percent: 100.0, outline_text: false, overprint: Overprint::Preserve }
     }
 }
 
@@ -449,7 +449,7 @@ impl PdfSettings {
         within("advanced.fontSubsetPercent", self.advanced.font_subset_percent, 0.0, 100.0, "%")
     }
 
-    /// Top-level layers are written as PDF layers: asked for, at a version that has them.
+    /// Layers and sublayers are written as PDF layers: asked for, at a version that has them.
     pub fn writes_layers(&self) -> bool {
         self.create_layers && self.compatibility.has_layers()
     }

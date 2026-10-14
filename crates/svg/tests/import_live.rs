@@ -101,6 +101,16 @@ fn two_uses_give_one_symbol_and_two_instances() {
 }
 
 #[test]
+fn an_instance_is_measured_by_its_symbols_art() {
+    let (d, _) = open(&format!(r##"{SYMBOL}<use href="#Star" x="20" y="30"/>"##));
+    let id = art(&d)[0].id;
+    // The art, (0, 0) to (20, 20), drawn from (20, 30): not the 20 × 20 square around the origin,
+    // which the same transform places from (10, 20) to (30, 40).
+    assert_eq!(d.bounds_of(&[id], false), Some(Rect::new(20.0, 30.0, 40.0, 50.0)));
+    assert_eq!(d.bounds_of(&[id], true), Some(Rect::new(20.0, 30.0, 40.0, 50.0)));
+}
+
+#[test]
 fn uses_the_symbol_cant_stand_for_stay_art() {
     // Inherited paint: the second use shows the symbol in another colour. Scaled: the canvas keeps
     // stroke weights as they are.
@@ -123,6 +133,35 @@ fn symbols_round_trip_through_export() {
     assert_eq!(back.symbols[0].name, "Gold Star");
     assert_eq!(art(&back).iter().filter(|n| matches!(n.kind, NodeKind::SymbolInstance { .. })).count(), 2);
     assert_similar(&render_artboard(&d), &render_artboard(&back), 8.0, 0.001);
+}
+
+/// `name="…"` of the first element `tag` in `svg`, as a number.
+fn number_attr(svg: &str, tag: &str, name: &str) -> f64 {
+    let at = svg.find(&format!("<{tag} ")).unwrap_or_else(|| panic!("no <{tag}> in {svg}"));
+    let rest = &svg[at..];
+    let from = rest.find(&format!(" {name}=\"")).unwrap() + name.len() + 3;
+    rest[from..from + rest[from..].find('"').unwrap()].parse().unwrap()
+}
+
+#[test]
+fn an_instances_shadow_filter_and_the_art_export_cover_its_symbols_art() {
+    let (mut d, _) = open(&format!(r##"{SYMBOL}<use href="#Star" x="20" y="30"/>"##));
+    let id = art(&d)[0].id;
+    let shadow = Effect { id: "stylize.dropShadow".into(), params: json!({"x": 0, "y": 0, "blur": 0}), visible: true };
+    d.node_mut(id).unwrap().appearance.effects.push(shadow);
+    // The filter region holds the art, (20, 30) to (40, 50).
+    let svg = export(&d, &ExportOptions::default());
+    let (x, y) = (number_attr(&svg, "filter", "x"), number_attr(&svg, "filter", "y"));
+    let (w, h) = (number_attr(&svg, "filter", "width"), number_attr(&svg, "filter", "height"));
+    assert!(x <= 20.0 && y <= 30.0 && x + w >= 40.0 && y + h >= 50.0, "({x}, {y}) {w} × {h}");
+    // Exported without an artboard, the file is the art's size and the instance draws the art from
+    // the file's top left corner.
+    d.node_mut(id).unwrap().appearance.effects.clear();
+    let svg = export(&d, &ExportOptions { artboard: None, ..ExportOptions::default() });
+    assert_eq!((number_attr(&svg, "svg", "width"), number_attr(&svg, "svg", "height")), (20.0, 20.0), "{svg}");
+    let back = import(&svg).unwrap();
+    let NodeKind::SymbolInstance { xf, .. } = &art(&back)[0].kind else { panic!("an instance: {svg}") };
+    assert!((*xf * Point::ORIGIN).distance(Point::ORIGIN) < 1e-9, "{svg}");
 }
 
 #[test]

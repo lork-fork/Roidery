@@ -16,6 +16,9 @@ pub const DOC_URI: &str = "vectorcraft://document";
 /// The whole document model as JSON.
 pub const DOC_JSON_URI: &str = "vectorcraft://document/json";
 
+/// The live command catalog, including enabled state.
+pub const COMMANDS_URI: &str = "vectorcraft://commands";
+
 /// Why a resource could not be read. The distinction matters: the server turns it into `-32002`
 /// (no such resource) or `-32602` (bad URI), and guessing from the message text would not hold.
 #[derive(Debug)]
@@ -79,6 +82,7 @@ pub fn list() -> Value {
     json!({"resources": [
         {"uri": DOC_URI, "name": "document", "title": "Active document (summary)", "description": "Layer tree, artboards, selection and history of the active document (document.inspect)", "mimeType": "application/json"},
         {"uri": DOC_JSON_URI, "name": "document-json", "title": "Active document (full model)", "description": "The complete document model as JSON (document.json)", "mimeType": "application/json"},
+        {"uri": COMMANDS_URI, "name": "commands", "title": "Command catalog", "description": "Command ids, labels, parameter descriptions and current enabled state", "mimeType": "application/json"},
     ]})
 }
 
@@ -104,6 +108,9 @@ pub fn template_source(uri: &str) -> (&str, Option<Live>) {
 
 /// `resources/read`: the document behind a resource URI.
 pub fn read(b: &mut dyn Backend, uri: &str) -> Result<Value, ReadError> {
+    if uri == COMMANDS_URI {
+        return b.call("engine.commands", json!({})).map_err(ReadError::Backend);
+    }
     if uri == DOC_URI {
         return b.call("document.inspect", json!({})).map_err(ReadError::Backend);
     }
@@ -224,7 +231,7 @@ mod tests {
     #[test]
     fn lists_are_well_formed() {
         let l = list();
-        assert_eq!(l["resources"].as_array().map(Vec::len), Some(2));
+        assert_eq!(l["resources"].as_array().map(Vec::len), Some(3));
         let t = templates();
         let items = t["resourceTemplates"].as_array().expect("templates");
         assert_eq!(items.len(), TEMPLATES.len());

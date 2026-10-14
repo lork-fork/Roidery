@@ -1,13 +1,14 @@
 //! The document walk: each visible object becomes DXF entities on its layer's DXF layer, in paint
-//! order. Fills are solid hatches (outlines in R12), strokes polylines and cubic splines with a
-//! lineweight and dashes, or filled outlines where the look needs them.
+//! order. Fills are their outlines then solid hatches (the outlines alone in R12), strokes
+//! polylines and cubic splines with a lineweight and dashes, or filled outlines where the look
+//! needs them.
 
 use std::collections::HashMap;
 use std::io::Cursor;
 
 use kurbo::PathEl;
 use vectorcraft_color::Paint;
-use vectorcraft_doc::{AppearanceItem, Dash, Document, ImageObject, Node, NodeKind, StrokeLayer, TextKind, TextObject, Unit};
+use vectorcraft_doc::{AppearanceItem, Dash, Document, ImageObject, Node, NodeKind, StrokeLayer, SymbolBoxes, TextKind, TextObject, Unit};
 use vectorcraft_effects::stroke;
 use vectorcraft_geom::{Affine, BezPath, FillRule, PathData, Point, Rect};
 
@@ -157,6 +158,9 @@ struct LayerFlags {
 
 pub(crate) struct Scene<'a> {
     doc: &'a Document,
+    /// The art boxes of `doc`'s symbols, which the walk measures symbol instances by when it
+    /// crops to the region ([`SymbolBoxes::quick`]).
+    symbols: SymbolBoxes<'a>,
     o: &'a DxfOptions,
     /// Document space → drawing units (y up, origin at the region's bottom-left).
     to_dxf: Affine,
@@ -191,6 +195,7 @@ impl<'a> Scene<'a> {
         let r = o.region;
         Self {
             doc,
+            symbols: doc.symbol_boxes().quick(),
             o,
             to_dxf: Affine::new([k, 0.0, 0.0, -k, -r.x0 * k, r.y1 * k]),
             k,
@@ -270,7 +275,7 @@ impl<'a> Scene<'a> {
             return;
         }
         if self.o.crop && !layer {
-            match n.visual_bounds() {
+            match n.visual_bounds_with(&self.symbols) {
                 Some(b) if !overlaps(b, self.o.region) => return,
                 None if !n.is_container() => return,
                 _ => {}
@@ -315,7 +320,7 @@ impl<'a> Scene<'a> {
                 }
             }
             // Live blends, envelopes, meshes and repeats are written as their evaluated art.
-            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) => {
+            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) | NodeKind::PlacedDocument(_) => {
                 let g = vectorcraft_effects::expand_live_deep(Some(self.doc), n);
                 for c in g.children().into_iter().flatten() {
                     self.node(c, false);
@@ -348,7 +353,7 @@ impl<'a> Scene<'a> {
         if n.blend != vectorcraft_color::BlendMode::Normal {
             self.warn("blending modes are left out");
         }
-        if n.mask.as_ref().is_some_and(|m| !m.disabled) {
+        if n.extras().mask.as_ref().is_some_and(|m| !m.disabled) {
             self.warn("opacity masks are left out");
         }
         let raster = |fx: &[vectorcraft_doc::Effect]| fx.iter().any(|e| e.visible && vectorcraft_effects::is_raster(&e.id));
@@ -501,11 +506,12 @@ impl<'a> Scene<'a> {
         let doc = self.doc;
         let brushes = self.brushes.get_or_insert_with(|| vectorcraft_brush::library(doc));
         let b = st.brush.as_deref().and_then(|name| brushes.iter().find(|b| b.name == name))?;
-        Some(vectorcraft_brush::stroke_pieces(b, bp, st))
+        Some(vectorcraft_brush::stroke_pieces(doc, b, bp, st))
     }
 
-    /// A filled area as a solid hatch (R12: its outlines). `clean`: the path has no overlaps, so
-    /// the hatch's even-odd rule reads it as it is.
+    /// A filled area as its outlines followed by a solid hatch (R12: the outlines alone). Laser
+    /// and cutter software reads the outlines and skips hatches. `clean`: the path has no
+    /// overlaps, so the hatch's even-odd rule reads it as it is.
     fn area(&mut self, bp: &BezPath, rule: FillRule, style: &EntityStyle, clean: bool) {
         if !self.o.version.handles() {
             self.warn(NO_FILLS);
@@ -517,10 +523,12 @@ impl<'a> Scene<'a> {
             .then(|| vectorcraft_pathops::try_normalize(&PathData::from_bezpath(bp), rule).ok())
             .flatten()
             .map(|p| p.to_bezpath());
-        let loops: Vec<Vec<Point>> = polygons(normalized.as_ref().unwrap_or(bp)).into_iter().filter(|p| p.len() >= 3).collect();
+        let outline = normalized.as_ref().unwrap_or(bp);
+        let loops: Vec<Vec<Point>> = polygons(outline).into_iter().filter(|p| p.len() >= 3).collect();
         if loops.is_empty() {
             return;
         }
+        self.lines(outline, style, 0.0);
         let h = self.handle();
         let layer = self.layer.clone();
         self.e.entity("HATCH", h, fixed::MODEL_RECORD, &layer, style, "AcDbHatch");
@@ -648,8 +656,10 @@ impl<'a> Scene<'a> {
         let h = self.handle();
         self.e.entity("SPLINE", h, fixed::MODEL_RECORD, &layer, style, "AcDbSpline");
         self.e.normal();
-        // Planar.
-        self.e.int(70, 8);
+        // Planar (bit 3) and, if the subpath is closed, also closed (bit 0). A geometrically
+        // closed cut needs the closed flag set so CAM/CAM tools (e.g. VCarve) treat it as a
+        // pocket/profile rather than asking the operator to join endpoints. (#1299)
+        self.e.int(70, if sub.closed { 8 | 1 } else { 8 });
         self.e.int(71, 3);
         self.e.int(72, knots.len() as i64);
         self.e.int(73, ctrl.len() as i64);

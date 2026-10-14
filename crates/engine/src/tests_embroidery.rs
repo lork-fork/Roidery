@@ -59,7 +59,7 @@ fn set_changes_type_and_settings_in_one_undo_step() {
     // A satin on a shape with no stroke sews in its fill colour.
     assert_eq!(o["thread"], json!([255, 255, 255]));
     run(&mut s, "edit.undo", json!({}));
-    assert!(s.doc().unwrap().doc.node(a).unwrap().attrs.is_none());
+    assert!(s.doc().unwrap().doc.node(a).unwrap().extras().attrs.is_none());
     run(&mut s, "edit.redo", json!({}));
     run(&mut s, "stitch.set", json!({"reset": true}));
     assert_eq!(run(&mut s, "stitch.info", json!({}))["objects"][0]["auto"], true);
@@ -73,7 +73,7 @@ fn bad_input_is_an_error_and_changes_nothing() {
     assert!(s.execute("stitch.set", &json!({"settings": {"fill": {"rowSpacing": "wide"}}})).is_err());
     assert!(s.execute("stitch.set", &json!({"settings": 3})).is_err());
     assert!(s.execute("stitch.set", &json!({})).is_err());
-    assert!(s.doc().unwrap().doc.node(a).unwrap().attrs.is_none());
+    assert!(s.doc().unwrap().doc.node(a).unwrap().extras().attrs.is_none());
     assert!(s.execute("stitch.export", &json!({"format": "vp9"})).is_err());
     // Absurd values are clamped when stitching, never hang or crash.
     run(&mut s, "stitch.set", json!({"settings": {"fill": {"rowSpacing": 0, "stitchLength": -5, "angle": 1e300}}}));
@@ -310,7 +310,8 @@ fn lettering_is_satin_text_that_stays_editable() {
     let b = bounds(&mut s);
     assert!((b.y0 - (100.0 - 12.0 / MM_PER_PT_TEST)).abs() < 1.0, "cap height above the baseline: {b:?}");
     // Moved, then retyped and resized: it stays where it was moved to.
-    run(&mut s, "object.move", json!({"dx": 30, "dy": 0, "ids": [id]}));
+    run(&mut s, "select.set", json!({"ids": [id]}));
+    run(&mut s, "object.move", json!({"dx": 30, "dy": 0}));
     let moved = bounds(&mut s);
     let r = run(&mut s, "stitch.setLettering", json!({"text": "Hello", "height": 20}));
     assert_eq!((r["changed"].clone(), r["missing"].clone()), (json!(1), json!("")));
@@ -704,7 +705,7 @@ fn a_fill_and_its_stroke_sew_as_two_parts_fill_first() {
     let o = &run(&mut s, "stitch.info", json!({}))["objects"][0];
     assert_eq!((o["fill"]["sews"].clone(), o["stroke"]["sews"].clone()), (json!(false), json!(true)));
     run(&mut s, "stitch.set", json!({"reset": true}));
-    assert!(s.doc().unwrap().doc.node(id).unwrap().attrs.as_ref().and_then(|a| a.stitch.as_ref()).is_none());
+    assert!(s.doc().unwrap().doc.node(id).unwrap().extras().attrs.as_ref().and_then(|a| a.stitch.as_ref()).is_none());
 }
 
 #[test]
@@ -736,12 +737,12 @@ fn single_part_settings_read_and_write_as_before() {
     let mut s = session();
     let id = rect(&mut s, 10.0);
     run(&mut s, "stitch.set", json!({"type": "contour"}));
-    let stored = s.doc().unwrap().doc.node(id).unwrap().attrs.as_ref().unwrap().stitch.clone().unwrap();
+    let stored = s.doc().unwrap().doc.node(id).unwrap().extras().attrs.as_ref().unwrap().stitch.clone().unwrap();
     assert_eq!(stored["type"], "contour");
     // Two parts are stored by part.
     run(&mut s, "paint.setStroke", json!({"color": "#000000"}));
     run(&mut s, "stitch.set", json!({"part": "stroke", "type": "run"}));
-    let stored = s.doc().unwrap().doc.node(id).unwrap().attrs.as_ref().unwrap().stitch.clone().unwrap();
+    let stored = s.doc().unwrap().doc.node(id).unwrap().extras().attrs.as_ref().unwrap().stitch.clone().unwrap();
     assert_eq!((stored["fill"]["type"].clone(), stored["stroke"]["type"].clone()), (json!("contour"), json!("run")));
     // A whole-object type (Satin Blocks) has no fill part.
     run(&mut s, "stitch.set", json!({"type": "satinBlocks"}));
@@ -903,4 +904,58 @@ fn center_in_hoop_moves_everything_to_the_middle_of_the_artboard() {
     s.execute("edit.undo", &json!({})).unwrap();
     let b = s.doc().unwrap().doc.bounds_of(&[a], true).unwrap();
     assert!((b.center().x - c.x).abs() > 1.0);
+}
+
+/// A 60 × 60 image on white: a red square, a blue one and a green bar, selected.
+fn two_squares_on_white(s: &mut Session) -> NodeId {
+    use vectorcraft_doc::{ImageBlob, ImageObject, Node, NodeKind};
+    use vectorcraft_geom::Affine;
+    let r = vectorcraft_trace::Raster::from_fn(60, 60, |x, y| match (x, y) {
+        (5..25, 5..25) => [220, 20, 30, 255],
+        (35..55, 35..55) => [20, 40, 210, 255],
+        (35..55, 5..20) => [20, 160, 60, 255],
+        _ => [255, 255, 255, 255],
+    });
+    let png = r.encode_png();
+    s.edit("img", |d, sel| {
+        d.images.insert("img1".into(), ImageBlob::new("image/png", png));
+        let id = d.alloc_id();
+        let l = d.default_layer();
+        let image = ImageObject { key: "img1".into(), width: 60, height: 60, xf: Affine::IDENTITY, link: None, placement: Default::default() };
+        d.insert(l, 0, Node::new(id, NodeKind::Image(Box::new(image))))?;
+        sel.set([id]);
+        Ok(id)
+    })
+    .unwrap()
+}
+
+#[test]
+fn image_trace_sews_the_colours_as_tatami_and_leaves_the_white_out() {
+    let mut s = session();
+    let image = two_squares_on_white(&mut s);
+    let r = run(&mut s, "stitch.traceImage", json!({}));
+    assert_eq!(r["preset"], "3 Color", "the default: {r}");
+    // Three threads, though VectorCraft's 3 Colors counts the white it leaves out.
+    assert_eq!((r["paths"].clone(), r["colors"].clone()), (json!(3), json!(3)), "three shapes, no white: {r}");
+    let i = run(&mut s, "stitch.info", json!({}));
+    let types: Vec<&str> = i["objects"].as_array().unwrap().iter().map(|o| o["type"].as_str().unwrap()).collect();
+    assert_eq!(types, ["tatami", "tatami", "tatami"], "{i}");
+    assert!(i["objects"].as_array().unwrap().iter().all(|o| o["stitches"].as_u64().unwrap() > 20), "{i}");
+    // One undo step takes it all back to the image.
+    run(&mut s, "edit.undo", json!({}));
+    let d = &s.doc().unwrap().doc;
+    assert!(d.node(NodeId(r["id"].as_u64().unwrap())).is_none());
+    assert!(d.node(image).is_some_and(|n| matches!(n.kind, vectorcraft_doc::NodeKind::Image(_))));
+
+    // The other presets, by Roidery's names (any case); VectorCraft's names aren't offered.
+    for (name, paths) in [("2 color", 3), ("6 Color", 3), ("Detailed", 3)] {
+        let mut s = session();
+        two_squares_on_white(&mut s);
+        let r = run(&mut s, "stitch.traceImage", json!({"preset": name}));
+        assert_eq!(r["paths"], paths, "{name}: {r}");
+    }
+    let mut s = session();
+    two_squares_on_white(&mut s);
+    let e = s.execute("stitch.traceImage", &json!({"preset": "16 Colors"})).unwrap_err().to_string();
+    assert!(e.contains("2 Color, 3 Color, 6 Color or Detailed"), "{e}");
 }

@@ -174,3 +174,30 @@ pub fn vertical_font(vorg: bool) -> Option<Vec<u8>> {
     }
     Some(builder.build())
 }
+
+/// The family of [`twin_font`]: two versions of one family and style.
+pub const TWIN_FAMILY: &str = "Twintest Sans";
+
+/// The version strings of [`twin_font`]'s older and newer face.
+pub const TWIN_VERSIONS: [&str; 2] = ["Version 1.000", "Version 2.000"];
+
+/// A face of family [`TWIN_FAMILY`], style Regular, in version [`TWIN_VERSIONS`]`[0]` (the bundled
+/// Source Sans 3 Regular) or, `newer`, `[1]` (the bundled Inter Regular): one name, two sets of
+/// glyphs, as a font library that keeps an old version beside a new one has. `None` when it can't
+/// be built.
+pub fn twin_font(newer: bool) -> Option<Vec<u8>> {
+    const OLDER: &[u8] = include_bytes!("../../../assets/fonts/SourceSans3-Regular.ttf");
+    const NEWER: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+    let font = skrifa::FontRef::new(if newer { NEWER } else { OLDER }).ok()?;
+    let version = TWIN_VERSIONS[usize::from(newer)];
+    let name = name_table(&[(1, TWIN_FAMILY), (2, "Regular"), (4, "Twintest Sans Regular"), (5, version), (6, "TwintestSans-Regular")])?;
+    let mut builder = FontBuilder::new();
+    builder.add_raw(Tag::new(b"name"), name);
+    for r in font.table_directory.table_records() {
+        let tag = Tag::new(&r.tag().to_be_bytes());
+        if !builder.contains(tag) {
+            builder.add_raw(tag, font.table_data(r.tag())?.as_bytes());
+        }
+    }
+    Some(builder.build())
+}

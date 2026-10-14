@@ -33,9 +33,10 @@ fn color_field(c: LayerColor) -> String {
 }
 
 /// The fields for `n` (a layer or any other row).
-fn fields_of(n: &Node) -> serde_json::Map<String, Value> {
+/// `xml_id`: Preferences › Units › Identify Objects By › XML ID.
+fn fields_of(n: &Node, xml_id: bool) -> serde_json::Map<String, Value> {
     let mut f = serde_json::Map::new();
-    f.insert("name".into(), json!(n.display_name()));
+    f.insert("name".into(), json!(n.identify_label(xml_id)));
     f.insert("visible".into(), json!(n.visible));
     f.insert("locked".into(), json!(n.locked));
     f.insert("layer".into(), json!(n.is_layer()));
@@ -54,16 +55,24 @@ fn fields_of(n: &Node) -> serde_json::Map<String, Value> {
 /// the current layer), filled in from the first.
 pub fn open(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
     let st = app.session.active().ok_or("no document open")?;
-    let ids: Vec<NodeId> = match (p.get("ids").and_then(Value::as_array), p.get("id").and_then(Value::as_u64)) {
-        (Some(a), _) => a.iter().filter_map(Value::as_u64).map(NodeId).collect(),
-        (None, Some(id)) => vec![NodeId(id)],
+    // Rows given are used as given: a malformed or unknown id fails rather than being skipped or
+    // the dialog opening on the highlighted rows instead.
+    let row = |v: &Value| -> Result<NodeId, String> {
+        let id = NodeId(v.as_u64().ok_or_else(|| format!("object ids are non-negative integers, not {v}"))?);
+        st.doc.node(id).map(|_| id).ok_or_else(|| "no such layer or object".to_string())
+    };
+    let ids: Vec<NodeId> = match (p.get("ids"), p.get("id")) {
+        (Some(Value::Array(a)), _) => a.iter().map(row).collect::<Result<_, _>>()?,
+        (Some(v), _) => return Err(format!("`ids` must be an array of object ids, not {v}")),
+        (None, Some(v)) => vec![row(v)?],
         (None, None) => {
             let rows = st.highlighted_rows();
             if rows.is_empty() { st.current_layer().into_iter().collect() } else { rows }
         }
     };
     let first = ids.first().and_then(|id| st.doc.node(*id)).ok_or("no such layer or object")?;
-    let mut f = fields_of(first);
+    let xml_id = app.session.prefs.identify_objects_by == "xmlId";
+    let mut f = fields_of(first, xml_id);
     f.insert("ids".into(), json!(ids.iter().map(|i| i.0).collect::<Vec<_>>()));
     f.insert("mode".into(), json!("edit"));
     app.ui.dialog = Some(Dialog { kind: KIND.into(), fields: f });
@@ -86,8 +95,10 @@ pub fn open_new(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
     }
     let sublayer = p.get("sublayer").and_then(Value::as_bool).unwrap_or(false);
     let color = LayerColor::Preset((layers.len() % LAYER_COLORS.len()) as u8);
+    let name = format!("Layer {i}");
+    let name = if app.session.prefs.identify_objects_by == "xmlId" { vectorcraft_doc::xml_id::from_object_name(&name) } else { name };
     let fields = json!({
-        "mode": if sublayer { "newSublayer" } else { "new" }, "layer": true, "name": format!("Layer {i}"), "color": color_field(color),
+        "mode": if sublayer { "newSublayer" } else { "new" }, "layer": true, "name": name, "color": color_field(color),
         "template": false, "locked": false, "visible": true, "printable": true, "preview": true, "dimImages": false, "dimPercent": 50,
     });
     app.ui.dialog = Some(Dialog::new(KIND, fields));
@@ -178,9 +189,10 @@ fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
                 toggle(ui, d, "preview", tl!("Preview"), true);
                 ui.horizontal(|ui| {
                     toggle(ui, d, "dimImages", tl!("Dim Images to:"), true);
-                    let mut v = d.f64("dimPercent", 50.0);
-                    if ui.add_enabled(d.bool("dimImages"), egui::DragValue::new(&mut v).range(0.0..=100.0).suffix("%")).changed() {
-                        d.fields.insert("dimPercent".into(), json!(v.round()));
+                    let v = d.f64("dimPercent", 50.0);
+                    let dim = d.bool("dimImages");
+                    if let Some(v) = ui.add_enabled_ui(dim, |ui| crate::widgets::range_field(ui, "dimPercent", v, 0.0..=100.0, "%", 0, 52.0)).inner {
+                        d.fields.insert("dimPercent".into(), json!(v));
                     }
                 });
             });
@@ -249,6 +261,21 @@ mod tests {
 
     fn set(app: &mut VectorcraftApp, k: &str, v: Value) {
         app.ui.dialog.as_mut().unwrap().fields.insert(k.into(), v);
+    }
+
+    /// Explicit object ids must not silently disappear or fall back to the highlighted row.
+    #[test]
+    fn invalid_layer_options_targets_do_not_open_a_partial_dialog() {
+        let mut app = app();
+        let id = app.run("shape.rectangle", json!({"x": 0, "y": 0, "width": 20, "height": 20})).unwrap()["id"].as_u64().unwrap();
+        for params in
+            [json!({"ids": [id, "invalid"]}), json!({"ids": [id, 999999]}), json!({"ids": "invalid"}), json!({"id": "invalid"}), json!({"id": null})]
+        {
+            assert!(app.run("ui.layerOptions", params.clone()).is_err(), "accepted {params}");
+            assert!(app.ui.dialog.is_none(), "opened partial options for {params}");
+        }
+        app.run("ui.layerOptions", json!({"ids": [id]})).unwrap();
+        assert_eq!(app.ui.dialog.as_ref().unwrap().fields["ids"], json!([id]));
     }
 
     #[test]

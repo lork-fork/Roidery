@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Print Tiling Pages",
             [],
             None,
-            "{settings?: {…print.setup settings} (over the document's)} the pages as View → Show Print Tiling draws them, from print.preview's layout → {tileOrigin, pages: [{artboard (0-based; null with artboards ignored), number (1-based tile across then down, or page), printed (tiles outside tileRange don't), page: [x0, y0, x1, y1] (the paper's edge), imageable: [x0, y0, x1, y1] (inside the unprintable margin)}] (document space; every tile when tiling, else each page once)}",
+            "{settings?: {…settings of print.setup} (over the document's)} the pages as View → Show Print Tiling draws them, from print.preview's layout → {tileOrigin, pages: [{artboard (0-based; null with artboards ignored), number (1-based tile across then down, or page), printed (tiles outside tileRange don't), page: [x0, y0, x1, y1] (the paper's edge), imageable: [x0, y0, x1, y1] (inside the unprintable margin)}] (document space; every tile when tiling, else each page once)}",
             has_doc,
             tiling
         ),

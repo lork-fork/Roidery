@@ -27,6 +27,11 @@ pub struct CharStyle {
     pub font_family: String,
     #[serde(default = "regular")]
     pub font_style: String,
+    /// Which installed version of the font (its version string) when several versions of the
+    /// family and style are installed and the text was set in one the family and style alone
+    /// wouldn't pick (an imported file's type matched to it); None = the one they pick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_version: Option<String>,
     /// Size in points.
     pub size: f64,
     /// Leading in points; None = Auto (120% of size).
@@ -90,11 +95,58 @@ pub struct CharStyle {
     /// their line line up with it.
     #[serde(default, rename = "charAlign", skip_serializing_if = "crate::skip::is_default")]
     pub char_align: CharAlign,
+    /// Proportional Metrics (Character panel menu, East Asian options): full-width glyphs take the
+    /// font's own proportional widths, OpenType `palt` (#966); in vertical type upright glyphs take
+    /// its proportional heights, `vpal`.
+    #[serde(default, rename = "proportionalMetrics", skip_serializing_if = "crate::skip::is_default")]
+    pub proportional_metrics: bool,
+    /// Digits (Character panel menu, Middle Eastern options): the numeral system the digits of
+    /// these characters are drawn in, whatever digits were typed.
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    pub digits: Digits,
+}
+
+/// The numeral system digits are drawn in ([`CharStyle::digits`]): as typed, or every digit of
+/// the Western, Arabic-Indic and Eastern Arabic-Indic sets drawn in one of them. The text keeps
+/// the digits that were typed; only the glyphs change (like All Caps).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Digits {
+    /// Each digit as typed.
+    #[default]
+    Default,
+    /// Western digits 0–9 (the digits Arabic typography calls Arabic).
+    Arabic,
+    /// Arabic-Indic digits ٠–٩ (U+0660–U+0669), used in Arabic.
+    Hindi,
+    /// Eastern Arabic-Indic digits ۰–۹ (U+06F0–U+06F9), used in Persian and Urdu.
+    Farsi,
+}
+
+impl Digits {
+    /// The digit `c` is drawn as in this numeral system: the same digit in the chosen set, or `c`
+    /// itself when `c` isn't a digit of the Western, Arabic-Indic or Eastern Arabic-Indic set.
+    pub fn map(self, c: char) -> char {
+        let value = match c {
+            '0'..='9' => c as u32 - '0' as u32,
+            '\u{660}'..='\u{669}' => c as u32 - 0x660,
+            '\u{6F0}'..='\u{6F9}' => c as u32 - 0x6F0,
+            _ => return c,
+        };
+        let base = match self {
+            Digits::Default => return c,
+            Digits::Arabic => '0' as u32,
+            Digits::Hindi => 0x660,
+            Digits::Farsi => 0x6F0,
+        };
+        char::from_u32(base + value).unwrap_or(c)
+    }
 }
 
 /// Where a character smaller than the largest on its line lines up with it: on the Roman
-/// baseline, or at the top (right, in vertical type), centre or bottom (left) of the ideographic
-/// em boxes.
+/// baseline, at the top (right, in vertical type), centre or bottom (left) of the ideographic
+/// em boxes, or at the top (right) or bottom (left) of the ideographic character faces (ICF, the
+/// average box of the ideographs inside the em box: OpenType's `icft` and `icfb` baselines).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CharAlign {
@@ -103,6 +155,8 @@ pub enum CharAlign {
     EmBoxTop,
     EmBoxCenter,
     EmBoxBottom,
+    IcfTop,
+    IcfBottom,
 }
 
 /// Superscript or subscript proportions in percent of the font size (Document Setup → Type).
@@ -172,6 +226,7 @@ impl Default for CharStyle {
         Self {
             font_family: "Source Sans 3".into(),
             font_style: "Regular".into(),
+            font_version: None,
             size: 12.0,
             leading: None,
             tracking: 0.0,
@@ -196,7 +251,9 @@ impl Default for CharStyle {
             stroke_dash: None,
             position: CharPosition::Normal,
             char_align: CharAlign::RomanBaseline,
+            proportional_metrics: false,
             small_caps: None,
+            digits: Digits::Default,
         }
     }
 }
@@ -285,6 +342,24 @@ fn default_align_on() -> char {
 /// Distance between default tab stops when no explicit stop applies (½ inch).
 pub const DEFAULT_TAB_INTERVAL: f64 = 36.0;
 
+/// Paragraph composer (Paragraph panel menu): how lines are broken.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Composer {
+    /// Break each line as soon as it is full.
+    SingleLine,
+    /// Total fit over the whole paragraph (Illustrator's default): justified lines get even word
+    /// spacing, ragged lines an even rag.
+    #[default]
+    EveryLine,
+}
+
+impl Composer {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Paragraph attributes (the Paragraph panel).
 ///
 /// Saved through [`ParaStyleFile`], which keeps files with text openable by builds from before
@@ -299,6 +374,8 @@ pub struct ParaStyle {
     pub space_before: f64,
     pub space_after: f64,
     pub hyphenate: bool,
+    /// Line breaking: Single-line or Every-line Composer.
+    pub composer: Composer,
     /// Tab stops (Tabs panel), sorted by position.
     pub tabs: Vec<TabStop>,
     /// Paragraph style (Paragraph Styles panel) these attributes come from; None = Normal.
@@ -314,6 +391,13 @@ pub struct ParaStyle {
     /// How leading is measured (Paragraph panel menu): from baseline to baseline, or from the top
     /// of one line's ideographic em box to the next.
     pub leading_model: LeadingModel,
+    /// Hanging punctuation (Paragraph panel menu › Burasagari): a comma or full stop ending a line
+    /// may stand outside the frame. New type takes [`Burasagari::Standard`]; documents from before
+    /// it and imported text keep [`Burasagari::None`].
+    pub burasagari: Burasagari,
+    /// Kinsoku (Paragraph panel › Kinsoku Set): which Japanese characters may not start or end a
+    /// line.
+    pub kinsoku: Kinsoku,
 }
 
 /// [`ParaStyle`] as saved. [`Justify::Auto`] is written as the alignment it has in the paragraph
@@ -337,6 +421,8 @@ struct ParaStyleFile {
     space_after: f64,
     #[serde(default)]
     hyphenate: bool,
+    #[serde(default, skip_serializing_if = "Composer::is_default")]
+    composer: Composer,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tabs: Vec<TabStop>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -347,6 +433,10 @@ struct ParaStyleFile {
     direction: Option<ParaDirection>,
     #[serde(default, skip_serializing_if = "crate::skip::is_default")]
     leading_model: LeadingModel,
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    burasagari: Burasagari,
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    kinsoku: Kinsoku,
 }
 
 impl From<ParaStyle> for ParaStyleFile {
@@ -364,11 +454,14 @@ impl From<ParaStyle> for ParaStyleFile {
             space_before,
             space_after,
             hyphenate,
+            composer,
             tabs,
             style_name,
             mojikumi,
             direction,
             leading_model,
+            burasagari,
+            kinsoku,
             ..
         } = p;
         Self {
@@ -380,11 +473,14 @@ impl From<ParaStyle> for ParaStyleFile {
             space_before,
             space_after,
             hyphenate,
+            composer,
             tabs,
             style_name,
             mojikumi,
             direction,
             leading_model,
+            burasagari,
+            kinsoku,
         }
     }
 }
@@ -399,11 +495,14 @@ impl From<ParaStyleFile> for ParaStyle {
             space_before,
             space_after,
             hyphenate,
+            composer,
             tabs,
             style_name,
             mojikumi,
             direction,
             leading_model,
+            burasagari,
+            kinsoku,
             ..
         } = f;
         Self {
@@ -414,11 +513,14 @@ impl From<ParaStyleFile> for ParaStyle {
             space_before,
             space_after,
             hyphenate,
+            composer,
             tabs,
             style_name,
             mojikumi,
             direction,
             leading_model,
+            burasagari,
+            kinsoku,
         }
     }
 }
@@ -465,6 +567,37 @@ impl Mojikumi {
     }
 }
 
+/// Which Japanese characters may not start or end a line (kinsoku shori).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Kinsoku {
+    /// No kinsoku: a line may break between any two characters that allow a break.
+    None,
+    /// Closing brackets, commas, full stops, iteration marks, the prolonged sound mark, small
+    /// kana and the like don't start a line; opening brackets don't end one.
+    #[default]
+    Hard,
+    /// As Hard, except that 々, the prolonged sound mark ー and small kana may start a line
+    /// (JLREQ's level 3 line-breaking rules, Appendix C.3).
+    Soft,
+}
+
+/// Hanging punctuation (burasagari): an East Asian comma or full stop ending a line (、。，．､｡)
+/// stands outside the line's measure, in the space its punctuation spacing gives it (half width
+/// with Line-end Punctuation Half Width). Closing brackets and Latin punctuation don't hang. Shown
+/// as None / Regular / Force.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Burasagari {
+    /// A comma or full stop that doesn't fit goes to the next line with the character before it.
+    #[default]
+    None,
+    /// A comma or full stop that doesn't fit hangs outside the line; one that fits stays inside.
+    Standard,
+    /// A comma or full stop ending a line always hangs, and the rest of the line fills the measure.
+    Forced,
+}
+
 /// Area Type Options "First Baseline" offset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -478,6 +611,34 @@ pub enum FirstBaseline {
     Leading,
     /// Exactly `first_baseline_min` below the top.
     Fixed,
+}
+
+/// Area Type Options "Align" (vertical): where the lines of each row/column sit in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VerticalAlign {
+    /// Lines start at the top of the cell (the default).
+    #[default]
+    Top,
+    /// The block of lines is centred in the cell.
+    Center,
+    /// The last line's descent touches the cell bottom.
+    Bottom,
+    /// The first line stays at the top, the last one moves to the bottom and the space left over
+    /// is shared equally between the lines (no paragraph spacing limit).
+    Justify,
+}
+
+impl VerticalAlign {
+    pub const ALL: [VerticalAlign; 4] = [VerticalAlign::Top, VerticalAlign::Center, VerticalAlign::Bottom, VerticalAlign::Justify];
+    pub fn id(self) -> &'static str {
+        match self {
+            VerticalAlign::Top => "top",
+            VerticalAlign::Center => "center",
+            VerticalAlign::Bottom => "bottom",
+            VerticalAlign::Justify => "justify",
+        }
+    }
 }
 
 /// Text Wrap Options of a wrap object (Object → Text Wrap).
@@ -582,11 +743,85 @@ pub struct AreaOptions {
     pub first_baseline: FirstBaseline,
     /// Minimum first-baseline offset in points.
     pub first_baseline_min: f64,
+    /// Vertical alignment of the lines in each row/column.
+    pub vertical_align: VerticalAlign,
+    /// How the frame and its text fit each other (Auto Size, Shrink Text to Fit).
+    #[serde(skip_serializing_if = "crate::skip::is_default")]
+    pub fit: AreaFit,
 }
 
 impl Default for AreaOptions {
     fn default() -> Self {
-        Self { rows: 1, columns: 1, gutter: 18.0, inset: 0.0, first_baseline: FirstBaseline::Ascent, first_baseline_min: 0.0 }
+        Self {
+            rows: 1,
+            columns: 1,
+            gutter: 18.0,
+            inset: 0.0,
+            first_baseline: FirstBaseline::Ascent,
+            first_baseline_min: 0.0,
+            vertical_align: VerticalAlign::Top,
+            fit: AreaFit::None,
+        }
+    }
+}
+
+/// How area type and its frame fit each other. Serialized as `"none"`, `"autoHeight"` or
+/// `{"shrinkText": {"minPercent": 50}}`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AreaFit {
+    /// The frame keeps its size; text that doesn't fit overflows.
+    #[default]
+    None,
+    /// The frame's height follows the text (Illustrator's Auto Size): resolved by the engine after
+    /// each edit, for rectangular frames of horizontal type in one row.
+    AutoHeight,
+    /// Text that overflows is scaled down (size, leading and baseline shift; not paragraph
+    /// spacing) by the largest factor down to `min_percent` % that makes it fit, at layout time.
+    ShrinkText {
+        #[serde(rename = "minPercent", default = "AreaFit::default_min_percent")]
+        min_percent: f64,
+    },
+}
+
+impl AreaFit {
+    /// The smallest Shrink Text to Fit percentage allowed.
+    pub const MIN_PERCENT: f64 = 10.0;
+    /// The Shrink Text to Fit percentage new settings start with.
+    pub const DEFAULT_MIN_PERCENT: f64 = 50.0;
+    fn default_min_percent() -> f64 {
+        Self::DEFAULT_MIN_PERCENT
+    }
+    /// Its id: `none`, `autoHeight` or `shrinkText`.
+    pub fn id(self) -> &'static str {
+        match self {
+            AreaFit::None => "none",
+            AreaFit::AutoHeight => "autoHeight",
+            AreaFit::ShrinkText { .. } => "shrinkText",
+        }
+    }
+    /// The fit an id names (case, spaces, dashes and underscores ignored), with `min_percent`
+    /// for Shrink Text (clamped to 10..100; a non-finite value gives the default).
+    pub fn parse(id: &str, min_percent: Option<f64>) -> Option<Self> {
+        match id.to_ascii_lowercase().replace([' ', '-', '_'], "").as_str() {
+            "none" | "off" => Some(AreaFit::None),
+            "autoheight" | "autosize" => Some(AreaFit::AutoHeight),
+            "shrinktext" | "shrinktexttofit" | "shrink" => {
+                Some(AreaFit::ShrinkText { min_percent: Self::clamp_percent(min_percent.unwrap_or(Self::DEFAULT_MIN_PERCENT)) })
+            }
+            _ => None,
+        }
+    }
+    /// A Shrink Text minimum percentage within 10..100 (the default when not finite).
+    pub fn clamp_percent(p: f64) -> f64 {
+        if p.is_finite() { p.clamp(Self::MIN_PERCENT, 100.0) } else { Self::DEFAULT_MIN_PERCENT }
+    }
+    /// Shrink Text's minimum scale factor (0.1..1), if this is Shrink Text.
+    pub fn min_scale(self) -> Option<f64> {
+        match self {
+            AreaFit::ShrinkText { min_percent } => Some(Self::clamp_percent(min_percent) / 100.0),
+            _ => None,
+        }
     }
 }
 
@@ -604,6 +839,70 @@ pub struct TextStyleDef {
 pub struct TextRun {
     pub text: String,
     pub style: CharStyle,
+    /// An inline graphic: the run is one [`INLINE_CHAR`] drawn as a document symbol that flows
+    /// with the text like a glyph (InDesign-style inline anchored object). Its `style` still sets
+    /// the size and tracking; fills and strokes don't apply to the art.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<InlineArt>,
+}
+
+impl TextRun {
+    /// A plain text run.
+    pub fn new(text: impl Into<String>, style: CharStyle) -> Self {
+        Self { text: text.into(), style, inline: None }
+    }
+    /// An inline graphic run showing `art`.
+    pub fn inline(art: InlineArt, style: CharStyle) -> Self {
+        Self { text: INLINE_CHAR.to_string(), style, inline: Some(art) }
+    }
+}
+
+/// The object replacement character: the plain text of an inline graphic run.
+pub const INLINE_CHAR: char = '\u{FFFC}';
+
+/// Largest inline graphic scale (× the run's size) accepted from input.
+pub const INLINE_MAX_SCALE: f64 = 100.0;
+
+/// A document symbol placed inline in text ([`TextRun::inline`]).
+///
+/// Placement: the art is scaled uniformly so its height (visual bounds) is `scale` × the run's
+/// font size, its left edge at the pen position, and its vertical centre on the middle of the
+/// run's cap height, raised by `baseline_shift` (points, positive = up). Centred on the cap
+/// height the art lines up with capitals and figures (like a mana symbol in rules text) and, at
+/// the default scale, stays inside the font's ascent and descent so the leading doesn't change.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InlineArt {
+    /// Name of the document symbol ([`crate::Symbol::name`]).
+    pub symbol: String,
+    /// Art height as a multiple of the run's font size.
+    #[serde(default = "one")]
+    pub scale: f64,
+    /// Extra raise in points (positive = up).
+    #[serde(default)]
+    pub baseline_shift: f64,
+    /// The symbol art's visual bounds at its natural size, resolved from the document's symbols by
+    /// [`crate::Document::resolve_inline_art`] (not saved). `None`: not resolved or missing; the
+    /// layout then reserves a one-em square and nothing is drawn.
+    #[serde(skip)]
+    pub bounds: Option<Rect>,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+impl InlineArt {
+    pub fn new(symbol: impl Into<String>) -> Self {
+        Self { symbol: symbol.into(), scale: 1.0, baseline_shift: 0.0, bounds: None }
+    }
+    /// `scale`, made finite and positive (untrusted input).
+    pub fn safe_scale(&self) -> f64 {
+        if self.scale.is_finite() && self.scale > 0.0 { self.scale.min(INLINE_MAX_SCALE) } else { 1.0 }
+    }
+    /// `baseline_shift`, made finite (untrusted input).
+    pub fn safe_shift(&self) -> f64 {
+        if self.baseline_shift.is_finite() { self.baseline_shift.clamp(-1e5, 1e5) } else { 0.0 }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -658,6 +957,11 @@ fn reverse_from_end(path: &mut PathData) {
 }
 
 /// A text object. `runs` split into paragraphs at `\n`.
+///
+/// Paragraph attributes: `para` is paragraph 0's (and, while `paras` is empty, every
+/// paragraph's). Invariant (kept by [`TextObject::normalize_paras`]): `paras` is either empty —
+/// every paragraph uses `para` — or holds one style per paragraph with `paras[0] == para` and at
+/// least two different styles. Readers that only know `para` see the first paragraph's style.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextObject {
     /// Top-to-bottom, right-to-left writing. Defaults to horizontal for old documents.
@@ -669,6 +973,9 @@ pub struct TextObject {
     pub runs: Vec<TextRun>,
     #[serde(default)]
     pub para: ParaStyle,
+    /// Per-paragraph attributes (see the type's docs); empty = every paragraph uses `para`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paras: Vec<ParaStyle>,
     /// Area Type Options (area type only).
     #[serde(default, skip_serializing_if = "crate::skip::is_default")]
     pub area: AreaOptions,
@@ -689,26 +996,171 @@ pub struct TextObject {
     /// Cached layout bounds in text space, filled in by the layout engine (not serialized).
     #[serde(skip)]
     pub cached_bounds: Option<Rect>,
+    /// Cached baselines in text space, start to end, one per line that holds characters (a
+    /// vertical column's centre line), filled in with `cached_bounds` (not serialized).
+    #[serde(skip)]
+    pub cached_baselines: Vec<(Point, Point)>,
+}
+
+/// Conversion from stored character attributes to document-space type controls.
+/// Point size follows the transformed em-height axis; horizontal scale is the ratio of
+/// the two transformed em axes. Rotation, reflection and shear remain in the affine.
+#[derive(Clone, Copy, Debug)]
+pub struct TextStyleScale {
+    pub points: f64,
+    pub horizontal: f64,
 }
 
 impl TextObject {
+    /// None for collapsed or unrepresentable transforms, whose type dimensions cannot
+    /// be edited by compensating the stored attributes.
+    pub fn style_scale(&self) -> Option<TextStyleScale> {
+        let [a, b, c, d, e, f] = self.xf.as_coeffs();
+        if ![a, b, c, d, e, f].iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        let (sx, sy) = (a.hypot(b), c.hypot(d));
+        let determinant = (a / sx) * (d / sy) - (b / sx) * (c / sy);
+        let horizontal = sx / sy;
+        if !sy.is_finite() || sy <= 0.0 || !horizontal.is_finite() || horizontal <= 0.0 || !determinant.is_finite() || determinant.abs() <= 1e-12 {
+            return None;
+        }
+        // Avoid a pure rotation turning otherwise identical fields into mixed values.
+        let unit = |v: f64| if (v - 1.0).abs() <= 1e-12 { 1.0 } else { v };
+        Some(TextStyleScale { points: unit(sy), horizontal: unit(horizontal) })
+    }
+
+    /// Character attributes as presented by controls (stored runs stay local for layout
+    /// and rich-text clipboard operations). Explicit vertical character scale stays separate.
+    pub fn effective_char_style(&self, style: &CharStyle) -> Option<CharStyle> {
+        let scale = self.style_scale()?;
+        let mut style = style.clone();
+        style.size *= scale.points;
+        style.leading = style.leading.map(|v| v * scale.points);
+        style.baseline_shift *= scale.points;
+        style.h_scale *= scale.horizontal;
+        if ![style.size, style.leading.unwrap_or(0.0), style.baseline_shift, style.h_scale].iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        Some(style)
+    }
+
     pub fn point(origin: Point, text: &str, style: CharStyle) -> Self {
         Self {
             vertical: false,
             kind: TextKind::Point,
             xf: Affine::translate(origin.to_vec2()),
-            runs: vec![TextRun { text: text.into(), style }],
+            runs: vec![TextRun::new(text, style)],
             para: ParaStyle::default(),
+            paras: Vec::new(),
             area: AreaOptions::default(),
             path_effect: PathEffect::default(),
             path_align: PathAlign::default(),
             path_spacing: 0.0,
             wrap: Vec::new(),
             cached_bounds: None,
+            cached_baselines: Vec::new(),
         }
     }
     pub fn plain_text(&self) -> String {
         self.runs.iter().map(|r| r.text.as_str()).collect()
+    }
+    /// Number of paragraphs (`\n`-separated; empty text has one).
+    pub fn paragraph_count(&self) -> usize {
+        1 + self.runs.iter().map(|r| r.text.bytes().filter(|&b| b == b'\n').count()).sum::<usize>()
+    }
+    /// Attributes of paragraph `i` (the last paragraph's past the end).
+    pub fn para_at(&self, i: usize) -> &ParaStyle {
+        self.paras.get(i).or(self.paras.last()).unwrap_or(&self.para)
+    }
+    /// Every paragraph's attributes, one per paragraph.
+    pub fn paragraph_styles(&self) -> Vec<ParaStyle> {
+        (0..self.paragraph_count()).map(|i| self.para_at(i).clone()).collect()
+    }
+    /// Set every paragraph's attributes from `styles` (one per paragraph; a short list repeats its
+    /// last entry, a long one is cut).
+    pub fn set_paragraph_styles(&mut self, styles: Vec<ParaStyle>) {
+        if let Some(first) = styles.first() {
+            self.para = first.clone();
+        }
+        self.paras = styles;
+        self.normalize_paras();
+    }
+    /// The same attributes for every paragraph.
+    pub fn set_all_paras(&mut self, style: ParaStyle) {
+        self.para = style;
+        self.paras.clear();
+    }
+    /// Re-establish the `paras` invariant: one entry per paragraph (cut, or extended with the
+    /// last), `paras[0] == para`, and empty when every paragraph is alike.
+    pub fn normalize_paras(&mut self) {
+        if self.paras.is_empty() {
+            return;
+        }
+        let n = self.paragraph_count();
+        let last = self.paras.last().cloned().unwrap_or_default();
+        self.paras.resize(n, last);
+        if let Some(first) = self.paras.first_mut() {
+            first.clone_from(&self.para);
+        }
+        if self.paras.iter().all(|p| *p == self.para) {
+            self.paras.clear();
+        }
+    }
+    /// Indices of the paragraphs that byte range `start..end` of the plain text touches (a caret
+    /// touches its paragraph).
+    pub fn paragraphs_in(&self, start: usize, end: usize) -> std::ops::Range<usize> {
+        let text = self.plain_text();
+        let (a, b) = (start.min(end).min(text.len()), start.max(end).min(text.len()));
+        let index = |byte: usize| text.as_bytes().get(..byte).map_or(0, |s| s.iter().filter(|&&c| c == b'\n').count());
+        index(a)..index(b) + 1
+    }
+    /// Apply `f` to the attributes of paragraphs `range` (indices; None = every paragraph).
+    pub fn edit_paras(&mut self, range: Option<std::ops::Range<usize>>, mut f: impl FnMut(&mut ParaStyle)) {
+        match range {
+            None => {
+                f(&mut self.para);
+                for p in &mut self.paras {
+                    f(p);
+                }
+            }
+            Some(r) => {
+                let mut v = self.paragraph_styles();
+                for p in v.iter_mut().take(r.end).skip(r.start) {
+                    f(p);
+                }
+                self.set_paragraph_styles(v);
+            }
+        }
+        self.normalize_paras();
+    }
+    /// Every stored paragraph style (`para` and the per-paragraph ones), for scans and renames.
+    pub fn para_styles_mut(&mut self) -> impl Iterator<Item = &mut ParaStyle> {
+        std::iter::once(&mut self.para).chain(self.paras.iter_mut())
+    }
+    /// Every stored paragraph style (`para` and the per-paragraph ones).
+    pub fn para_styles(&self) -> impl Iterator<Item = &ParaStyle> {
+        std::iter::once(&self.para).chain(self.paras.iter())
+    }
+    /// Update the paragraph styles for replacing bytes `start..end` of the current plain text by
+    /// `insert` (call before changing the runs). The paragraph the range starts in keeps its
+    /// style (merging paragraphs: the first one's wins); paragraphs the insertion starts take that
+    /// style too (Return continues the paragraph it splits); later paragraphs keep theirs.
+    pub fn splice_paras(&mut self, start: usize, end: usize, insert: &str) {
+        if self.paras.is_empty() {
+            return;
+        }
+        let r = self.paragraphs_in(start, end);
+        let v = self.paragraph_styles();
+        let Some(keep) = v.get(r.start).cloned() else { return };
+        let added = insert.bytes().filter(|&b| b == b'\n').count();
+        let mut out: Vec<ParaStyle> = v.iter().take(r.start + 1).cloned().collect();
+        out.extend(std::iter::repeat_n(keep, added));
+        out.extend(v.iter().skip(r.end).cloned());
+        self.paras = out;
+        if let Some(first) = self.paras.first() {
+            self.para = first.clone();
+        }
     }
     pub fn first_style(&self) -> CharStyle {
         self.runs.first().map(|r| r.style.clone()).unwrap_or_default()
@@ -813,11 +1265,56 @@ impl TextObject {
     pub fn local_bounds(&self) -> Rect {
         self.cached_bounds.unwrap_or_else(|| self.estimate_bounds())
     }
+    /// The baselines in text space (the layout cache): for point type with none cached, the first
+    /// one across [`Self::local_bounds`] (down the first column's centre line for vertical type).
+    pub fn baselines(&self) -> impl Iterator<Item = (Point, Point)> + '_ {
+        let first = (self.cached_baselines.is_empty() && matches!(self.kind, TextKind::Point)).then(|| {
+            let b = self.local_bounds();
+            if self.vertical { (Point::new(0.0, b.y0), Point::new(0.0, b.y1)) } else { (Point::new(b.x0, 0.0), Point::new(b.x1, 0.0)) }
+        });
+        self.cached_baselines.iter().copied().chain(first)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Digits map every digit of the three sets into the chosen one, leave the rest alone, and
+    /// are saved only when set.
+    #[test]
+    fn digits_map_between_the_numeral_systems() {
+        let map = |d: Digits, s: &str| -> String { s.chars().map(|c| d.map(c)).collect() };
+        for s in ["0123456789", "٠١٢٣٤٥٦٧٨٩", "۰۱۲۳۴۵۶۷۸۹"] {
+            assert_eq!(map(Digits::Default, s), s);
+            assert_eq!(map(Digits::Arabic, s), "0123456789");
+            assert_eq!(map(Digits::Hindi, s), "٠١٢٣٤٥٦٧٨٩");
+            assert_eq!(map(Digits::Farsi, s), "۰۱۲۳۴۵۶۷۸۹");
+        }
+        // Letters, punctuation and other scripts' digits (Devanagari ३) are not digits of these sets.
+        assert_eq!(map(Digits::Hindi, "a-Z ३ ٪ ۔"), "a-Z ३ ٪ ۔");
+        let st = CharStyle::default();
+        assert!(serde_json::to_value(&st).unwrap().get("digits").is_none());
+        let farsi = CharStyle { digits: Digits::Farsi, ..CharStyle::default() };
+        assert_eq!(serde_json::to_value(&farsi).unwrap()["digits"], "farsi");
+        // Styles written before the attribute existed (no `digits` key) read as Default.
+        let old = serde_json::to_value(&st).unwrap();
+        assert_eq!(serde_json::from_value::<CharStyle>(old).unwrap().digits, Digits::Default);
+        assert_eq!(serde_json::from_value::<CharStyle>(serde_json::to_value(&farsi).unwrap()).unwrap(), farsi);
+    }
+
+    #[test]
+    fn character_controls_reject_collapsed_and_nonfinite_transforms() {
+        let mut t = TextObject::point(Point::ZERO, "Text", CharStyle::default());
+        for matrix in [[0.0; 6], [1.0, 1.0, 2.0, 2.0, 0.0, 0.0], [f64::INFINITY, 0.0, 0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0, f64::NAN, 0.0]] {
+            t.xf = Affine::new(matrix);
+            assert!(t.effective_char_style(&t.first_style()).is_none());
+        }
+        t.xf = Affine::rotate(0.83);
+        assert_eq!(t.effective_char_style(&t.first_style()).unwrap().size, 12.0);
+        t.xf = Affine::scale(1e308);
+        assert!(t.effective_char_style(&t.first_style()).is_none(), "overflowing point size");
+    }
 
     #[test]
     fn point_text_basics() {
@@ -826,6 +1323,56 @@ mod tests {
         let b = t.bounds().unwrap();
         assert!(b.x0 >= 10.0 - 1e-9 && b.y1 > 20.0);
         assert_eq!(CharStyle::default().effective_leading(), 14.399999999999999);
+    }
+
+    fn justified(j: Justify) -> ParaStyle {
+        ParaStyle { justify: j, ..ParaStyle::default() }
+    }
+
+    #[test]
+    fn paragraph_styles_split_merge_and_normalize() {
+        let mut t = TextObject::point(Point::ZERO, "one\ntwo\nthree", CharStyle::default());
+        assert_eq!((t.paragraph_count(), t.paras.len()), (3, 0), "one style for all: nothing stored");
+        assert_eq!(t.paragraphs_in(0, 0), 0..1);
+        assert_eq!(t.paragraphs_in(4, 4), 1..2);
+        assert_eq!(t.paragraphs_in(2, 9), 0..3);
+        assert_eq!(t.paragraphs_in(99, 99), 2..3, "clamped to the text");
+        t.edit_paras(Some(1..2), |p| p.justify = Justify::Center);
+        let js = |t: &TextObject| t.paragraph_styles().iter().map(|p| p.justify).collect::<Vec<_>>();
+        assert_eq!(js(&t), [Justify::Left, Justify::Center, Justify::Left]);
+        // Return inside "two": the new paragraph continues its style.
+        t.splice_paras(5, 5, "\n");
+        t.runs[0].text.insert(5, '\n');
+        assert_eq!(js(&t), [Justify::Left, Justify::Center, Justify::Center, Justify::Left]);
+        // Deleting the break between "one" and "t": the first paragraph's style wins.
+        t.splice_paras(3, 4, "");
+        t.runs[0].text.remove(3);
+        assert_eq!(t.plain_text(), "onet\nwo\nthree");
+        assert_eq!(js(&t), [Justify::Left, Justify::Center, Justify::Left]);
+        // An edit that skips the splice is repaired by normalizing (the last style continues).
+        t.runs[0].text.push_str("\nfour");
+        t.normalize_paras();
+        assert_eq!(js(&t), [Justify::Left, Justify::Center, Justify::Left, Justify::Left]);
+        // `para` is paragraph 0's; all alike collapses to `para` alone.
+        t.edit_paras(Some(0..1), |p| p.justify = Justify::Right);
+        assert_eq!(t.para.justify, Justify::Right);
+        t.edit_paras(None, |p| p.justify = Justify::Right);
+        assert!(t.paras.is_empty() && t.para.justify == Justify::Right);
+        // A short list repeats its last entry, a long one is cut.
+        t.set_paragraph_styles(vec![justified(Justify::Left), justified(Justify::Center)]);
+        assert_eq!(js(&t), [Justify::Left, Justify::Center, Justify::Center, Justify::Center]);
+        t.set_paragraph_styles(vec![justified(Justify::Center); 9]);
+        assert!(t.paras.is_empty() && t.para.justify == Justify::Center);
+        // Old documents (no `paras`) load; new ones keep paragraph 0 in `para`.
+        t.edit_paras(Some(3..4), |p| p.space_before = 4.0);
+        let json = serde_json::to_value(&t).unwrap();
+        assert_eq!(json["para"]["justify"], json["paras"][0]["justify"]);
+        let mut old = json.clone();
+        old.as_object_mut().unwrap().remove("paras");
+        let back: TextObject = serde_json::from_value(old).unwrap();
+        assert!(back.paras.is_empty() && back.para_at(3).justify == Justify::Center);
+        let back: TextObject = serde_json::from_value(json).unwrap();
+        assert_eq!(back.para_at(3).space_before, 4.0);
     }
 
     /// 120 × 40 area type at (40, 40), its text drawn at twice its size.

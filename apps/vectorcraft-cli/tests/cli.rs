@@ -83,6 +83,89 @@ fn mcp_headless_over_stdio() {
     assert_eq!(replies[3]["result"]["content"][0]["type"], "image");
 }
 
+/// `mcp --automation-read-root` / `--automation-write-root` (#832): the flags are checked before the
+/// server starts, and the process then reads and writes only inside its roots.
+#[test]
+fn mcp_automation_roots() {
+    let base = tmp("roots");
+    for d in ["in", "out", "outside"] {
+        std::fs::create_dir_all(base.join(d)).unwrap();
+    }
+    let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="20" height="10"/></svg>"#;
+    std::fs::write(base.join("in/a.svg"), svg).unwrap();
+    std::fs::write(base.join("outside/b.svg"), svg).unwrap();
+    std::fs::write(base.join("outside/victim.png"), b"keep this file").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(base.join("outside/b.svg"), base.join("in/escape.svg")).unwrap();
+        symlink(base.join("outside"), base.join("out/escape")).unwrap();
+        symlink(base.join("outside/victim.png"), base.join("out/victim.png")).unwrap();
+        symlink(base.join("outside/missing.png"), base.join("out/dangling.png")).unwrap();
+    }
+    let dir = |d: &str| base.join(d).to_string_lossy().into_owned();
+    let fails = |args: &[&str], why: &str| {
+        let out = Command::new(BIN).args(args).stdin(Stdio::null()).output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success() && err.contains(why), "{args:?}: {err}");
+    };
+    fails(&["mcp", "--automation-read-root", &dir("missing")], "cannot open the automation read root");
+    fails(&["mcp", "--automation-read-root", &dir("in"), "--automation-read-root", &dir("out")], "given twice");
+    fails(&["mcp", "--automation-write-root"], "needs a folder");
+    fails(&["mcp", "--connect", "127.0.0.1:1", &format!("--automation-write-root={}", dir("out"))], "a running app enforces its own roots");
+
+    let mut child = Command::new(BIN)
+        .args(["mcp", "--automation-read-root", &dir("in"), &format!("--automation-write-root={}", dir("out"))])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let call = |id: u64, name: &str, args: Value| json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":args}});
+    let file = |d: &str, f: &str| base.join(d).join(f).to_string_lossy().into_owned();
+    let mut calls = vec![
+        call(1, "open_file", json!({"path": file("in", "a.svg")})),
+        call(2, "open_file", json!({"path": file("outside", "b.svg")})),
+        call(3, "export", json!({"path": file("out", "a.png")})),
+        call(4, "export", json!({"path": file("in", "a.png")})),
+        call(5, "save_file", json!({"path": file("outside", "a.vectorcraft")})),
+        call(6, "open_file", json!({"path": file("in", "../outside/b.svg")})),
+        call(7, "export", json!({"path": file("out", "../outside/traversal.png")})),
+    ];
+    let mut expected_errors = vec![false, true, false, true, true, true, true];
+    #[cfg(unix)]
+    {
+        calls.extend([
+            call(8, "open_file", json!({"path": file("in", "escape.svg")})),
+            call(9, "export", json!({"path": file("out", "escape/escaped.png")})),
+            call(10, "export", json!({"path": file("out", "victim.png")})),
+            call(11, "export", json!({"path": file("out", "dangling.png")})),
+        ]);
+        expected_errors.extend([true; 4]);
+    }
+    // An access error is per request: the server continues and can still save inside its root.
+    calls.push(call(12, "save_file", json!({"path": file("out", "allowed.vectorcraft")})));
+    expected_errors.push(false);
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for m in calls {
+            writeln!(stdin, "{m}").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let replies: Vec<Value> = String::from_utf8(out.stdout).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let errors: Vec<bool> = replies.iter().map(|r| r["result"]["isError"] == true).collect();
+    assert_eq!(errors, expected_errors, "{replies:?}");
+    assert!(replies[1]["result"]["content"][0]["text"].as_str().unwrap().contains("outside the read root"));
+    assert!(base.join("out/a.png").is_file() && !base.join("in/a.png").exists() && !base.join("outside/a.vectorcraft").exists());
+    assert!(base.join("out/allowed.vectorcraft").is_file());
+    for denied in ["traversal.png", "escaped.png", "missing.png"] {
+        assert!(!base.join("outside").join(denied).exists(), "{denied}");
+    }
+    assert_eq!(std::fs::read(base.join("outside/victim.png")).unwrap(), b"keep this file");
+}
+
 /// End-to-end protocol sweep over stdio against the compiled binary. The in-process
 /// tests drive `Server::handle_line` directly, so the binary's own wiring (argument
 /// parsing, logger install, stdout pollution, notification order) is untested: this
@@ -137,7 +220,7 @@ fn mcp_protocol_over_stdio() {
     assert!(r["result"]["completion"]["values"].as_array().is_some_and(|v| v.contains(&json!("svg"))), "{r}");
 
     send(&mut stdin, json!({"jsonrpc":"2.0","id":5,"method":"resources/list","params":{}}));
-    assert!(recv(&mut lines, &mut notes, 5)["result"]["resources"].as_array().is_some_and(|v| v.len() == 2));
+    assert!(recv(&mut lines, &mut notes, 5)["result"]["resources"].as_array().is_some_and(|v| v.len() == 3));
     send(&mut stdin, json!({"jsonrpc":"2.0","id":6,"method":"resources/templates/list","params":{}}));
     assert!(recv(&mut lines, &mut notes, 6)["result"]["resourceTemplates"].as_array().is_some_and(|v| v.len() >= 4));
 
@@ -244,4 +327,22 @@ fn closed_stdout_ends_quietly() {
     let out = child.wait_with_output().unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success() && !err.contains("panicked"), "{:?}: {err}", out.status);
+}
+
+/// #1005: `run` whose reader has gone (`vectorcraft-cli run … | true`) ends quietly with status 0,
+/// and its later steps still run; a failing step still fails.
+#[test]
+fn run_with_a_closed_stdout_ends_quietly_and_finishes_the_batch() {
+    let svg = tmp("closed-run.svg");
+    let _ = std::fs::remove_file(&svg);
+    let rect = r#"{"x":1,"y":1,"width":5,"height":5}"#;
+    let args = ["run", "--cmd", "document.json", "--cmd", "shape.rectangle", "--params", rect, "--export", svg.to_str().unwrap()];
+    let mut child = Command::new(BIN).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    drop(child.stdout.take());
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && err.is_empty(), "{:?}: {err}", out.status);
+    assert!(svg.is_file(), "the export after the closed reader still ran");
+    let out = Command::new(BIN).args(["run", "--cmd", "not-a-command"]).stdout(Stdio::null()).output().unwrap();
+    assert!(!out.status.success());
 }

@@ -197,8 +197,7 @@ pub(super) fn area_text(text: String, frame: Rect) -> vectorcraft_doc::TextObjec
         run.text = text;
     }
     t.kind = vectorcraft_doc::TextKind::Area { frame: shapes::rectangle(Rect::from_origin_size(Point::ORIGIN, frame.size())) };
-    let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t);
-    t.cached_bounds = Some(lay.bounds);
+    crate::cmd::typecmd::refresh_bounds(&mut t);
     t
 }
 

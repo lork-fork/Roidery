@@ -30,7 +30,7 @@ fn area_doc(runs: Vec<TextRun>, w: f64, justify: Justify) -> Document {
 }
 
 fn run(text: &str, st: CharStyle) -> TextRun {
-    TextRun { text: text.into(), style: st }
+    TextRun { text: text.into(), style: st, inline: None }
 }
 
 /// The `<tspan …>` start tags.
@@ -69,6 +69,20 @@ fn wrapped_lines_get_one_tspan_each() {
 }
 
 #[test]
+fn vertically_aligned_area_type_exports_where_it_is_drawn() {
+    let top = area_doc(vec![run("alpha beta", style(12.0))], 200.0, Justify::Left);
+    let mut centred = top.clone();
+    let id = centred.layers[0].children().unwrap()[0].id;
+    if let Some(NodeKind::Text(t)) = centred.node_mut(id).map(|n| &mut n.kind) {
+        t.area.vertical_align = vectorcraft_doc::VerticalAlign::Center;
+    }
+    let y = |d: &Document| attr(tspans(&export(d, &ExportOptions::default()))[0], "y").unwrap();
+    let (yt, yc) = (y(&top), y(&centred));
+    // The 160 pt frame holds one 12 pt line: centring moves it down about (160 - 14.4) / 2.
+    assert!(yc - yt > 60.0 && yc - yt < 80.0, "{yt} → {yc}");
+}
+
+#[test]
 fn rich_text_writes_spacing_shift_and_scale() {
     let shifted = CharStyle { baseline_shift: 4.0, ..style(12.0) };
     let wide = CharStyle { h_scale: 150.0, ..style(12.0) };
@@ -89,6 +103,36 @@ fn rich_text_writes_spacing_shift_and_scale() {
     assert!((attr(tags[4], "y").unwrap() - attr(tags[0], "y").unwrap() - 30.0).abs() < 0.01, "leading");
     // Segments on one baseline share its y; the shifted one is placed with dy.
     assert_eq!(attr(tags[1], "y"), attr(tags[0], "y"));
+}
+
+/// Proportional Metrics (#966) is written as the `palt` feature, beside the character's own.
+#[test]
+fn proportional_metrics_write_palt() {
+    let proportional = CharStyle { proportional_metrics: true, ..style(12.0) };
+    let both = CharStyle { proportional_metrics: true, features: vec!["dlig".into()], ..style(12.0) };
+    let d = area_doc(vec![run("雅楽 ", style(12.0)), run("「あ」 ", proportional), run("ab", both)], 280.0, Justify::Left);
+    let svg = export(&d, &ExportOptions::default());
+    let tags = tspans(&svg);
+    assert_eq!(tags.len(), 3, "{svg}");
+    assert!(!tags[0].contains("palt"), "{}", tags[0]);
+    assert!(tags[1].contains("font-feature-settings:&quot;palt&quot; 1"), "{}", tags[1]);
+    assert!(tags[2].contains("dlig") && tags[2].contains("palt"), "{}", tags[2]);
+}
+
+/// Digits are written as drawn: the style's numeral system, not the digits that were typed (as
+/// All Caps writes capitals).
+#[test]
+fn digits_are_written_as_drawn() {
+    use vectorcraft_doc::Digits;
+    let hindi = CharStyle { digits: Digits::Hindi, ..style(12.0) };
+    let farsi = CharStyle { digits: Digits::Farsi, ..style(12.0) };
+    let d = area_doc(vec![run("page 3, ", style(12.0)), run("page 4, ", hindi), run("page ٥", farsi)], 280.0, Justify::Left);
+    let svg = export(&d, &ExportOptions::default());
+    let text = svg.as_str();
+    assert!(text.contains("page 3,"), "typed Western digits stay in Default: {svg}");
+    assert!(text.contains("page ٤,"), "Hindi draws 4 as ٤: {svg}");
+    assert!(text.contains("page ۵"), "Farsi draws ٥ as ۵: {svg}");
+    assert!(!text.contains("page 4") && !text.contains("page ٥"), "{svg}");
 }
 
 #[test]
@@ -184,5 +228,39 @@ fn a_viewer_draws_the_text_where_the_canvas_does() {
                 assert_similar(&render_artboard(&canvas), &render_artboard(&viewer), 40.0, 0.01);
             }
         }
+    }
+}
+
+#[test]
+fn paragraphs_aligned_differently_keep_their_alignment() {
+    let mut t = TextObject::point(Point::new(20.0, 20.0), "Left words here\nCentred line\nRight line", style(14.0));
+    t.kind = TextKind::Area { frame: shapes::rectangle(Rect::new(0.0, 0.0, 200.0, 160.0)) };
+    let para = |j| vectorcraft_doc::ParaStyle { justify: j, ..Default::default() };
+    t.set_paragraph_styles(vec![para(Justify::Left), para(Justify::Center), para(Justify::Right)]);
+    let mut d = Document::new(300.0, 200.0);
+    let n = Node::new(d.alloc_id(), NodeKind::Text(Box::new(t)));
+    let l = d.layers[0].id;
+    d.insert(Some(l), 0, n).unwrap();
+    for fewer_tspans in [false, true] {
+        let svg = export(&d, &ExportOptions { fewer_tspans, ..Default::default() });
+        // Each anchored line carries its own anchor (the <text> has none).
+        assert!(svg.contains("text-anchor=\"middle\"") && svg.contains("text-anchor=\"end\""), "{svg}");
+        assert!(!svg.contains("<text text-anchor"), "{svg}");
+        // A viewer draws each line where the canvas does.
+        let mut viewer = Document::new(300.0, 200.0);
+        let vl = viewer.layers[0].id;
+        for bp in viewer_outlines(&svg) {
+            let ap = vectorcraft_doc::Appearance::basic(Paint::solid(Color::BLACK), Paint::None, 0.0);
+            let n = Node::path(viewer.alloc_id(), PathData::from_bezpath(&bp), ap);
+            viewer.insert(Some(vl), usize::MAX, n).unwrap();
+        }
+        assert_similar(&render_artboard(&d), &render_artboard(&viewer), 40.0, 0.01);
+        // Read back: one paragraph per line, each with its alignment, drawn where it was.
+        let back = vectorcraft_svg::import(&svg).unwrap();
+        let text =
+            back.layers[0].children().unwrap().iter().find_map(|n| if let NodeKind::Text(t) = &n.kind { Some(t.clone()) } else { None }).unwrap();
+        let js: Vec<Justify> = text.paragraph_styles().iter().map(|p| p.justify).collect();
+        assert_eq!(js, [Justify::Left, Justify::Center, Justify::Right], "{svg}");
+        assert_similar(&render_artboard(&d), &render_artboard(&back), 40.0, 0.01);
     }
 }

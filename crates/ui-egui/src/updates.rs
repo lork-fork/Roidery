@@ -301,7 +301,8 @@ pub fn poll(app: &mut VectorcraftApp, now: f64) {
 
 /// Is work running that needs the screen refreshed?
 pub fn busy(app: &VectorcraftApp) -> bool {
-    matches!(app.updates.phase, Phase::Checking | Phase::Downloading(..)) || (!app.updates.started && app.ui.updates.auto)
+    let startup_check = !app.updates.started && app.ui.updates.auto && app.services.fetch.is_some() && feed_url(app).is_some();
+    matches!(app.updates.phase, Phase::Checking | Phase::Downloading(..)) || startup_check
 }
 
 /// The app runs from an AppImage (Linux), which an update replaces.

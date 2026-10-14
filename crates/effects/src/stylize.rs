@@ -94,8 +94,25 @@ fn flatten(path: &PathData) -> Vec<Vec<Point>> {
     polys
 }
 
-/// Scribble (simplified): a single zig-zag hatching across the filled area at `angle`, outlined
-/// to `strokeWidth` so the fill paints it.
+/// Whether segment `p`–`q` properly crosses an edge of `polys`: its own ends, which lie on the
+/// outline, don't count, nor does running along an edge.
+fn crosses_outline(p: Point, q: Point, polys: &[Vec<Point>]) -> bool {
+    let (p, q) = (p.lerp(q, 1e-3), q.lerp(p, 1e-3));
+    let side = |a: Point, b: Point, c: Point| (b - a).cross(c - a);
+    // Strictly on opposite sides, beyond rounding noise (the sides are areas: length × length).
+    let apart = |s1: f64, s2: f64, eps: f64| (s1 > eps && s2 < -eps) || (s1 < -eps && s2 > eps);
+    let pq = (q - p).hypot();
+    polys.iter().any(|pl| {
+        pl.windows(2).any(|w| {
+            let (a, b) = (w[0], w[1]);
+            let eps = 1e-9 * pq * (b - a).hypot();
+            apart(side(p, q, a), side(p, q, b), eps) && apart(side(a, b, p), side(a, b, q), eps)
+        })
+    })
+}
+
+/// Scribble (simplified): a zig-zag hatching across the filled area at `angle`, one per region
+/// of the shape, outlined to `strokeWidth` so the fill paints it.
 pub fn scribble(path: &PathData, b: Rect, p: &Value) -> PathData {
     let angle = num(p, "angle", 30.0).to_radians();
     let overlap = num(p, "overlap", 0.0);
@@ -117,7 +134,16 @@ pub fn scribble(path: &PathData, b: Rect, p: &Value) -> PathData {
         return PathData::default();
     }
     let step = spacing.max((y1 - y0) / 2000.0);
-    let mut pts: Vec<Point> = vec![];
+    // One zig-zag per region (#1648): a span continues a chain of the previous row as long as the
+    // line from that row's end to this one's start stays inside the shape; otherwise it starts a
+    // chain of its own. So no line crosses a hole or a notch. In a convex shape that line always
+    // stays inside: one chain, as before.
+    struct Chain {
+        pts: Vec<Point>,
+        end: Point,
+        row: u64,
+    }
+    let mut chains: Vec<Chain> = vec![];
     let mut y = y0 + step / 2.0;
     let mut row = 0u64;
     while y < y1 {
@@ -131,29 +157,42 @@ pub fn scribble(path: &PathData, b: Rect, p: &Value) -> PathData {
             }
         }
         xs.sort_by(f64::total_cmp);
-        let mut spans: Vec<(f64, f64)> = xs.as_chunks::<2>().0.iter().map(|s| (s[0] - overlap, s[1] + overlap)).collect();
-        if row % 2 == 1 {
-            spans.reverse();
-        }
+        let spans: Vec<(f64, f64)> = xs.as_chunks::<2>().0.iter().map(|s| (s[0] - overlap, s[1] + overlap)).collect();
+        let open = chains.len();
         for (a, bx) in spans {
             let jitter = |k: u64| variation * noise(seed, row, k, 3);
             let (l, r) = (Point::new(a + jitter(0), y + jitter(1)), Point::new(bx + jitter(2), y + jitter(3)));
-            if row.is_multiple_of(2) {
-                pts.push(l);
-                pts.push(r);
-            } else {
-                pts.push(r);
-                pts.push(l);
+            let even = row.is_multiple_of(2);
+            let pair = if even { [l, r] } else { [r, l] };
+            // Un-jittered ends of the span in drawing order.
+            let (start, end) = if even { (Point::new(a, y), Point::new(bx, y)) } else { (Point::new(bx, y), Point::new(a, y)) };
+            // The nearest chain of the previous row that this span can join without leaving
+            // the shape.
+            let prev = row.checked_sub(1);
+            let pick = (0..open)
+                .filter(|&k| Some(chains[k].row) == prev && !crosses_outline(chains[k].end, start, &polys))
+                .min_by(|&i, &j| (chains[i].end - start).hypot().total_cmp(&(chains[j].end - start).hypot()));
+            match pick {
+                Some(k) => {
+                    let c = &mut chains[k];
+                    c.pts.extend(pair);
+                    (c.end, c.row) = (end, row);
+                }
+                None => chains.push(Chain { pts: pair.to_vec(), end, row }),
             }
         }
         row += 1;
         y += step;
     }
-    if pts.len() < 2 {
+    let lines: Vec<SubPath> = chains
+        .into_iter()
+        .filter(|c| c.pts.len() >= 2)
+        .map(|c| if curvy > 0.0 { catmull_rom(&c.pts, false, curvy * 2.0) } else { SubPath::polyline(&c.pts, false) })
+        .collect();
+    if lines.is_empty() {
         return PathData::default();
     }
-    let line = if curvy > 0.0 { catmull_rom(&pts, false, curvy * 2.0) } else { SubPath::polyline(&pts, false) };
-    let mut center = PathData::single(line);
+    let mut center = PathData::new(lines);
     center.transform(to_local);
     let stroke = kurbo::Stroke::new(width).with_join(kurbo::Join::Round).with_caps(kurbo::Cap::Round);
     let outline = kurbo::stroke(center.to_bezpath(), &stroke, &kurbo::StrokeOpts::default(), 0.05);

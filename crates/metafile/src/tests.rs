@@ -49,7 +49,7 @@ pub(crate) fn image_node(d: &mut Document, bytes: Vec<u8>, w: u32, h: u32, xf: A
     let blob = ImageBlob::new("image/png", bytes);
     let key = blob.content_key();
     d.images.insert(key.clone(), blob);
-    Node::new(NodeId(0), NodeKind::Image(ImageObject { key, width: w, height: h, xf, link: None, placement: Default::default() }))
+    Node::new(NodeId(0), NodeKind::Image(Box::new(ImageObject { key, width: w, height: h, xf, link: None, placement: Default::default() })))
 }
 
 pub(crate) fn u32_at(b: &[u8], at: usize) -> u32 {
@@ -327,4 +327,16 @@ fn hidden_and_offboard_art_is_left_out() {
     let k = kinds(&emf_records(&emf(&d).bytes));
     assert!(!k.contains(&62) && !k.contains(&39));
     assert!(export(&d, Rect::new(0.0, 0.0, 0.0, 10.0), Kind::Emf).is_err(), "an empty region");
+}
+
+#[test]
+fn an_instance_whose_art_reaches_the_artboard_is_written() {
+    // The symbol's red rectangle, (100, 100) to (140, 140), drawn from (-50, -50): on the artboard,
+    // while the 20 × 20 square around the origin, moved to (-60, -60) to (-40, -40), is off it.
+    let inst = Node::new(NodeId(0), NodeKind::SymbolInstance { symbol: "Far".into(), xf: Affine::translate((-50.0, -50.0)) });
+    let mut d = doc_with(100.0, 100.0, vec![inst]);
+    let art = path(shapes::rectangle(Rect::new(100.0, 100.0, 140.0, 140.0)), red(), Paint::None, 0.0);
+    d.symbols.push(vectorcraft_doc::Symbol { name: "Far".into(), art: Arc::new(art) });
+    let k = kinds(&emf_records(&emf(&d).bytes));
+    assert!(k.contains(&39), "a brush fills the art: {k:?}");
 }

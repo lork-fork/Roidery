@@ -100,16 +100,27 @@ pub fn default_command_shortcut(id: &str) -> Option<&'static str> {
 }
 
 /// Window menu items that show a panel (`window.panel {panel}`) with a default shortcut: (panel
-/// id, shortcut). Every icon panel can be given one in the editor (entry key `panel:<id>`).
+/// id, shortcut). Every panel can be given one in the editor (entry key `panel:<id>`).
 pub const PANEL_SHORTCUTS: &[(&str, &str)] = &[
+    ("brushes", "F5"),
     ("color", "F6"),
+    ("layers", "F7"),
     ("colorGuide", "Shift+F3"),
-    ("appearance", "Shift+F6"),
     ("graphicStyles", "Shift+F5"),
-    ("stroke", "Cmd+F10"),
+    ("appearance", "Shift+F6"),
+    ("align", "Shift+F7"),
+    ("transform", "Shift+F8"),
+    ("info", "Cmd+F8"),
     ("gradient", "Cmd+F9"),
+    ("pathfinder", "Cmd+Shift+F9"),
+    ("stroke", "Cmd+F10"),
     ("transparency", "Cmd+Shift+F10"),
     ("attributes", "Cmd+F11"),
+    ("symbols", "Cmd+Shift+F11"),
+    ("character", "Cmd+T"),
+    ("paragraph", "Cmd+Alt+T"),
+    ("tabs", "Cmd+Shift+T"),
+    ("openType", "Cmd+Alt+Shift+T"),
 ];
 
 /// Default shortcut of an entry key (`tool:<id>`, `panel:<id>` or a command id).
@@ -247,12 +258,20 @@ pub fn entries() -> &'static [Entry] {
             .collect();
         let mut seen = HashSet::new();
         for c in vectorcraft_engine::command_specs() {
-            if (c.menu.is_empty() && c.shortcut.is_none()) || !seen.insert(c.id) {
+            // Commands outside the menus (panel menu items) are
+            // listed when a key alone can run them; queries and aliases never are.
+            let listed = if c.menu.is_empty() {
+                c.shortcut.is_some() || (c.journal && !vectorcraft_engine::cmd::is_alias(c.id) && runs_without_params(c.params))
+            } else {
+                true
+            };
+            if !listed || !seen.insert(c.id) {
                 continue;
             }
-            v.push(Entry { key: c.id.into(), label: c.label.into(), group: c.menu.join(" › "), is_tool: false });
+            let group = if c.menu.is_empty() { id_group(c.id) } else { c.menu.join(" › ") };
+            v.push(Entry { key: c.id.into(), label: c.label.into(), group, is_tool: false });
         }
-        v.extend(crate::state::ICON_PANELS.iter().map(|(id, label, _)| Entry {
+        v.extend(crate::state::all_panels().map(|(id, label)| Entry {
             key: format!("panel:{id}"),
             label: label.to_string(),
             group: "Window".into(),
@@ -262,14 +281,24 @@ pub fn entries() -> &'static [Entry] {
             if !seen.insert(id) || (sc.is_empty() && !params.starts_with("{}") && !params.starts_with("{path")) {
                 continue;
             }
-            let group = id.split('.').next().map(|g| {
-                let mut c = g.chars();
-                c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-            });
-            v.push(Entry { key: id.to_string(), label: label.to_string(), group: group.unwrap_or_default(), is_tool: false });
+            v.push(Entry { key: id.to_string(), label: label.to_string(), group: id_group(id), is_tool: false });
         }
         v
     })
+}
+
+/// The group of a command no menu holds: the first part of its id, capitalised (`edit.x` → "Edit").
+fn id_group(id: &str) -> String {
+    let mut c = id.split('.').next().unwrap_or_default().chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+/// Does a command's params doc (`{a?, b?} …`) say it runs with no params, as a shortcut runs it?
+fn runs_without_params(params: &str) -> bool {
+    params
+        .strip_prefix('{')
+        .and_then(|r| r.split_once('}'))
+        .is_some_and(|(fields, _)| fields.split(',').all(|f| f.trim().is_empty() || f.trim_end().ends_with('?')))
 }
 
 pub fn entry(key: &str) -> Option<&'static Entry> {
@@ -447,17 +476,16 @@ pub fn run_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Resu
         "shortcuts.export" => {
             let v = export_json(&app.ui.shortcut_set, &app.ui.shortcut_overrides);
             let bytes = serde_json::to_vec_pretty(&v).unwrap_or_default();
-            let path = s("path").or_else(|| app.services.pick_save.as_mut().and_then(|f| f(&crate::FilePick::named("VectorCraft Shortcuts.json"))));
+            let path = s("path").or_else(|| crate::picks::save(app, &crate::FilePick::named("VectorCraft Shortcuts.json")));
             match path {
                 Some(path) => match app.services.write.as_mut() {
                     Some(w) => w(&path, &bytes).map(|_| json!({"path": path})),
                     None => Err("no file writer".into()),
                 },
+                // Its save dialog is open: the file is written when it answers.
+                None if app.file_dialog_open() => Err("cancelled".into()),
                 None => match app.services.download.as_mut() {
-                    Some(dl) => {
-                        dl("VectorCraft Shortcuts.json", &bytes);
-                        Ok(Value::Null)
-                    }
+                    Some(dl) => dl("VectorCraft Shortcuts.json", &bytes).map(|()| Value::Null),
                     None => Ok(v),
                 },
             }
@@ -466,7 +494,7 @@ pub fn run_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Resu
             let data = if let Some(v) = p.get("data") {
                 Ok(v.clone())
             } else {
-                let path = s("path").or_else(|| app.services.pick_open.as_mut().and_then(|f| f(&crate::FilePick::default())));
+                let path = s("path").or_else(|| crate::picks::open(app, &crate::FilePick::default()));
                 match (path, app.services.read.as_ref()) {
                     (Some(path), Some(r)) => r(&path).and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string())),
                     (None, _) => Err("cancelled".into()),
@@ -504,11 +532,12 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let mut ok = false;
     let mut cancel = false;
     let recording = d.str("__recording");
-    // Record a chord (before widgets see the keys).
+    // Record a chord (before widgets see the keys). Modifiers held down are part of the next key's
+    // chord, not a chord of their own.
     if !recording.is_empty() {
         let ev = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
-                egui::Event::Key { key, pressed: true, modifiers, .. } => Some((*key, *modifiers)),
+                egui::Event::Key { key, pressed: true, modifiers, .. } if !crate::shortcuts::is_modifier(*key) => Some((*key, *modifiers)),
                 _ => None,
             })
         });
@@ -686,39 +715,64 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let import = d.fields.remove("__import").is_some();
     let export = d.fields.remove("__export").is_some();
     app.ui.dialog = Some(d);
+    // Their file dialogs, shown off the UI thread, import into or export from the dialog as it is
+    // when they answer.
     if import {
-        // Import replaces the working set (committed on OK like other edits).
-        let saved = (app.ui.shortcut_overrides.clone(), app.ui.shortcut_set.clone());
-        match run_command(app, "shortcuts.import", &json!({})) {
-            Some(Ok(_)) => {
-                let (o, s) = (app.ui.shortcut_overrides.clone(), app.ui.shortcut_set.clone());
-                (app.ui.shortcut_overrides, app.ui.shortcut_set) = saved;
-                sync(&app.ui);
-                if let Some(d) = app.ui.dialog.as_mut() {
-                    d.fields.insert("overrides".into(), serde_json::to_value(&o).unwrap_or(json!({})));
-                    d.fields.insert("set".into(), json!(s));
-                    d.fields.insert("__message".into(), json!(tl!("Imported. Press OK to keep the imported set.")));
-                }
-            }
-            Some(Err(e)) if e != "cancelled" => app.status(e),
-            _ => {}
-        }
+        crate::picks::button(app, import_into_dialog);
     }
     if export {
-        let (ov, set) = app.ui.dialog.as_ref().map(|d| (dialog_overrides(d), d.str("set"))).unwrap_or_default();
-        let saved = std::mem::replace(&mut app.ui.shortcut_overrides, ov);
-        let saved_set = std::mem::replace(&mut app.ui.shortcut_set, set);
-        if let Some(Err(e)) = run_command(app, "shortcuts.export", &json!({})) {
-            app.status(e);
-        }
-        app.ui.shortcut_overrides = saved;
-        app.ui.shortcut_set = saved_set;
+        crate::picks::button(app, export_from_dialog);
     }
     if cancel {
         app.ui.dialog = None;
     } else if ok && let Err(e) = confirm(app) {
         app.status(e);
     }
+}
+
+/// The Keyboard Shortcuts dialog, while it is open.
+fn shortcuts_dialog(app: &VectorcraftApp) -> bool {
+    app.ui.dialog.as_ref().is_some_and(|d| d.kind == "shortcuts")
+}
+
+/// The dialog's Import…: the imported set replaces its working set (committed on OK like other
+/// edits).
+fn import_into_dialog(app: &mut VectorcraftApp) {
+    if !shortcuts_dialog(app) {
+        app.status(crate::picks::dialog_gone());
+        return;
+    }
+    let saved = (app.ui.shortcut_overrides.clone(), app.ui.shortcut_set.clone());
+    match run_command(app, "shortcuts.import", &json!({})) {
+        Some(Ok(_)) => {
+            let (o, s) = (app.ui.shortcut_overrides.clone(), app.ui.shortcut_set.clone());
+            (app.ui.shortcut_overrides, app.ui.shortcut_set) = saved;
+            sync(&app.ui);
+            if let Some(d) = app.ui.dialog.as_mut() {
+                d.fields.insert("overrides".into(), serde_json::to_value(&o).unwrap_or(json!({})));
+                d.fields.insert("set".into(), json!(s));
+                d.fields.insert("__message".into(), json!(tl!("Imported. Press OK to keep the imported set.")));
+            }
+        }
+        Some(Err(e)) if e != "cancelled" => app.status(e),
+        _ => {}
+    }
+}
+
+/// The dialog's Export…: its working set, as edited so far.
+fn export_from_dialog(app: &mut VectorcraftApp) {
+    if !shortcuts_dialog(app) {
+        app.status(crate::picks::dialog_gone());
+        return;
+    }
+    let (ov, set) = app.ui.dialog.as_ref().map(|d| (dialog_overrides(d), d.str("set"))).unwrap_or_default();
+    let saved = std::mem::replace(&mut app.ui.shortcut_overrides, ov);
+    let saved_set = std::mem::replace(&mut app.ui.shortcut_set, set);
+    if let Some(Err(e)) = run_command(app, "shortcuts.export", &json!({})) {
+        app.status(e);
+    }
+    app.ui.shortcut_overrides = saved;
+    app.ui.shortcut_set = saved_set;
 }
 
 /// Apply a recorded chord to `key` in the working set, warning about (and resolving) conflicts.
@@ -778,6 +832,39 @@ mod tests {
         assert_eq!(chord_from_event(Key::K, Modifiers::COMMAND | Modifiers::SHIFT).as_deref(), Some("Cmd+Shift+K"));
         assert_eq!(chord_from_event(Key::P, Modifiers::NONE).as_deref(), Some("P"));
         assert_eq!(chord_from_event(Key::Escape, Modifiers::NONE), None);
+        // A modifier's own key press is no chord (#487).
+        assert_eq!(chord_from_event(Key::ShiftLeft, Modifiers::SHIFT), None);
+        assert!(normalize("ShiftLeft").is_none() && normalize("Cmd+ControlRight").is_none());
+    }
+
+    #[test]
+    fn a_modifier_pressed_while_recording_waits_for_the_key() {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        open(&mut app);
+        app.ui.dialog.as_mut().unwrap().fields.insert("__recording".into(), json!("tool:groupSelection"));
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let mut press = |key, modifiers| {
+            let events = vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }];
+            let mut out = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| show(&mut app, ui.ctx()));
+            out.textures_delta.clear();
+            app.ui.dialog.clone().unwrap()
+        };
+        // egui reports Shift's own key press first (#487): the recording goes on.
+        assert_eq!(press(Key::ShiftLeft, Modifiers::SHIFT).str("__recording"), "tool:groupSelection");
+        let d = press(Key::A, Modifiers::SHIFT);
+        assert_eq!(d.str("__recording"), "");
+        assert_eq!(dialog_overrides(&d).get("tool:groupSelection").map(String::as_str), Some("Shift+A"));
+    }
+
+    #[test]
+    fn saved_modifier_only_overrides_give_the_default_back() {
+        let mut ui = UiState::default();
+        ui.shortcut_overrides.insert("tool:groupSelection".into(), "Shift+ShiftLeft".into());
+        ui.shortcut_overrides.insert("edit.preferences".into(), String::new());
+        let ui = ui.sanitized();
+        assert!(!ui.shortcut_overrides.contains_key("tool:groupSelection"));
+        assert_eq!(ui.shortcut_overrides.get("edit.preferences").map(String::as_str), Some(""));
     }
 
     #[test]
@@ -882,5 +969,33 @@ mod tests {
         assert!(entries().iter().any(|e| e.key == "edit.undo"));
         let mut seen = HashSet::new();
         assert!(entries().iter().all(|e| seen.insert(e.key.clone())), "duplicate entries");
+    }
+
+    #[test]
+    fn duplicate_can_be_given_a_shortcut() {
+        // Duplicate has no default chord (#1539): it must still be listed so one can be set.
+        assert_eq!(entry("edit.duplicate").map(|e| e.group.as_str()), Some("Edit"));
+        let mut ov = BTreeMap::new();
+        assign(&mut ov, "edit.duplicate", Some("Cmd+Alt+Shift+F8"), false).unwrap();
+        assert_eq!(effective_in(&ov, "edit.duplicate").as_deref(), Some("Cmd+Alt+Shift+F8"));
+    }
+
+    /// #1539: a command outside the menus that runs without params (a panel menu's Break Link to
+    /// Symbol) can be given a shortcut; one that needs params, a query or an alias can't.
+    #[test]
+    fn menuless_commands_that_run_bare_are_listed() {
+        let e = entry("symbol.breakLink").expect("listed");
+        assert_eq!((e.label.as_str(), e.group.as_str()), ("Break Link to Symbol", "Symbol"));
+        for id in ["brush.duplicate", "path.convertAnchors", "document.json", "prefs.list"] {
+            assert!(entry(id).is_none(), "{id}");
+        }
+        for (doc, bare) in
+            [("{}", true), ("{dx?, dy?} x", true), ("{id?|ids?, clip?}", true), ("{name, newName?}", false), ("{a?: {b}}", false), ("same as", false)]
+        {
+            assert_eq!(runs_without_params(doc), bare, "{doc}");
+        }
+        let mut ov = BTreeMap::new();
+        assert!(assign(&mut ov, "symbol.breakLink", Some("Cmd+Alt+Shift+F9"), true).is_ok());
+        assert_eq!(effective_in(&ov, "symbol.breakLink").as_deref(), Some("Cmd+Alt+Shift+F9"));
     }
 }

@@ -6,6 +6,22 @@ use std::sync::Arc;
 
 use crate::ImageBlob;
 
+/// The most memory the decoded RGBA pixels of one image may take: the allowance the importers
+/// and the renderer decode within (a 60 in sheet at 300 ppi is ~475 MB). The web app has 4 GB to
+/// address and aborts when an allocation fails, so it keeps the decoder's own 512 MB.
+pub const MAX_RASTER_ALLOC: u64 = if cfg!(target_arch = "wasm32") { 512 << 20 } else { 2 << 30 };
+
+/// The pixels of encoded image `bytes` as RGBA; `None` when they can't be decoded or would take
+/// more than `max` bytes as RGBA. The size is read from the header first: the decoder's own limit
+/// is on the file's samples, and a grey image is a quarter of what it becomes here (#1717).
+fn rgba_within(bytes: &[u8], max: u64) -> Option<image::RgbaImage> {
+    let (w, h) = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()?;
+    if u64::from(w) * u64::from(h) * 4 > max {
+        return None;
+    }
+    Some(image::load_from_memory(bytes).ok()?.to_rgba8())
+}
+
 impl ImageBlob {
     /// A PNG blob of `png` bytes.
     pub fn png(png: Vec<u8>) -> Self {
@@ -21,7 +37,7 @@ impl ImageBlob {
     /// pixels left alone, re-encoded as PNG. `f` runs once per distinct colour. `None` when the
     /// image can't be decoded or no pixel changed.
     pub fn map_rgb(&self, mut f: impl FnMut([u8; 3]) -> [u8; 3]) -> Option<ImageBlob> {
-        let mut img = image::load_from_memory(&self.bytes).ok()?.to_rgba8();
+        let mut img = rgba_within(&self.bytes, MAX_RASTER_ALLOC)?;
         let mut memo: HashMap<[u8; 3], [u8; 3]> = HashMap::new();
         let mut changed = false;
         for px in img.pixels_mut().filter(|p| p.0[3] > 0) {
@@ -67,7 +83,7 @@ impl ImageBlob {
         LAST.with_borrow_mut(|last| match last {
             Some((k, img)) if *k == key => Some(img.clone()),
             _ => {
-                let img = Arc::new(image::load_from_memory(&self.bytes).ok()?.to_rgba8());
+                let img = Arc::new(rgba_within(&self.bytes, MAX_RASTER_ALLOC)?);
                 *last = Some((key, img.clone()));
                 Some(img)
             }
@@ -113,6 +129,18 @@ mod tests {
 
     fn pixels(b: &ImageBlob) -> Vec<[u8; 4]> {
         image::load_from_memory(&b.bytes).unwrap().to_rgba8().pixels().map(|p| p.0).collect()
+    }
+
+    /// #1717: the RGBA size is checked from the header, before anything is decoded: a grey image
+    /// the decoder's own limit lets through is four times that as RGBA.
+    #[test]
+    fn pixels_past_the_allowance_are_not_decoded() {
+        let grey = image::GrayImage::from_raw(4, 2, vec![7; 8]).unwrap();
+        let mut png = Vec::new();
+        grey.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        assert!(rgba_within(&png, 31).is_none(), "8 grey bytes are 32 as RGBA");
+        assert_eq!(rgba_within(&png, 32).map(|i| i.dimensions()), Some((4, 2)));
+        assert!(rgba_within(b"not an image", u64::MAX).is_none());
     }
 
     #[test]

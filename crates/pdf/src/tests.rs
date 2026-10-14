@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use vectorcraft_color::{BlendMode, Color, Gradient, GradientKind, GradientPaint, Paint};
+use vectorcraft_color::{BlendMode, Color, Gradient, GradientGeom, GradientKind, GradientPaint, Paint};
 use vectorcraft_doc::{
     Appearance, AppearanceItem, Artboard, CharStyle, Dash, Document, ImageBlob, ImageObject, LineCap, LineJoin, Node, NodeId, NodeKind, TextObject,
 };
@@ -131,6 +131,54 @@ fn roundtrip_rect_and_ellipse_bounds() {
     assert!(close(l[1].geometric_bounds().unwrap(), Rect::new(150.0, 40.0, 250.0, 180.0), 0.05), "{:?}", l[1].geometric_bounds());
     assert_eq!(out.artboards.len(), 1);
     assert!(close(out.artboards[0].rect, Rect::new(0.0, 0.0, 300.0, 200.0), 1e-6));
+}
+
+#[test]
+fn an_instance_whose_art_reaches_the_page_is_written() {
+    // The symbol's red rectangle, (100, 50) to (140, 90), drawn from (-50, -50): on the page, while
+    // the 20 × 20 square around the origin, moved to (-60, -60) to (-40, -40), is off it.
+    let mut d = doc(200.0, 100.0);
+    let red = rect_node(Rect::new(100.0, 50.0, 140.0, 90.0), Color::rgb(1.0, 0.0, 0.0));
+    let far = vectorcraft_doc::Symbol { name: "Far".into(), art: Arc::new(red) };
+    d.symbols.push(far.clone());
+    let instance = Node::new(NodeId(0), NodeKind::SymbolInstance { symbol: "Far".into(), xf: Affine::translate((-50.0, -50.0)) });
+    add(&mut d, instance.clone());
+    let out = roundtrip(&d);
+    let l = leaves(&out);
+    assert_eq!(l.len(), 1);
+    assert!(close(l[0].geometric_bounds().unwrap(), Rect::new(50.0, 0.0, 90.0, 40.0), 0.01), "{:?}", l[0].geometric_bounds());
+    // An element of a knockout group, beside a blue rectangle.
+    let mut d = doc(200.0, 100.0);
+    d.symbols.push(far);
+    let blue = rect_node(Rect::new(150.0, 10.0, 170.0, 30.0), Color::rgb(0.0, 0.0, 1.0));
+    let mut group = Node::group(NodeId(0), vec![Arc::new(instance), Arc::new(blue)]);
+    group.knockout = vectorcraft_doc::Knockout::On;
+    add(&mut d, group);
+    let fills: Vec<[u8; 4]> = leaves(&roundtrip(&d)).iter().filter_map(|n| Some(n.appearance.fill_paint().color()?.to_rgba8(1.0))).collect();
+    assert!(fills.contains(&[255, 0, 0, 255]) && fills.contains(&[0, 0, 255, 255]), "{fills:?}");
+}
+
+#[test]
+fn an_instance_whose_brush_art_reaches_the_page_is_written() {
+    // The symbol's art: a line from (0, 40) to (0, 60) with a 1 pt stroke painted by a 20 pt round
+    // nib. Drawn from (-5, 0), the line lies left of the page, and the nib paints 10 pt either side
+    // of it, onto the page.
+    let mut d = doc(200.0, 100.0);
+    let mut lib = vectorcraft_brush::library(&d);
+    let Some(vectorcraft_brush::BrushKind::Calligraphic(c)) = lib.iter_mut().find(|b| b.name == "3 pt. Round").map(|b| &mut b.kind) else {
+        panic!("the 3 pt. Round brush")
+    };
+    c.size = 20.0;
+    vectorcraft_brush::store(&mut d, &lib);
+    let mut stroke = Appearance::basic(Paint::None, Paint::solid(Color::BLACK), 1.0);
+    stroke.stroke_mut().unwrap().brush = Some("3 pt. Round".into());
+    let line = Node::path(NodeId(0), shapes::line((0.0, 40.0).into(), (0.0, 60.0).into()), stroke);
+    d.symbols.push(vectorcraft_doc::Symbol { name: "Nib".into(), art: Arc::new(line) });
+    add(&mut d, Node::new(NodeId(0), NodeKind::SymbolInstance { symbol: "Nib".into(), xf: Affine::translate((-5.0, 0.0)) }));
+    let out = roundtrip(&d);
+    let l = leaves(&out);
+    assert_eq!(l.len(), 1, "the nib's art");
+    assert!(close(l[0].geometric_bounds().unwrap(), Rect::new(-15.0, 30.0, 5.0, 70.0), 0.01), "{:?}", l[0].geometric_bounds());
 }
 
 #[test]
@@ -268,6 +316,79 @@ fn objects_outside_artboard_are_culled() {
     assert_eq!(leaves(&roundtrip(&d)).len(), 1);
 }
 
+/// A line from (10, `y`) to (90, `y`).
+fn line(y: f64) -> PathData {
+    let mut bp = vectorcraft_geom::BezPath::new();
+    bp.move_to((10.0, y));
+    bp.line_to((90.0, y));
+    PathData::from_bezpath(&bp)
+}
+
+/// Art that the PDF would hold a value beyond a billion points for is left out: a path that far,
+/// a gradient placed that far, a stroke so wide that its group's box reaches that far, and an
+/// image placed that far. Each would be written with -2,147,483,648, which the PDF writer panics
+/// on in builds with overflow checks.
+#[test]
+fn art_reaching_beyond_a_billion_points_is_left_out() {
+    let far = -2_147_483_649.0;
+    let shaded = |kind, start, end| {
+        let mut n = rect_node(Rect::new(60.0, 10.0, 90.0, 50.0), Color::BLACK);
+        let geom = GradientGeom { start, end, aspect: 1.0, focal: None };
+        let g = GradientPaint { geom: Some(geom), ..GradientPaint::new(Gradient { kind, ..Gradient::default() }) };
+        n.appearance.set_fill(Paint::Gradient(Box::new(g)));
+        n
+    };
+    let mut wide = Node::path(NodeId(0), line(0.0), Appearance::basic(Paint::None, Paint::solid(Color::BLACK), 4_294_967_296.0));
+    wide.opacity = 0.5;
+    let image = ImageObject {
+        key: "img1".into(),
+        width: 4,
+        height: 2,
+        xf: Affine::new([5.5e8, 0.0, 0.0, 10.0, far, 60.0]),
+        link: None,
+        placement: Default::default(),
+    };
+    for (what, n) in [
+        ("path", rect_node(Rect::new(far, 60.0, 90.0, 90.0), Color::BLACK)),
+        ("linear gradient", shaded(GradientKind::Linear, Point::new(far, 0.0), Point::new(90.0, 0.0))),
+        ("radial gradient", shaded(GradientKind::Radial, Point::new(far, 30.0), Point::new(far + 100.0, 30.0))),
+        ("stroke", wide),
+        ("image", Node::new(NodeId(0), NodeKind::Image(Box::new(image)))),
+    ] {
+        let mut d = doc(100.0, 100.0);
+        d.images.insert("img1".into(), ImageBlob::new("image/png", tiny_png()));
+        add(&mut d, rect_node(Rect::new(10.0, 10.0, 50.0, 50.0), Color::BLACK));
+        add(&mut d, n);
+        assert_eq!(leaves(&roundtrip(&d)).len(), 1, "{what}");
+    }
+}
+
+/// A dash offset beyond a billion points is written as its remainder after whole periods of the
+/// pattern: -2,147,483,649 (-2,147,483,648 as an f32, which the PDF writer panics on in builds
+/// with overflow checks) is 1 in a pattern of 5 and 5.
+#[test]
+fn dash_offsets_beyond_a_billion_points_wrap_into_their_pattern() {
+    let mut d = doc(100.0, 100.0);
+    let mut n = Node::path(NodeId(0), line(50.0), Appearance::basic(Paint::None, Paint::solid(Color::BLACK), 2.0));
+    n.appearance.stroke_mut().unwrap().dash = Some(Dash { pattern: vec![5.0, 5.0], offset: -2_147_483_649.0, align_corners: false });
+    add(&mut d, n);
+    assert!(uncompressed(&d).contains("[5 5]1 d"));
+}
+
+/// The page of an artboard beyond a billion points is left blank: what is on it would be placed
+/// through -2,147,483,648, which the PDF writer panics on in builds with overflow checks.
+#[test]
+fn artboards_beyond_a_billion_points_export_blank_pages() {
+    let mut d = doc(100.0, 100.0);
+    d.artboards[0].rect = Rect::new(2_147_483_649.0, 0.0, 2_147_483_749.0, 100.0);
+    let mut n = rect_node(Rect::new(2_147_483_659.0, 10.0, 2_147_483_699.0, 50.0), Color::BLACK);
+    n.opacity = 0.5;
+    add(&mut d, n);
+    let bytes = export(&d, &PdfOptions::default()).unwrap();
+    assert_eq!(page_count(&bytes), 1);
+    assert!(leaves(&import(&bytes).unwrap()).is_empty());
+}
+
 #[test]
 fn opacity_and_blend_modes() {
     let mut d = doc(200.0, 200.0);
@@ -342,9 +463,13 @@ fn text_exported_as_outlines() {
     let mut d = doc(300.0, 100.0);
     let t = TextObject::point(Point::new(10.0, 50.0), "Hello", CharStyle { size: 24.0, ..CharStyle::default() });
     add(&mut d, Node::new(NodeId(0), NodeKind::Text(Box::new(t))));
-    let s = uncompressed(&d);
+    let mut outlined = PdfOptions::uncompressed();
+    outlined.settings.advanced.outline_text = true;
+    let s = String::from_utf8_lossy(&export(&d, &outlined).unwrap()).into_owned();
     assert!(!s.contains("/Font"), "no fonts when outlining text");
-    let r = import_with_report(&export(&d, &PdfOptions::default()).unwrap(), &ImportOptions::default()).unwrap();
+    // Real text in an embedded font by default, as a PDF from Illustrator has it (#733).
+    assert!(uncompressed(&d).contains("/FontFile"), "a font embedded by default");
+    let r = import_with_report(&export(&d, &outlined).unwrap(), &ImportOptions::default()).unwrap();
     let l = leaves(&r.document);
     assert!(!l.is_empty());
     assert!(l.iter().all(|n| matches!(n.kind, NodeKind::Path { .. })));
@@ -374,7 +499,7 @@ fn image_roundtrip() {
         link: None,
         placement: Default::default(),
     };
-    add(&mut d, Node::new(NodeId(0), NodeKind::Image(im)));
+    add(&mut d, Node::new(NodeId(0), NodeKind::Image(Box::new(im))));
     let out = roundtrip(&d);
     let l = leaves(&out);
     assert_eq!(l.len(), 1);
@@ -434,6 +559,20 @@ fn import_handmade_pdf() {
     assert!(close(l[2].geometric_bounds().unwrap(), Rect::new(150.0, 270.0, 190.0, 300.0), 1e-6));
 }
 
+/// Art off the page opens on the pasteboard round its artboard, not cut away (#472).
+#[test]
+fn import_keeps_art_outside_the_page() {
+    let content = "0 0 1 rg 10 10 50 30 re f 0 1 0 rg -300 -300 50 50 re f 1 0 0 rg 500 500 20 20 re f";
+    let d = import(&handmade_pdf(content, "[0 0 200 300]")).unwrap();
+    assert!(close(d.artboards[0].rect, Rect::new(0.0, 0.0, 200.0, 300.0), 1e-9));
+    let bounds: Vec<Rect> = leaves(&d).iter().map(|n| n.geometric_bounds().unwrap()).collect();
+    let want = [Rect::new(10.0, 260.0, 60.0, 290.0), Rect::new(-300.0, 550.0, -250.0, 600.0), Rect::new(500.0, -220.0, 520.0, -200.0)];
+    assert_eq!(bounds.len(), want.len(), "{bounds:?}");
+    for (b, w) in bounds.iter().zip(want) {
+        assert!(close(*b, w, 1e-6), "{b:?} vs {w:?}");
+    }
+}
+
 #[test]
 fn import_invalid_dash_array_strokes_solid() {
     // A dash array with a negative value is invalid (PDF 32000-1 §8.4.3.6): the line is solid. A valid
@@ -451,7 +590,7 @@ fn import_invalid_dash_array_strokes_solid() {
     // And the exporter never writes an invalid array back.
     let mut d2 = doc(100.0, 100.0);
     let mut n = rect_node(Rect::new(10.0, 10.0, 90.0, 90.0), Color::rgb(1.0, 0.0, 0.0));
-    n.appearance = Appearance::basic(Paint::None, Paint::solid(Color::BLACK), 2.0);
+    n.appearance = Appearance::basic(Paint::None, Paint::solid(Color::BLACK), 2.0).into();
     if let Some(AppearanceItem::Stroke(st)) = n.appearance.items.last_mut() {
         st.dash = Some(Dash { pattern: vec![-5.0, 3.0], offset: 0.0, align_corners: false });
     }
@@ -588,10 +727,53 @@ fn opacity_mask_exports_as_luminosity_soft_mask() {
     let mut d = doc(100.0, 100.0);
     let mut n = rect_node(Rect::new(10.0, 10.0, 90.0, 90.0), Color::rgb(1.0, 0.0, 0.0));
     let art = rect_node(Rect::new(10.0, 10.0, 50.0, 90.0), Color::WHITE);
-    n.mask = Some(Box::new(vectorcraft_doc::OpacityMask::new(art, true)));
+    n.extras_mut().mask = Some(Box::new(vectorcraft_doc::OpacityMask::new(art, true)));
     add(&mut d, n);
     let bytes = export(&d, &PdfOptions::uncompressed()).unwrap();
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("/SMask"), "soft mask in an ExtGState");
     assert!(text.contains("/Luminosity"));
+}
+
+/// A function or colour space built on itself is refused before the interpreter builds it (by
+/// recursion, with no cap: a stack overflow), and those of real files are read.
+#[test]
+fn functions_and_colour_spaces_built_on_themselves_are_refused() {
+    use vectorcraft_testkit::pdf::{PdfPage, first_extra, pdf_with};
+    let first = first_extra(1);
+    let (me, next) = (format!("{first} 0 R"), format!("{} 0 R", first + 1));
+    let shaded = PdfPage {
+        resources: format!("/Shading << /S << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] /Function {me} >> >>"),
+        ..PdfPage::new(100.0, 100.0, "/S sh")
+    };
+    let filled = PdfPage { resources: format!("/ColorSpace << /C {me} >>"), ..PdfPage::new(100.0, 100.0, "/C cs 0 sc 0 0 50 50 re f") };
+    let stitch = |on: &str| format!("<< /FunctionType 3 /Domain [0 1] /Functions [{on}] /Bounds [] /Encode [0 1] >>");
+    let indexed = |on: &str| format!("[/Indexed {on} 1 <000000ffffff>]");
+    let ramp = "<< /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>";
+    // `n` functions, each stitching the next, then a plain one.
+    let chain = |n: usize| (1..=n).map(|i| stitch(&format!("{} 0 R", first + i))).chain([ramp.to_string()]).collect::<Vec<_>>();
+    let calculator =
+        |program: &str| format!("<< /FunctionType 4 /Domain [0 1] /Range [0 1 0 1 0 1] /Length {} >>\nstream\n{program}\nendstream", program.len());
+    for (what, page, objects) in [
+        ("a function stitching itself", &shaded, vec![stitch(&me)]),
+        ("two functions stitching each other", &shaded, vec![stitch(&next), stitch(&me)]),
+        ("twenty functions, each stitching the next", &shaded, chain(20)),
+        ("procedures in procedures", &shaded, vec![calculator(&format!("{}{}", "{".repeat(100), "}".repeat(100)))]),
+        ("a colour space on itself", &filled, vec![indexed(&me)]),
+        ("two colour spaces on each other", &filled, vec![indexed(&next), indexed(&me)]),
+    ] {
+        let objects: Vec<&str> = objects.iter().map(String::as_str).collect();
+        let e = import(&pdf_with(std::slice::from_ref(page), &objects, None)).err().map(|e| e.to_string());
+        assert!(e.as_deref().is_some_and(|e| e.contains("built on one another without end")), "{what}: {e:?}");
+    }
+    for (what, page, objects) in [
+        ("a function stitching one", &shaded, vec![stitch(&next), ramp.to_string()]),
+        ("three functions, each stitching the next", &shaded, chain(3)),
+        ("a calculator function", &shaded, vec![calculator("{ dup 1 exch sub 0 }")]),
+        ("an indexed colour space", &filled, vec![indexed("/DeviceRGB")]),
+    ] {
+        let objects: Vec<&str> = objects.iter().map(String::as_str).collect();
+        let d = import(&pdf_with(std::slice::from_ref(page), &objects, None)).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert!(d.layers.iter().any(|l| l.children().is_some_and(|c| !c.is_empty())), "{what}: its art is read");
+    }
 }

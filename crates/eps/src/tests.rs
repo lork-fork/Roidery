@@ -269,7 +269,7 @@ fn png_doc() -> Document {
         link: None,
         placement: Default::default(),
     };
-    let n = Node::new(d.alloc_id(), NodeKind::Image(im));
+    let n = Node::new(d.alloc_id(), NodeKind::Image(Box::new(im)));
     let layer = d.layers[0].id;
     d.insert(Some(layer), 0, n).unwrap();
     d
@@ -345,6 +345,11 @@ fn run_length_and_ascii85_round_trip() {
     assert_eq!(ps::ascii85(b"Man "), "9jqo^~>\n");
     assert_eq!(ps::ascii85(&[0, 0, 0, 0]), "z~>\n");
     assert!(ps::ascii85_decode("9jqo^").is_none(), "no end marker");
+    // #1715: the result is bounded while it is made, not by the length of the text.
+    assert_eq!(ps::ascii85_decode_within("zz~>", 8), Some(vec![0; 8]));
+    assert!(ps::ascii85_decode_within("zzz~>", 8).is_none(), "three `z` are 12 bytes");
+    assert!(ps::ascii85_decode_within("zz9jqo^~>", 8).is_none());
+    assert!(ps::ascii85_decode_within(&format!("{}~>", "z".repeat(1 << 16)), 1 << 10).is_none());
     assert!(ps::ascii85_decode("9jqo^v~>").is_none(), "not base 85");
     assert_eq!(ps::num(1.0 / 3.0), "0.3333");
     assert_eq!((ps::num(-0.00001), ps::num(f64::NAN), ps::num(2.5)), ("0".into(), "0".into(), "2.5".into()));
@@ -438,6 +443,36 @@ fn clipping_groups_clip_and_hidden_or_template_art_is_left_out() {
     let clip = page.find("W\n").unwrap();
     assert!(page[..clip].contains("q\n") && page[clip..].contains("1 0 0 rg"), "{page}");
     assert!(!page.contains("0 0 1 rg"), "hidden and template art: {page}");
+}
+
+#[test]
+fn an_instance_whose_art_reaches_the_region_is_written() {
+    // The symbol's red rectangle, (100, 100) to (140, 140), drawn from (-50, -50): on the artboard,
+    // while the 20 × 20 square around the origin, moved to (-60, -60) to (-40, -40), is off it.
+    let mut d = doc_with(|d| vec![Node::new(d.alloc_id(), NodeKind::SymbolInstance { symbol: "Far".into(), xf: Affine::translate((-50.0, -50.0)) })]);
+    let art = path(&mut d, shapes::rectangle(Rect::new(100.0, 100.0, 140.0, 140.0)), Paint::solid(Color::rgb(1.0, 0.0, 0.0)), Paint::None, 0.0);
+    d.symbols.push(vectorcraft_doc::Symbol { name: "Far".into(), art: Arc::new(art) });
+    let page = page_of(&d, &opts(&d));
+    assert!(page.contains("1 0 0 rg"), "{page}");
+}
+
+#[test]
+fn an_instance_whose_brush_art_reaches_the_region_is_written() {
+    // The symbol's art: a line from (0, 40) to (0, 60) with a 1 pt red stroke painted by a 20 pt
+    // round nib. Drawn from (-5, 0), the line lies left of the artboard, and the nib paints 10 pt
+    // either side of it, onto the artboard.
+    let mut d = doc_with(|d| vec![Node::new(d.alloc_id(), NodeKind::SymbolInstance { symbol: "Nib".into(), xf: Affine::translate((-5.0, 0.0)) })]);
+    let mut lib = vectorcraft_brush::library(&d);
+    let Some(vectorcraft_brush::BrushKind::Calligraphic(c)) = lib.iter_mut().find(|b| b.name == "3 pt. Round").map(|b| &mut b.kind) else {
+        panic!("the 3 pt. Round brush")
+    };
+    c.size = 20.0;
+    vectorcraft_brush::store(&mut d, &lib);
+    let mut art = path(&mut d, shapes::line((0.0, 40.0).into(), (0.0, 60.0).into()), Paint::None, Paint::solid(Color::rgb(1.0, 0.0, 0.0)), 1.0);
+    art.appearance.stroke_mut().unwrap().brush = Some("3 pt. Round".into());
+    d.symbols.push(vectorcraft_doc::Symbol { name: "Nib".into(), art: Arc::new(art) });
+    let page = page_of(&d, &opts(&d));
+    assert!(page.contains("1 0 0 rg"), "{page}");
 }
 
 #[test]

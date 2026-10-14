@@ -14,10 +14,10 @@ use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::{Fill, LinearGradient, RadialGradient, SpreadMethod, Stop, Stroke, StrokeDash};
 use krilla::surface::Surface;
-use krilla::text::{GlyphId, KrillaGlyph};
+use krilla::text::{Glyph, GlyphId, KrillaGlyph};
 use kurbo::{PathEl, Shape, Vec2};
 use vectorcraft_color::{BlendMode, Color, GradientKind, Paint};
-use vectorcraft_doc::{AppearanceItem, Document, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, TextObject};
+use vectorcraft_doc::{AppearanceItem, Document, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, SymbolBoxes, TextObject};
 use vectorcraft_effects::stroke::{self, WrittenShape};
 use vectorcraft_geom::{Affine, BezPath, FillRule, Rect};
 use vectorcraft_text::TextLayout;
@@ -229,8 +229,10 @@ impl Writer {
         if sheet.negative {
             cover(&mut s, paper, 255, 1.0);
         }
+        // A page whose art or marks would be placed beyond [`MAX_COORD`] is left blank.
+        let fits = writable(&s, sheet.view, Rect::ZERO) && writable(&s, sheet.view * sheet.place, Rect::ZERO);
         s.push_transform(&xf(sheet.view));
-        let window = sheet.window.and_then(|r| to_path(&r.to_path(0.1)));
+        let window = sheet.window.and_then(|r| to_path(&s, &r.to_path(0.1)));
         if let Some(clip) = &window {
             s.push_clip_path(clip, &krilla::paint::FillRule::NonZero);
         }
@@ -239,7 +241,7 @@ impl Writer {
             s.push_transform(&xf(sheet.place));
         }
         let r = sheet.area;
-        let clip = sheet.clip.then(|| to_path(&r.to_path(0.1))).flatten();
+        let clip = sheet.clip.then(|| to_path(&s, &r.to_path(0.1))).flatten();
         if let Some(clip) = &clip {
             s.push_clip_path(clip, &krilla::paint::FillRule::NonZero);
         }
@@ -248,15 +250,17 @@ impl Writer {
         // at the top of a page is put in a non-isolated group of its own, whose blending space
         // `cmyk_blending` rewrites.
         let doc = ex.doc;
-        let page_group = !self.pdf13 && (doc.page_isolate || doc.page_knockout);
-        let cmyk_page_group = self.cmyk && !page_group && ex.shows_transparency();
+        let page_group = fits && !self.pdf13 && (doc.page_isolate || doc.page_knockout);
+        let cmyk_page_group = fits && self.cmyk && !page_group && ex.shows_transparency();
         if page_group {
             s.push_isolated();
         } else if cmyk_page_group {
             let all = constant_mask(&mut s, r, 1.0);
             s.push_mask(all);
         }
-        ex.children(&mut s, &doc.layers, r);
+        if fits {
+            ex.children(&mut s, &doc.layers, r);
+        }
         if page_group || cmyk_page_group {
             s.pop();
         }
@@ -266,14 +270,16 @@ impl Writer {
         if placed {
             s.pop();
         }
-        if let Some(art) = sheet.marks {
+        if fits && let Some(art) = sheet.marks {
             // The drawing space the page shows (the marks' area).
             let shown = sheet.view.inverse().transform_rect_bbox(paper);
             let knockout = std::mem::replace(&mut ex.knockout, false);
-            // Marks keep their inks: they aren't converted to the destination.
+            // Marks keep their inks: they aren't converted to the destination. The page
+            // information is drawn as glyph shapes, like the other marks, not as text.
             let convert = std::mem::replace(&mut ex.convert, false);
+            let outline = std::mem::replace(&mut ex.outline_text, true);
             ex.node(&mut s, art, sheet.window.map_or(shown, |r| r.intersect(shown)), true);
-            (ex.knockout, ex.convert) = (knockout, convert);
+            (ex.knockout, ex.convert, ex.outline_text) = (knockout, convert, outline);
         }
         if window.is_some() {
             s.pop();
@@ -426,6 +432,11 @@ fn date_time(t: i64) -> krilla::metadata::DateTime {
 
 pub(crate) struct Exporter<'a> {
     doc: &'a Document,
+    /// The art boxes of `doc`'s symbols, which the walk measures symbol instances by when it
+    /// leaves out objects outside the page ([`SymbolBoxes::quick`]). The box of an instance whose
+    /// art holds brushed strokes grows by as far as their brush art can paint
+    /// ([`SymbolBoxes::with_brush_art`]).
+    symbols: SymbolBoxes<'a>,
     warnings: Vec<String>,
     images: HashMap<String, Option<Image>>,
     /// The brush library, parsed when the first brushed stroke is written.
@@ -453,16 +464,24 @@ pub(crate) struct Exporter<'a> {
     /// The fonts real text is written in, by face id, with their units per em; `None` for faces
     /// that can't be embedded.
     fonts: HashMap<u32, Option<(krilla::text::Font, f64)>>,
-    /// Top-level layers are drawn as forms marked for their optional content groups
+    /// Layers and sublayers are drawn as forms marked for their optional content groups
     /// ([`crate::forms`]).
     pub layers: bool,
-    /// A top-level layer's form is being drawn.
-    in_layer: bool,
+    /// Each layer's index in [`crate::forms::pdf_layers`], by address.
+    layer_index: HashMap<usize, usize>,
+    /// The address of the layer whose form is being drawn.
+    in_layer: usize,
     /// Overprinting fills and strokes are drawn as forms marked to overprint.
     pub overprint: bool,
     /// An overprinting fill or stroke was drawn so.
     pub overprinted: bool,
+    /// Inline graphics being drawn inside inline graphics (text in a symbol shown inline in
+    /// text…): deeper ones are left out.
+    inline_depth: u32,
 }
+
+/// How deep inline graphics nest before they are left out.
+const MAX_INLINE_DEPTH: u32 = 4;
 
 impl<'a> Exporter<'a> {
     /// An exporter of `doc` writing images as `set` says; layers whose Print option is off are
@@ -470,6 +489,7 @@ impl<'a> Exporter<'a> {
     pub(crate) fn new(doc: &'a Document, set: &'a crate::PdfSettings) -> Self {
         Self {
             doc,
+            symbols: doc.symbol_boxes().quick().with_brush_art(),
             warnings: vec![],
             images: HashMap::new(),
             brushes: None,
@@ -485,9 +505,11 @@ impl<'a> Exporter<'a> {
             outline_text: set.advanced.outline_text,
             fonts: HashMap::new(),
             layers: false,
-            in_layer: false,
+            layer_index: crate::forms::pdf_layers(doc).iter().enumerate().map(|(i, l)| (address(l.node), i)).collect(),
+            in_layer: 0,
             overprint: false,
             overprinted: false,
+            inline_depth: 0,
         }
     }
 
@@ -513,12 +535,43 @@ struct GlyphLine {
 /// Most pixels along a side of a freeform gradient's image (its colour field is smooth).
 const MAX_FIELD_PX: f64 = 512.0;
 
+/// The largest magnitude a coordinate, length or transform entry may have in the content stream it
+/// is drawn into (for glyph spacing, in thousandths of an em). Art that would go beyond it is left
+/// out. A PDF/A-2 file may hold only integers from -2,147,483,648 to 2,147,483,647 (ISO 19005-2,
+/// 6.1.13). The PDF writer writes a whole number in the `i32` range as an integer, and in builds
+/// with overflow checks it panics on -2,147,483,648.
+const MAX_COORD: f64 = 1e9;
+
 fn xf(a: Affine) -> Transform {
     let c = a.as_coeffs();
     Transform::from_row(c[0] as f32, c[1] as f32, c[2] as f32, c[3] as f32, c[4] as f32, c[5] as f32)
 }
 
-fn to_path(bp: &BezPath) -> Option<Path> {
+/// The current transform of surface `s` in the content stream it draws into, without that stream's
+/// root transform (a page's y flip).
+fn ctm(s: &Surface) -> Affine {
+    let t = s.ctm();
+    Affine::new([t.sx(), t.ky(), t.kx(), t.sy(), t.tx(), t.ty()].map(f64::from))
+}
+
+/// Are `values` finite and within [`MAX_COORD`]?
+fn in_range(values: &[f64]) -> bool {
+    values.iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD)
+}
+
+/// Can art spanning `b`, in the space `space` maps into the one `s` draws in, be written: `b`, the
+/// transform of `s` followed by `space`, and `b` through that transform all within [`MAX_COORD`]?
+fn writable(s: &Surface, space: Affine, b: Rect) -> bool {
+    let t = ctm(s) * space;
+    let to = t.transform_rect_bbox(b);
+    in_range(&t.as_coeffs()) && in_range(&[b.x0, b.y0, b.x1, b.y1, to.x0, to.y0, to.x1, to.y1])
+}
+
+/// `bp` as a path to draw on `s`; `None` when it is empty or reaches beyond [`MAX_COORD`] there.
+fn to_path(s: &Surface, bp: &BezPath) -> Option<Path> {
+    if !writable(s, Affine::IDENTITY, bp.control_box()) {
+        return None;
+    }
     let mut pb = PathBuilder::new();
     for el in bp.elements() {
         match *el {
@@ -585,7 +638,7 @@ fn color(c: &Color) -> krilla::color::Color {
 /// Fill the page (with a margin) with a grey level (0 = black, 255 = white) at `opacity`: mask
 /// backdrops.
 fn cover(s: &mut Surface, page: Rect, level: u8, opacity: f32) {
-    let Some(p) = to_path(&page.inflate(1.0, 1.0).to_path(0.1)) else { return };
+    let Some(p) = to_path(s, &page.inflate(1.0, 1.0).to_path(0.1)) else { return };
     s.set_stroke(None);
     s.set_fill(Some(Fill { paint: rgb::Color::new(level, level, level).into(), opacity: norm(opacity), rule: krilla::paint::FillRule::NonZero }));
     s.draw_path(&p);
@@ -593,12 +646,18 @@ fn cover(s: &mut Surface, page: Rect, level: u8, opacity: f32) {
 
 /// An alpha mask of constant `alpha` over the page. A group drawn through it is a transparency
 /// group of that opacity that, unlike the writer's opacity groups, is not isolated.
+/// The cover is white, so a reader that takes every soft mask as a luminosity mask shows the same.
 fn constant_mask(s: &mut Surface, page: Rect, alpha: f32) -> krilla::mask::Mask {
     let mut sb = s.stream_builder();
     let mut ms = sb.surface();
-    cover(&mut ms, page, 0, alpha);
+    cover(&mut ms, page, 255, alpha);
     ms.finish();
     krilla::mask::Mask::new(sb.finish(), krilla::mask::MaskType::Alpha)
+}
+
+/// A node's address, to tell the very node apart from equal ones.
+fn address(n: &Node) -> usize {
+    std::ptr::from_ref(n).addr()
 }
 
 fn rects_overlap(a: Rect, b: Rect) -> bool {
@@ -700,14 +759,15 @@ impl Exporter<'_> {
         }
     }
 
-    /// Convert a paint. `bounds` resolves unset gradient geometry (like the renderer).
-    fn paint(&mut self, p: &Paint, bounds: Rect) -> Option<krilla::paint::Paint> {
-        self.paint_in(p, bounds, Affine::IDENTITY)
+    /// Convert a paint to draw on `s`. `bounds` resolves unset gradient geometry (like the
+    /// renderer). A gradient placed beyond [`MAX_COORD`] there gives no paint.
+    fn paint(&mut self, s: &Surface, p: &Paint, bounds: Rect) -> Option<krilla::paint::Paint> {
+        self.paint_in(s, p, bounds, Affine::IDENTITY)
     }
 
     /// [`Self::paint`] drawn in another space: `space` maps the paint's space (where `bounds`
     /// is) to the one drawn in.
-    fn paint_in(&mut self, p: &Paint, bounds: Rect, space: Affine) -> Option<krilla::paint::Paint> {
+    fn paint_in(&mut self, s: &Surface, p: &Paint, bounds: Rect, space: Affine) -> Option<krilla::paint::Paint> {
         match p {
             Paint::None => None,
             Paint::Solid { color: c, swatch, tint } => Some(self.solid(c, swatch.as_deref(), *tint).into()),
@@ -743,6 +803,9 @@ impl Exporter<'_> {
                 }
                 match g.gradient.kind {
                     GradientKind::Linear => {
+                        if !writable(s, space, Rect::from_points(geom.start, geom.end)) {
+                            return None;
+                        }
                         let (s, mut e) = (geom.start, geom.end);
                         if s.distance(e) < 1e-9 {
                             e = s + Vec2::new(1.0, 0.0);
@@ -767,6 +830,10 @@ impl Exporter<'_> {
                         let (cx, cy) = (geom.start.x as f32, geom.start.y as f32);
                         // An off-centre focal point: a two-point radial shading from it.
                         let f = t.inverse() * geom.focal_point();
+                        let circles = Rect::from_center_size(geom.start, (2.0 * f64::from(r), 2.0 * f64::from(r))).union_pt(f);
+                        if !writable(s, space * t, circles) {
+                            return None;
+                        }
                         Some(
                             RadialGradient {
                                 fx: f.x as f32,
@@ -846,7 +913,7 @@ impl Exporter<'_> {
         self.warn("knockout groups are written as soft-masked groups (same look, but not editable as knockout groups)");
         let elements: Vec<_> = Node::knockout_elements(children)
             .into_iter()
-            .filter(|c| c.visual_bounds().is_some_and(|b| rects_overlap(b.inflate(1.0, 1.0), page)))
+            .filter(|c| c.visual_bounds_with(&self.symbols).is_some_and(|b| rects_overlap(b.inflate(1.0, 1.0), page)))
             .collect();
         let Some((first, rest)) = elements.split_first() else { return };
         for c in rest.iter().rev() {
@@ -863,7 +930,13 @@ impl Exporter<'_> {
     /// A luminosity mask that is 1 − the knockout shape of `c`: white, then black through an alpha
     /// mask of `c` (at full object opacity without its own mask, unless those define its shape).
     fn knockout_mask(&mut self, s: &mut Surface, c: &Node, page: Rect) -> krilla::mask::Mask {
-        let shape = if c.knockout_shape { c.clone() } else { Node { opacity: 1.0, mask: None, ..c.clone() } };
+        let shape = if c.knockout_shape {
+            c.clone()
+        } else {
+            let mut s = c.clone().with_mask(None);
+            s.opacity = 1.0;
+            s
+        };
         let mut sb = s.stream_builder();
         let mut ms = sb.surface();
         cover(&mut ms, page, 255, 1.0);
@@ -885,15 +958,15 @@ impl Exporter<'_> {
 
     fn node(&mut self, s: &mut Surface, n: &Node, page: Rect, force: bool) {
         if self.layers
-            && !self.in_layer
-            && let NodeKind::Layer { template: false, printable, .. } = n.kind
+            && self.in_layer != address(n)
+            && let NodeKind::Layer { printable, .. } = n.kind
             && (printable || self.non_printing)
-            && let Some(i) = self.doc.layers.iter().position(|l| std::ptr::eq(&**l, n))
+            && let Some(&i) = self.layer_index.get(&address(n))
         {
-            // A PDF layer: hidden layers are written too (their group is off).
-            self.in_layer = true;
+            // A PDF layer: hidden layers and sublayers are written too (their group is off).
+            let enclosing = std::mem::replace(&mut self.in_layer, address(n));
             crate::forms::form(s, Mark::Layer(i), |s| self.node(s, n, page, true));
-            self.in_layer = false;
+            self.in_layer = enclosing;
             return;
         }
         if !force && !n.visible {
@@ -904,7 +977,7 @@ impl Exporter<'_> {
         {
             return;
         }
-        match n.visual_bounds() {
+        match n.visual_bounds_with(&self.symbols) {
             Some(b) if !force && !rects_overlap(b.inflate(1.0, 1.0), page) => return,
             None if !n.is_container() => return,
             _ => {}
@@ -931,7 +1004,7 @@ impl Exporter<'_> {
             }
             pushes += 1;
         }
-        if let Some(m) = n.mask.as_deref()
+        if let Some(m) = n.extras().mask.as_deref()
             && !m.disabled
         {
             let mask = self.soft_mask(s, m, page);
@@ -944,7 +1017,7 @@ impl Exporter<'_> {
                 // The region every output clips to; nothing to clip by hides the clipped art. The
                 // clipping path's fill paints behind the clipped art and its stroke over it, unclipped.
                 if let Some((clip, rest)) = children.split_first()
-                    && let Some((p, r)) = vectorcraft_effects::clip_outline(clip).and_then(|(bp, r)| to_path(&bp).map(|p| (p, r)))
+                    && let Some((p, r)) = vectorcraft_effects::clip_outline(clip).and_then(|(bp, r)| to_path(s, &bp).map(|p| (p, r)))
                 {
                     let paint = clip.clip_paint();
                     s.push_clip_path(&p, &rule(r));
@@ -982,7 +1055,7 @@ impl Exporter<'_> {
                 }
             }
             // Live blends/envelopes/meshes export their evaluated (expanded) form.
-            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) => {
+            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) | NodeKind::PlacedDocument(_) => {
                 let g = vectorcraft_effects::expand_live_deep(Some(self.doc), n);
                 for c in g.children().into_iter().flatten() {
                     self.node(s, c, page, false);
@@ -996,7 +1069,7 @@ impl Exporter<'_> {
     }
 
     fn shape(&mut self, s: &mut Surface, n: &Node, bp: &BezPath, r: FillRule, page: Rect) {
-        let Some(path) = to_path(bp) else { return };
+        let Some(path) = to_path(s, bp) else { return };
         let bounds = bp.bounding_box();
         for item in &n.appearance.items {
             match item {
@@ -1009,7 +1082,7 @@ impl Exporter<'_> {
                         if ex.area(s, &path, rule(r), &fl.paint, (fl.opacity, fl.blend), bounds, bounds) {
                             return;
                         }
-                        let Some(paint) = ex.paint(&fl.paint, bounds) else { return };
+                        let Some(paint) = ex.paint(s, &fl.paint, bounds) else { return };
                         let bl = fl.blend != BlendMode::Normal;
                         if bl {
                             s.push_blend_mode(blend(fl.blend));
@@ -1142,14 +1215,18 @@ impl Exporter<'_> {
             // The area the stroke paints (dashes, caps, joins, profile, arrowheads, alignment), as
             // Outline Stroke makes it, painted with the pattern's tiles or the freeform's image.
             let region = stroke::outline_region(&vectorcraft_geom::PathData::from_bezpath(bp), r, st).to_bezpath();
-            if let Some(clip) = to_path(&region) {
+            if let Some(clip) = to_path(s, &region) {
                 let area = region.bounding_box();
                 self.area(s, &clip, krilla::paint::FillRule::NonZero, &st.paint, (st.opacity, st.blend), st.paint_bounds(bounds), area);
             }
             return;
         }
-        let Some(paint) = self.paint(&st.paint, st.paint_bounds(bounds)) else { return };
+        let Some(paint) = self.paint(s, &st.paint, st.paint_bounds(bounds)) else { return };
         let w = stroke::for_writer(bp, st);
+        // A stroke whose width, caps or miter spikes reach beyond [`MAX_COORD`] is left out.
+        if !writable(s, Affine::IDENTITY, w.reach(st, bp.control_box()).inflate(1.0, 1.0)) {
+            return;
+        }
         let mut pushes = 0;
         if st.blend != BlendMode::Normal {
             s.push_blend_mode(blend(st.blend));
@@ -1165,7 +1242,7 @@ impl Exporter<'_> {
                 // (miter spikes included) plus the path, even-odd.
                 let mut outside = w.reach(st, bounds).inflate(1.0, 1.0).to_path(0.1);
                 outside.extend(bp.iter());
-                if let Some(p) = to_path(&outside) {
+                if let Some(p) = to_path(s, &outside) {
                     s.push_clip_path(&p, &krilla::paint::FillRule::EvenOdd);
                     pushes += 1;
                 }
@@ -1179,7 +1256,11 @@ impl Exporter<'_> {
                     if pat.len() % 2 == 1 {
                         pat.extend(pat.clone());
                     }
-                    StrokeDash { array: pat, offset: d.offset as f32 }
+                    // An offset beyond [`MAX_COORD`] is written as its remainder after whole
+                    // periods of the pattern.
+                    let period: f64 = pat.iter().copied().map(f64::from).sum();
+                    let offset = if in_range(&[d.offset]) { d.offset } else { d.offset.rem_euclid(period) };
+                    StrokeDash { array: pat, offset: if offset.is_finite() { offset as f32 } else { 0.0 } }
                 });
                 s.set_fill(None);
                 s.set_stroke(Some(Stroke {
@@ -1206,7 +1287,7 @@ impl Exporter<'_> {
                 // A gradient along or across the stroke: slices clipped to its outlines, under
                 // the stroke's opacity as a group.
                 if let Some(ws) = stroke::written_slices(bp, r, st, outlines)
-                    && let Some(clip) = to_path(&ws.clip)
+                    && let Some(clip) = to_path(s, &ws.clip)
                 {
                     self.warn("gradients along or across strokes are exported as slices of linear gradients");
                     if st.opacity < 1.0 {
@@ -1217,7 +1298,7 @@ impl Exporter<'_> {
                     s.set_stroke(None);
                     for (shape, paint) in &ws.slices {
                         let b = shape.bounding_box();
-                        if let (Some(paint), Some(p)) = (self.paint(paint, b), to_path(shape)) {
+                        if let (Some(paint), Some(p)) = (self.paint(s, paint, b), to_path(s, shape)) {
                             s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
                             s.draw_path(&p);
                         }
@@ -1236,8 +1317,10 @@ impl Exporter<'_> {
                 let opacity = if grouped { NormalizedF32::ONE } else { norm(st.opacity) };
                 s.set_stroke(None);
                 s.set_fill(Some(Fill { paint, opacity, rule: krilla::paint::FillRule::NonZero }));
-                for p in outlines.iter().filter_map(to_path) {
-                    s.draw_path(&p);
+                for outline in outlines {
+                    if let Some(p) = to_path(s, outline) {
+                        s.draw_path(&p);
+                    }
                 }
                 s.set_fill(None);
             }
@@ -1253,7 +1336,7 @@ impl Exporter<'_> {
         let doc = self.doc;
         let brushes = self.brushes.get_or_insert_with(|| vectorcraft_brush::library(doc));
         let Some(b) = st.brush.as_deref().and_then(|name| brushes.iter().find(|b| b.name == name)) else { return false };
-        let art = vectorcraft_brush::stroke_pieces(b, bp, st);
+        let art = vectorcraft_brush::stroke_pieces(doc, b, bp, st);
         let mut pushes = 0;
         if st.blend != BlendMode::Normal {
             s.push_blend_mode(blend(st.blend));
@@ -1272,7 +1355,14 @@ impl Exporter<'_> {
         true
     }
 
+    ///
+    /// Inline graphics ([`vectorcraft_doc::TextRun::inline`]) are drawn as their symbols' art
+    /// (vector paths, like symbol instances) where the layout placed them; their characters
+    /// write no glyph.
     fn text(&mut self, s: &mut Surface, n: &Node, t: &TextObject, page: Rect) {
+        let doc = self.doc;
+        let resolved = doc.inline_resolved(t);
+        let t = &*resolved;
         let layout = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
         let tb = t.xf.transform_rect_bbox(layout.bounds);
         // The object's own fills and strokes paint the whole outline: those below the Characters
@@ -1280,49 +1370,83 @@ impl Exporter<'_> {
         let (below, above) = n.appearance.split_contents();
         let all = (!n.appearance.items.is_empty()).then(|| {
             let mut all = layout.to_bezpath();
+            for (_, bar) in vectorcraft_text::decorations(&layout, vectorcraft_text::FontDb::global(), t) {
+                all.extend(bar.iter());
+            }
             all.apply_affine(t.xf);
-            to_path(&all).map(|p| (all, p))
+            to_path(s, &all).map(|p| (all, p))
         });
         let all = all.flatten();
         if let Some((bp, path)) = &all {
             self.text_items(s, below, bp, path, page, tb);
         }
-        s.push_transform(&xf(t.xf));
-        // Real text: the characters' fills as text in embedded fonts.
+        // Real text: the characters' fills as text in embedded fonts. The type's transform is
+        // pushed for each fill and stroke of the characters, inside its form when the fill or
+        // stroke overprints.
+        let text_space = xf(t.xf);
         let plain = (!self.outline_text).then(|| t.plain_text());
+        let bars = vectorcraft_text::decorations(&layout, vectorcraft_text::FontDb::global(), t);
         for (i, run) in t.runs.iter().enumerate() {
             let mut bp = BezPath::new();
             for g in layout.glyphs.iter().filter(|g| g.run == i) {
                 bp.extend(g.outline.iter());
             }
+            // Underline and strikethrough bars are paths, with real text too (#847).
+            let mut run_bars = BezPath::new();
+            for (_, bar) in bars.iter().filter(|(r, _)| *r == i) {
+                run_bars.extend(bar.iter());
+            }
+            bp.extend(run_bars.iter());
             let fill = &run.style.fill;
             self.overprinting(s, run.style.overprint_fill, fill, |ex, s| {
+                s.push_transform(&text_space);
                 // The outlines left to fill as paths: all of them, or those real text leaves.
                 let outlines = match plain.as_deref().filter(|_| !fill.is_none() && !ex.area_paint(fill)) {
-                    Some(text) => Cow::Owned(ex.glyph_text(s, &layout, i, text, fill)),
+                    Some(text) => {
+                        let mut left = ex.glyph_text(s, &layout, i, text, fill);
+                        left.extend(run_bars.iter());
+                        Cow::Owned(left)
+                    }
                     None => Cow::Borrowed(&bp),
                 };
                 let opaque = (1.0, BlendMode::Normal);
-                if let Some(path) = to_path(&outlines)
+                if let Some(path) = to_path(s, &outlines)
                     && !ex.area(s, &path, krilla::paint::FillRule::NonZero, fill, opaque, layout.bounds, outlines.bounding_box())
-                    && let Some(paint) = ex.paint(fill, layout.bounds)
+                    && let Some(paint) = ex.paint(s, fill, layout.bounds)
                 {
                     s.set_stroke(None);
                     s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
                     s.draw_path(&path);
                 }
+                s.pop();
             });
-            if run.style.has_stroke()
-                && let Some(path) = to_path(&bp)
-            {
+            s.push_transform(&text_space);
+            let path = run.style.has_stroke().then(|| to_path(s, &bp)).flatten();
+            s.pop();
+            if let Some(path) = path {
                 // Character strokes are drawn in text space, with their cap, join and dashes.
                 let st = run.style.stroke_layer();
-                self.overprinting(s, st.overprint, &st.paint, |ex, s| ex.stroke(s, &bp, &path, FillRule::NonZero, &st, page, layout.bounds));
+                self.overprinting(s, st.overprint, &st.paint, |ex, s| {
+                    s.push_transform(&text_space);
+                    ex.stroke(s, &bp, &path, FillRule::NonZero, &st, page, layout.bounds);
+                    s.pop();
+                });
             }
         }
         s.set_fill(None);
         s.set_stroke(None);
-        s.pop();
+        if self.inline_depth < MAX_INLINE_DEPTH {
+            self.inline_depth += 1;
+            for ig in &layout.inlines {
+                let Some(art) = t.runs.get(ig.run).and_then(|r| r.inline.as_ref()) else { continue };
+                let Some(sym) = doc.symbols.iter().find(|x| x.name == art.symbol) else { continue };
+                let mut node = (*sym.art).clone();
+                // Strokes scale with the art, as on the canvas.
+                node.transform(t.xf * ig.xf * doc.symbol_natural_xf(&art.symbol), true);
+                self.node(s, &node, page, true);
+            }
+            self.inline_depth -= 1;
+        }
         if let Some((bp, path)) = &all {
             self.text_items(s, above, bp, path, page, tb);
         }
@@ -1336,7 +1460,7 @@ impl Exporter<'_> {
             match item {
                 AppearanceItem::Fill(fl) if fl.visible => self.overprinting(s, fl.overprint, &fl.paint, |ex, s| {
                     if !ex.area(s, path, krilla::paint::FillRule::NonZero, &fl.paint, (fl.opacity, fl.blend), tb, bp.bounding_box())
-                        && let Some(paint) = ex.paint(&fl.paint, tb)
+                        && let Some(paint) = ex.paint(s, &fl.paint, tb)
                     {
                         s.set_stroke(None);
                         s.set_fill(Some(Fill { paint, opacity: norm(fl.opacity), rule: krilla::paint::FillRule::NonZero }));
@@ -1411,9 +1535,9 @@ impl Exporter<'_> {
     }
 
     /// Draw glyphs `line` (of `text`), filled with `fill` (whose space is text space, where
-    /// `bounds` is).
+    /// `bounds` is). A line that would be written with a pen position, size or spacing (in
+    /// thousandths of an em) beyond [`MAX_COORD`] is left out.
     fn draw_glyph_line(&mut self, s: &mut Surface, line: GlyphLine, text: &str, fill: &Paint, bounds: Rect) {
-        let Some(paint) = self.paint_in(fill, bounds, line.frame.inverse()) else { return };
         let size = line.size;
         let glyphs: Vec<KrillaGlyph> = line
             .glyphs
@@ -1424,10 +1548,18 @@ impl Exporter<'_> {
                 KrillaGlyph::new(GlyphId::new(*gid), ((next - x) / size) as f32, 0.0, 0.0, 0.0, range.clone(), None)
             })
             .collect();
+        let pens =
+            line.glyphs.iter().fold(Rect::new(0.0, -size, 0.0, size), |r, (_, x, advance, _)| r.union_pt((*x, 0.0)).union_pt((x + advance, 0.0)));
+        let spacing: Vec<f64> = glyphs.iter().map(|g| f64::from(g.x_advance(1.0)) * 1000.0).collect();
+        if !(writable(s, line.frame, pens) && in_range(&spacing)) {
+            return;
+        }
         s.push_transform(&xf(line.frame));
-        s.set_stroke(None);
-        s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
-        s.draw_glyphs(krilla::geom::Point::from_xy(0.0, 0.0), &glyphs, line.font, text, size as f32, false);
+        if let Some(paint) = self.paint_in(s, fill, bounds, line.frame.inverse()) {
+            s.set_stroke(None);
+            s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
+            s.draw_glyphs(krilla::geom::Point::from_xy(0.0, 0.0), &glyphs, line.font, text, size as f32, false);
+        }
         s.pop();
     }
 
@@ -1501,6 +1633,10 @@ impl Exporter<'_> {
     }
 
     fn image(&mut self, s: &mut Surface, im: &vectorcraft_doc::ImageObject) {
+        // An image placed or sized beyond [`MAX_COORD`] is left out.
+        if !writable(s, im.xf, Rect::new(0.0, 0.0, im.width.max(1).into(), im.height.max(1).into())) {
+            return;
+        }
         // The size it is placed at: its pixel grid's sides through its transform.
         let [a, b, c, d, ..] = im.xf.as_coeffs();
         let size = (im.width as f64 * a.hypot(b), im.height as f64 * c.hypot(d));
@@ -1528,4 +1664,30 @@ fn embed(blob: &vectorcraft_doc::ImageBlob, interpolate: bool) -> Option<Image> 
         let (w, h) = rgba.dimensions();
         Some(Image::from_rgba8(rgba.into_raw(), w, h))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writable_bounds_values_the_transform_and_values_through_it() {
+        let mut pdf = krilla::Document::new();
+        let mut page = pdf.start_page_with(PageSettings::new(Size::from_wh(100.0, 100.0).unwrap()));
+        let mut s = page.surface();
+        let r = Rect::new(0.0, 0.0, 10.0, 10.0);
+        assert!(writable(&s, Affine::IDENTITY, r));
+        assert!(!writable(&s, Affine::IDENTITY, Rect::new(-2_147_483_649.0, 0.0, 10.0, 10.0)));
+        assert!(!writable(&s, Affine::IDENTITY, Rect::new(f64::NAN, 0.0, 10.0, 10.0)));
+        assert!(!writable(&s, Affine::translate((0.0, 2e9)), r));
+        assert!(!writable(&s, Affine::scale(2e9), Rect::ZERO));
+        // `writable` also checks the surface's own transform: with the surface moved to
+        // x = MAX_COORD, a point at the origin fits and a 10 by 10 box does not.
+        s.push_transform(&xf(Affine::translate((MAX_COORD, 0.0))));
+        assert!(writable(&s, Affine::IDENTITY, Rect::ZERO));
+        assert!(!writable(&s, Affine::IDENTITY, r));
+        s.pop();
+        s.finish();
+        page.finish();
+    }
 }

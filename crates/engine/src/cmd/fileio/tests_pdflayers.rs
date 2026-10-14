@@ -59,3 +59,35 @@ fn export_pdf_overprint_is_preserved_or_discarded() {
     assert_eq!(overprints(&mut s, json!({"compression": {"compressText": false}})), 1);
     assert_eq!(overprints(&mut s, json!({"advanced": {"overprint": "discard"}})), 0);
 }
+
+/// A `.ai` file's PDF part, which apps that don't read the native document open, has the layers
+/// and sublayers as PDF layers, the hidden ones with their art (#372).
+#[test]
+fn ai_files_write_their_layers_and_sublayers_as_pdf_layers() {
+    let mut s = session();
+    let layer1 = s.execute("document.inspect", &json!({})).unwrap()["layers"][1]["id"].as_u64().unwrap();
+    let sub = s.execute("layer.newSublayer", &json!({"parent": layer1, "name": "Sketch"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("layer.setCurrent", &json!({"id": sub})).unwrap();
+    s.execute("shape.ellipse", &json!({"x": 10, "y": 40, "width": 20, "height": 20})).unwrap();
+    s.execute("layer.setProps", &json!({"id": sub, "visible": false})).unwrap();
+    // Name, shown and what it holds (sublayers by name), top-level layers in paint order.
+    fn rows(layers: &[std::sync::Arc<vectorcraft_doc::Node>]) -> Vec<(String, bool, Vec<String>)> {
+        layers
+            .iter()
+            .map(|l| {
+                let held =
+                    l.children().into_iter().flatten().map(|c| c.name.clone().filter(|_| c.is_layer()).unwrap_or_else(|| "art".into())).collect();
+                (l.name.clone().unwrap_or_default(), l.visible, held)
+            })
+            .collect()
+    }
+    let v = s.execute("document.export", &json!({"format": "ai"})).unwrap();
+    let back = vectorcraft_pdf::import(&b64(&v)).unwrap();
+    let art = || "art".to_string();
+    assert_eq!(rows(&back.layers), [("Layer 1".to_string(), true, vec![art(), "Sketch".into()]), ("Notes".to_string(), false, vec![art()])]);
+    let sketch = back.layers.first().and_then(|l| l.children()?.last().cloned()).unwrap();
+    assert_eq!(rows(&[sketch]), [("Sketch".to_string(), false, vec![art()])]);
+    // Asked not to, it writes none.
+    let v = s.execute("document.export", &json!({"format": "ai", "createLayers": false})).unwrap();
+    assert_eq!(vectorcraft_pdf::import(&b64(&v)).unwrap().layers.len(), 1);
+}

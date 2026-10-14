@@ -9,7 +9,7 @@ use std::sync::Arc;
 use kurbo::Shape;
 use vectorcraft_color::{BlendMode, Color, GradientKind, GradientPaint, Paint};
 use vectorcraft_doc::{
-    AppearanceItem, ColorMode, Document, Effect, ImageObject, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, TextObject,
+    AppearanceItem, ColorMode, Document, Effect, ImageObject, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, SymbolBoxes, TextObject,
 };
 use vectorcraft_effects::stroke::{self, WrittenShape};
 use vectorcraft_geom::{Affine, BezPath, FillRule, PathData, Point, Rect, Vec2};
@@ -94,6 +94,11 @@ fn overlaps(a: Rect, b: Rect) -> bool {
 
 pub(crate) struct Scene<'a> {
     doc: &'a Document,
+    /// The art boxes of `doc`'s symbols, which the walk measures symbol instances by when it
+    /// leaves out objects outside the region ([`SymbolBoxes::quick`]). The box of an instance whose
+    /// art holds brushed strokes grows by as far as their brush art can paint
+    /// ([`SymbolBoxes::with_brush_art`]).
+    symbols: SymbolBoxes<'a>,
     o: &'a EpsOptions,
     /// RGB and Lab colours are written as CMYK.
     cmyk: bool,
@@ -114,6 +119,7 @@ impl<'a> Scene<'a> {
     pub fn new(doc: &'a Document, o: &'a EpsOptions) -> Self {
         Self {
             doc,
+            symbols: doc.symbol_boxes().quick().with_brush_art(),
             o,
             cmyk: o.cmyk || doc.color_mode == ColorMode::Cmyk,
             cms: vectorcraft_color::cms::active(),
@@ -254,7 +260,7 @@ impl<'a> Scene<'a> {
         if let NodeKind::Layer { template: true, .. } = n.kind {
             return;
         }
-        match n.visual_bounds() {
+        match n.visual_bounds_with(&self.symbols) {
             Some(b) if !force && !overlaps(b.inflate(1.0, 1.0), self.o.region) => return,
             None if !n.is_container() => return,
             _ => {}
@@ -291,7 +297,7 @@ impl<'a> Scene<'a> {
                 }
             }
             // Live blends, envelopes, meshes and repeats are written as their evaluated art.
-            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) => {
+            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) | NodeKind::PlacedDocument(_) => {
                 let g = vectorcraft_effects::expand_live_deep(Some(self.doc), n);
                 for c in g.children().into_iter().flatten() {
                     self.node(c, false);
@@ -322,7 +328,7 @@ impl<'a> Scene<'a> {
 
     /// Warn about what EPS can't hold in `n`'s look.
     fn note_losses(&mut self, n: &Node) {
-        if n.opacity < 1.0 || n.blend != BlendMode::Normal || n.mask.as_ref().is_some_and(|m| !m.disabled) {
+        if n.opacity < 1.0 || n.blend != BlendMode::Normal || n.extras().mask.as_ref().is_some_and(|m| !m.disabled) {
             self.warn(TRANSPARENCY);
         }
         let raster = |fx: &[Effect]| fx.iter().any(|e| e.visible && vectorcraft_effects::is_raster(&e.id));
@@ -536,7 +542,7 @@ impl<'a> Scene<'a> {
         let doc = self.doc;
         let brushes = self.brushes.get_or_insert_with(|| vectorcraft_brush::library(doc));
         let Some(b) = st.brush.as_deref().and_then(|name| brushes.iter().find(|b| b.name == name)) else { return false };
-        let art = vectorcraft_brush::stroke_pieces(b, bp, st);
+        let art = vectorcraft_brush::stroke_pieces(doc, b, bp, st);
         self.note_item(st.opacity, st.blend);
         self.nest += 1;
         for piece in &art {

@@ -98,11 +98,16 @@ fn native_roundtrip(doc: &Document) -> Result<(Value, Value), String> {
     }
     let mut lost = None;
     back.walk(|n| {
-        if let NodeKind::Image(im) = &n.kind
-            && doc.images.contains_key(&im.key)
-            && !back.images.contains_key(&im.key)
+        let key = match &n.kind {
+            NodeKind::Image(im) => Some(&im.key),
+            NodeKind::PlacedDocument(p) => Some(&p.key),
+            _ => None,
+        };
+        if let Some(key) = key
+            && doc.images.contains_key(key)
+            && !back.images.contains_key(key)
         {
-            lost = Some(im.key.clone());
+            lost = Some(key.clone());
         }
     });
     if let Some(k) = lost {

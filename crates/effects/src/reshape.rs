@@ -26,6 +26,7 @@ pub fn needs_outline(n: &Node) -> bool {
             | NodeKind::Envelope { .. }
             | NodeKind::Mesh(_)
             | NodeKind::Repeat(_)
+            | NodeKind::PlacedDocument(_)
     )
 }
 
@@ -91,7 +92,7 @@ pub fn outline_art(n: &Node, symbol_art: Option<&Node>) -> Option<Node> {
     art.isolate = false;
     // One element: its pieces never knock each other out.
     art.knockout = vectorcraft_doc::Knockout::Off;
-    art.mask = None;
+    art.extras_mut().mask = None;
     art.appearance.effects.clear();
     Some(art)
 }
@@ -140,7 +141,7 @@ pub(crate) fn as_art(n: &Node, symbol_art: Option<&Node>) -> Option<Node> {
             if let NodeKind::Path { clipping, .. } = &mut clip.kind {
                 *clipping = true;
             }
-            let image = Node { appearance: Appearance::default(), ..Node::new(n.id, n.kind.clone()) };
+            let image = Node::new(n.id, n.kind.clone());
             Node::new(n.id, NodeKind::Group { children: vec![Arc::new(clip), Arc::new(image)], clip: true })
         }
         _ => outline_art(n, symbol_art)?,
@@ -158,7 +159,7 @@ pub(crate) fn as_art(n: &Node, symbol_art: Option<&Node>) -> Option<Node> {
     out.isolate = n.isolate;
     // One element: its pieces never knock each other out.
     out.knockout = vectorcraft_doc::Knockout::Off;
-    out.mask = n.mask.clone();
+    out.extras_mut().mask = n.extras().mask.clone();
     out.appearance.effects = n.appearance.effects.iter().filter(|e| !is_geometry(&e.id)).cloned().collect();
     Some(out)
 }
@@ -196,14 +197,15 @@ pub(crate) fn geometry_effects(n: &Node) -> Vec<&Effect> {
 }
 
 /// Apply `fx` to every path under `art` as one piece: each effect takes the whole art's bounds as
-/// its reference box.
+/// its reference box and the art's seed (a random Transform moves the pieces together).
 pub(crate) fn reshape_leaves(art: &mut Node, fx: &[&Effect]) {
+    let seed = art.id.0;
     for e in fx {
         let Some(bounds) = art.geometric_bounds() else { break };
         let params = merged_params(&e.id, &e.params);
         for_each_leaf(art, &mut |leaf| {
             let Some((path, rule)) = leaf_geometry(leaf) else { return };
-            let out = apply_one(&e.id, &params, &path, bounds, &GeomContext::of(leaf));
+            let out = apply_one(&e.id, &params, &path, bounds, &GeomContext { seed, ..GeomContext::of(leaf) });
             set_geometry(leaf, out, rule);
         });
     }

@@ -3,7 +3,9 @@
 //! object) or loads the place cursor with several ([`crate::place::confirm`]).
 //!
 //! Fields: `files` (`[{path} | {name}]`), `link`, `template`, `replace`, and `__replace` (one file
-//! and one selected object: Replace applies), `__info` (a line per file).
+//! and one selected object: Replace applies), `__documents` and `__others` (VectorCraft documents
+//! from files are picked, other files are: what Link's tooltip explains), `__info` (a line per
+//! file).
 
 use serde_json::{Value, json};
 
@@ -72,12 +74,32 @@ fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         for (key, label, tip) in OPTIONS {
             let on = d.bool(key);
             let enabled = key != "replace" || d.bool("__replace");
-            let resp = ui.scope(|ui| widgets::check(ui, tl!(label), on && enabled, enabled));
-            if resp.inner {
+            let tip = if key == "link" { link_tip(d) } else { tl!(tip).to_string() };
+            if widgets::check_tip(ui, tl!(label), on && enabled, enabled, &tip) {
                 d.fields.insert(key.into(), json!(!on));
             }
-            resp.response.on_hover_text(tl!(tip));
         }
     });
     false
+}
+
+/// Link's tooltip: what it does for the files picked (images, VectorCraft documents, or both), a
+/// line each.
+pub(crate) fn link_tip(d: &Dialog) -> String {
+    let lines = match (d.bool("__documents"), d.bool("__others")) {
+        (true, false) => {
+            vec![
+                tl!("On: one locked object showing the document, updated when it changes."),
+                tl!("Off: an editable copy of its art, embedded in this document."),
+            ]
+        }
+        (true, true) => {
+            vec![
+                tl!("Images: link to the file instead of only embedding it."),
+                tl!("VectorCraft documents: one locked object, updated when the file changes."),
+            ]
+        }
+        _ => vec![tl!("Keep a link to an image file instead of only embedding it")],
+    };
+    lines.join("\n")
 }

@@ -62,7 +62,7 @@ pub fn export(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
             if io::is_web(app) {
                 pick.name
             } else {
-                let picked = app.services.pick_save.as_mut().and_then(|f| f(&pick)).ok_or("cancelled")?;
+                let picked = crate::picks::save(app, &pick).ok_or("cancelled")?;
                 if FORMATS.iter().any(|f| f.0.eq_ignore_ascii_case(&fileio::extension(&picked))) { picked } else { format!("{picked}.pdf") }
             }
         }

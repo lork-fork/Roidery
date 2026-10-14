@@ -4,13 +4,15 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/vectorcraft", "apps/vectorcraft-cli", "xtask"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.10.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
 repository = "https://github.com/lork-fork/roidery"
 
 [workspace.dependencies]
+craft-print = { git = "https://github.com/storytold/craft-libs", rev = "d991bf6792f8ade99c51358bf3c1d902c8cd96b5" }
+craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "5c874d51eeb3de70e735c8ce87a59a7dedd47675", features = ["serde"] }
 # internal
 vectorcraft-geom = { path = "crates/geom" }
 vectorcraft-color = { path = "crates/color" }
@@ -20,6 +22,7 @@ vectorcraft-brush = { path = "crates/brush" }
 vectorcraft-trace = { path = "crates/trace" }
 vectorcraft-text = { path = "crates/text" }
 vectorcraft-effects = { path = "crates/effects" }
+vectorcraft-three-d = { path = "crates/three-d" }
 vectorcraft-render = { path = "crates/render" }
 vectorcraft-svg = { path = "crates/svg" }
 vectorcraft-pdf = { path = "crates/pdf" }
@@ -40,6 +43,8 @@ roidery-plan = { path = "crates/emb-plan" }
 roidery-mockup = { path = "crates/emb-mockup" }
 roidery-update = { path = "crates/emb-update", default-features = false }
 roidery-fonts = { path = "crates/emb-fonts" }
+vectorcraft-affinity = { path = "crates/affinity" }
+vectorcraft-scriptcheck = { path = "crates/scriptcheck" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
@@ -49,6 +54,7 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 proptest = "1"
+crc32fast = "1.5"
 # tests: a TCP port bound without listening (connections to it are refused)
 socket2 = "0.6"
 # Sandboxed WebAssembly plug-ins: a pure-Rust interpreter (MIT OR Apache-2.0) that builds for wasm32
@@ -59,13 +65,15 @@ wasmi = { version = "2.0.0", default-features = false, features = ["std", "valid
 wat = "1.228"
 
 # rendering / formats
-vello_cpu = "0.2"
+vello_cpu = { version = "0.2", features = ["f32_pipeline"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
 usvg = "0.48"
-krilla = "0.8"
+# Without `simple-text` (its text shaping, the only user of rustybuzz and ttf-parser, which are
+# unmaintained, #1730): the PDF writer places glyphs itself. A test of the PDF crate turns it on.
+krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
 skrifa = "0.47"
 harfrust = "0.13"
-linesweeper = "0.4"
+linesweeper = "0.5"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 roxmltree = "0.21"
 svgtypes = "0.16"
@@ -73,6 +81,9 @@ svgtypes = "0.16"
 centerline = { version = "0.14", default-features = false, features = ["glam"] }
 boostvoronoi = "0.12"
 vector-traits = { version = "0.6", default-features = false, features = ["glam"] }
+rustix = { version = "1.1", default-features = false }
+# Zstandard decoder (pure Rust, builds for wasm32 too): the editing copy an EPS carries of its art.
+ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 jpeg-encoder = { version = "0.6", default-features = false, features = ["std"] }
 gif = { version = "0.14", default-features = false, features = ["std", "raii_no_panic"] }
 # CMYK image samples (vectorcraft-doc's cmyk module): the image crate's own TIFF and JPEG

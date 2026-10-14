@@ -375,6 +375,11 @@ impl Dest {
                 };
                 Color::Cmyk { c, m, y, k }
             }
+            // CMYK straight into the destination RGB (the destination shares the source's CMYK).
+            (_, Color::Cmyk { c, m, y, k }) => {
+                let [r, g, b] = self.cms.cmyk_to_rgb([*c, *m, *y, *k], intent);
+                Color::Rgb { r, g, b }
+            }
             _ => {
                 let [r, g, b] = self.cms.srgb_to_rgb(source.display_rgb(c));
                 Color::Rgb { r, g, b }

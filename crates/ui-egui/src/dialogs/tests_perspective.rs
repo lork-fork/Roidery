@@ -141,7 +141,11 @@ fn the_presets_manager_creates_edits_and_deletes_presets() {
     assert_eq!(app.session.prefs.perspective_presets[0].opacity, 90.0);
     // Its type's menu lists it in a slot, which applies it.
     assert_eq!(crate::menus::dynamic_label(&app, "ui.perspectiveUserPreset3.1", ""), "Gorge");
-    assert!(crate::menus::hidden_slot(&app, "ui.perspectiveUserPreset3.2") && crate::menus::hidden_slot(&app, "ui.perspectiveUserPreset2.1"));
+    assert!(
+        ["ui.perspectiveUserPreset3.2", "ui.perspectiveUserPreset2.1"]
+            .iter()
+            .all(|id| crate::menus::shown_state(&app, id, &serde_json::Value::Null).is_none())
+    );
     app.run("ui.perspectiveUserPreset3.1", json!({})).unwrap();
     assert_eq!(grid(&app).name, "Gorge");
     // Delete selects the one above it.

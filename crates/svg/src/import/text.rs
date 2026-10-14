@@ -30,7 +30,7 @@ use std::str::FromStr;
 
 use usvg::roxmltree;
 use vectorcraft_color::{Color, Paint};
-use vectorcraft_doc::{CharStyle, Dash, Justify, LineCap, LineJoin, ParaDirection, StrokeLayer, TextKind, TextObject, TextRun};
+use vectorcraft_doc::{CharStyle, Dash, Justify, LineCap, LineJoin, ParaDirection, ParaStyle, StrokeLayer, TextKind, TextObject, TextRun};
 use vectorcraft_geom::kurbo::ParamCurveArclen;
 use vectorcraft_geom::{Affine, BezPath, PathData, Point, Rect};
 use vectorcraft_text::{FontDb, TextLayout};
@@ -175,7 +175,8 @@ pub(super) fn prepare<'s>(svg: &'s str, xml: &roxmltree::Document, dpi: f64, war
     let cx = Ctx::new(xml, dpi);
     let mut out = String::new();
     let mut copied = 0;
-    for t in xml.descendants().filter(|n| n.is_element() && n.tag_name().name() == "text" && n.tag_name().namespace() == Some(SVG_NS)) {
+    let is_text = |n: &XNode| n.is_element() && matches!(n.tag_name().name(), "text" | "flowRoot") && n.tag_name().namespace() == Some(SVG_NS);
+    for t in xml.descendants().filter(is_text) {
         let label = t.attribute("id").map_or_else(|| "a text".to_string(), |id| format!("text '{id}'"));
         if t.ancestors().skip(1).any(|a| a.is_element() && a.tag_name().name() == "clipPath") {
             warnings.push(format!("{label} in a clip path ignored"));
@@ -191,11 +192,13 @@ pub(super) fn prepare<'s>(svg: &'s str, xml: &roxmltree::Document, dpi: f64, war
         else {
             continue;
         };
-        let Some(q) = qname.strip_suffix("text").filter(|q| q.is_empty() || q.ends_with(':')) else { continue };
+        let flowed = t.tag_name().name() == "flowRoot";
+        let Some(q) = qname.strip_suffix(t.tag_name().name()).filter(|q| q.is_empty() || q.ends_with(':')) else { continue };
         if cx.css.own(t, "display").as_deref() == Some("none") || r.start < copied {
             continue;
         }
-        let Some((text, paints)) = cx.build(xml, t, &label, warnings) else { continue };
+        let built = if flowed { cx.build_flow(t, &label, warnings) } else { cx.build(xml, t, &label, warnings) };
+        let Some((text, paints)) = built else { continue };
         out.push_str(&svg[copied..r.start]);
         placeholder(&mut out, q, &cx.css, t, &slots.prefix, slots.texts.len(), text.marker, &paints);
         copied = r.end;
@@ -468,10 +471,11 @@ impl Ctx {
             None => {
                 let id = href(tp)?.trim().strip_prefix('#')?;
                 let el = xml.descendants().find(|n| n.is_element() && n.attribute("id") == Some(id))?;
-                if el.tag_name().name() != "path" {
-                    return None;
-                }
-                let mut bp = BezPath::from_svg(el.attribute("d")?).ok()?;
+                let d = match el.tag_name().name() {
+                    "path" => el.attribute("d")?.to_string(),
+                    _ => self.shape_path(el)?,
+                };
+                let mut bp = BezPath::from_svg(&d).ok()?;
                 bp.apply_affine(parse_transform(el.attribute("transform")));
                 bp
             }
@@ -481,6 +485,123 @@ impl Ctx {
         }
         let usable = bp.segments().next().is_some();
         usable.then_some(bp)
+    }
+
+    /// The equivalent path of a basic shape (SVG 2 › Basic Shapes), as path data: what a
+    /// `<textPath>` that points at it follows. Circles and ellipses start at 3 o'clock and rounded
+    /// rects at the end of the top-left corner, all running clockwise; lines and polylines follow
+    /// their points. `None` for other elements and for shapes that render nothing.
+    fn shape_path(&self, el: XNode) -> Option<String> {
+        let (vw, vh) = self.viewport;
+        let len = |a: &str, pct: f64| el.attribute(a).and_then(|v| self.length(v, DEFAULT_FONT_SIZE, pct));
+        let x = |a: &str| len(a, vw).unwrap_or(0.0);
+        let y = |a: &str| len(a, vh).unwrap_or(0.0);
+        let points = || -> Vec<f64> { el.attribute("points").map(|v| list(v).map_while(|t| t.parse().ok()).collect()).unwrap_or_default() };
+        let ellipse = |cx: f64, cy: f64, rx: f64, ry: f64| {
+            (rx > 0.0 && ry > 0.0).then(|| {
+                format!(
+                    "M{} {} A{rx} {ry} 0 0 1 {cx} {} A{rx} {ry} 0 0 1 {} {cy} A{rx} {ry} 0 0 1 {cx} {} A{rx} {ry} 0 0 1 {} {cy}Z",
+                    cx + rx,
+                    cy,
+                    cy + ry,
+                    cx - rx,
+                    cy - ry,
+                    cx + rx
+                )
+            })
+        };
+        match el.tag_name().name() {
+            "circle" => {
+                let r = len("r", ((vw * vw + vh * vh) / 2.0).sqrt())?;
+                ellipse(x("cx"), y("cy"), r, r)
+            }
+            "ellipse" => {
+                let (rx, ry) = (len("rx", vw), len("ry", vh));
+                let (rx, ry) = (rx.or(ry)?, ry.or(rx)?);
+                ellipse(x("cx"), y("cy"), rx, ry)
+            }
+            "rect" => {
+                let (x0, y0, w, h) = (x("x"), y("y"), len("width", vw)?, len("height", vh)?);
+                if w <= 0.0 || h <= 0.0 {
+                    return None;
+                }
+                let (rx, ry) = (len("rx", vw).filter(|v| *v > 0.0), len("ry", vh).filter(|v| *v > 0.0));
+                let (rx, ry) = (rx.or(ry).unwrap_or(0.0).min(w / 2.0), ry.or(rx).unwrap_or(0.0).min(h / 2.0));
+                if rx <= 0.0 || ry <= 0.0 {
+                    return Some(format!("M{x0} {y0} H{} V{} H{x0}Z", x0 + w, y0 + h));
+                }
+                let (x1, y1) = (x0 + w, y0 + h);
+                Some(format!(
+                    "M{} {y0} H{} A{rx} {ry} 0 0 1 {x1} {} V{} A{rx} {ry} 0 0 1 {} {y1} H{} A{rx} {ry} 0 0 1 {x0} {} V{} A{rx} {ry} 0 0 1 {} {y0}Z",
+                    x0 + rx,
+                    x1 - rx,
+                    y0 + ry,
+                    y1 - ry,
+                    x1 - rx,
+                    x0 + rx,
+                    y1 - ry,
+                    y0 + ry,
+                    x0 + rx
+                ))
+            }
+            "line" => Some(format!("M{} {} L{} {}", x("x1"), y("y1"), x("x2"), y("y2"))),
+            tag @ ("polyline" | "polygon") => {
+                let pts = points();
+                let mut d = String::new();
+                for (i, [x, y]) in pts.as_chunks::<2>().0.iter().enumerate() {
+                    let _ = write!(d, "{}{x} {y} ", if i == 0 { 'M' } else { 'L' });
+                }
+                if d.is_empty() {
+                    return None;
+                }
+                if tag == "polygon" {
+                    d.push('Z');
+                }
+                Some(d)
+            }
+            _ => None,
+        }
+    }
+
+    /// Read one Inkscape `<flowRoot>` (SVG 1.2 flowed text, which browsers don't draw but
+    /// Inkscape writes) as area type: its frame the first `<rect>` of its `<flowRegion>`, a
+    /// paragraph per `<flowPara>`, styled as `<text>` is. Other regions are left out with a warning.
+    fn build_flow(&self, t: XNode, label: &str, warnings: &mut Vec<String>) -> Option<(PendingText, Vec<String>)> {
+        let (vw, vh) = self.viewport;
+        let region = t.children().find(|c| c.is_element() && c.tag_name().name() == "flowRegion");
+        let rect = region.and_then(|r| r.children().find(|c| c.is_element() && c.tag_name().name() == "rect"));
+        let size = |n: XNode, a: &str, pct: f64| n.attribute(a).and_then(|v| self.length(v, DEFAULT_FONT_SIZE, pct));
+        let frame = rect.and_then(|r| {
+            let (w, h) = (size(r, "width", vw)?, size(r, "height", vh)?);
+            (w > 0.0 && h > 0.0).then(|| (r, Rect::new(0.0, 0.0, w, h)))
+        });
+        let Some((r, frame)) = frame else {
+            warnings.push(format!("{label}: flowed text (flowRoot) without a rectangle region was left out"));
+            return None;
+        };
+        let origin = Affine::translate((size(r, "x", vw).unwrap_or(0.0), size(r, "y", vh).unwrap_or(0.0)));
+        let paras: Vec<XNode> = t.descendants().filter(|n| n.is_element() && n.tag_name().name() == "flowPara").collect();
+        let collapse = |n: XNode| {
+            n.descendants().filter(XNode::is_text).filter_map(|c| c.text()).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        let text = paras.iter().map(|p| collapse(*p)).collect::<Vec<_>>().join("\n");
+        if text.trim().is_empty() {
+            return None;
+        }
+        let style = self.elem(paras.first().copied().unwrap_or(t)).style.clone();
+        let mut obj = TextObject::point(Point::ZERO, &text, style);
+        obj.kind = TextKind::Area { frame: vectorcraft_geom::shapes::rectangle(frame) };
+        obj.xf = parse_transform(r.attribute("transform")) * origin;
+        let servers = vec![(None, None); obj.runs.len()];
+        let b = obj.xf.transform_rect_bbox(frame);
+        // A size, place or transform past what numbers hold (`width="1e999"`) has no frame to set type in.
+        if ![b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite()) {
+            warnings.push(format!("{label}: flowed text (flowRoot) with a region too large to place was left out"));
+            return None;
+        }
+        let marker = Rect::new(b.x0, b.y0, b.x1.max(b.x0 + 1.0), b.y1.max(b.y0 + 1.0));
+        let name = t.attribute("id").unwrap_or("").to_string();
+        Some((PendingText { name, obj, servers, paints: 0, non_scaling: false, under: None, marker }, Vec::new()))
     }
 
     /// Read one `<text>`: the pending text and its `url(#…)` paints.
@@ -556,11 +677,12 @@ impl Ctx {
             .collect();
         let under = stroke_under(&mut cells, label, warnings);
 
-        let anchor = match self.css.prop(cs.chars[0].1, "text-anchor").as_deref() {
+        let anchor_of = |i: usize| match cs.chars.get(i).and_then(|c| self.css.prop(c.1, "text-anchor")).as_deref() {
             Some("middle") => 0.5,
             Some("end") => 1.0,
             _ => 0.0,
         };
+        let anchor = anchor_of(0);
         let path = cs.path.and_then(|tp| match self.text_path(xml, tp) {
             Some(p) => Some((tp, p)),
             None => {
@@ -571,6 +693,7 @@ impl Ctx {
         let vertical = self.css.prop(t, "writing-mode").is_some_and(|m| m.starts_with("tb") || m.starts_with("vertical"));
         let mut obj = TextObject::point(Point::ZERO, "", CharStyle::default());
         let mut breaks: Vec<Break> = vec![];
+        let mut para_styles: Vec<ParaStyle> = vec![];
         if let Some((tp, bp)) = path {
             // Along the path: dx is extra advance, dy shifts off the path.
             let mut off = 0.0;
@@ -610,18 +733,38 @@ impl Ctx {
             obj.xf = Affine::IDENTITY;
         } else {
             let origin = Point::new(x[0].unwrap_or(0.0) + dx[0], y[0].unwrap_or(0.0) + dy[0]);
-            let (justify, left) = lines(&mut cells, &x, &y, &dx, &dy, anchor, origin.x, &mut breaks);
+            let (justify, left, starts) = lines(&mut cells, &x, &y, &dx, &dy, anchor, origin.x, &mut breaks);
             obj.para.justify = justify;
             obj.xf = Affine::translate((finite(left), finite(origin.y)));
+            // Lines anchored differently (paragraphs aligned differently): each line's paragraph
+            // takes its alignment, and indents that put it where it was.
+            if let Some(starts) = starts.filter(|st| st.iter().any(|(i, _)| anchor_of(*i) != anchor)) {
+                for (k, &(i, ax)) in starts.iter().enumerate() {
+                    let a = anchor_of(i);
+                    let d = finite(ax - left);
+                    let mut pa = ParaStyle { justify: justify_of(a), ..ParaStyle::default() };
+                    match pa.justify {
+                        Justify::Center if d >= 0.0 => pa.left_indent = 2.0 * d,
+                        Justify::Center => pa.right_indent = -2.0 * d,
+                        Justify::Right => pa.right_indent = -d,
+                        _ => pa.left_indent = d,
+                    }
+                    let count = if k == 0 { 1 } else { breaks.get(k - 1).map_or(1, |b| b.count) };
+                    para_styles.extend(std::iter::repeat_n(pa, count));
+                }
+            }
         }
         let (runs, servers) = assemble(&cells, &breaks).0;
         obj.runs = runs;
+        if !para_styles.is_empty() {
+            obj.set_paragraph_styles(para_styles);
+        }
         // SVG text runs left to right unless `direction: rtl` says otherwise, whatever its first
-        // strong character: pinned when that would read as right to left.
+        // strong character: pinned (on every paragraph) when that would read as right to left.
         if self.css.prop(t, "direction").is_some_and(|d| d.trim() == "rtl") {
-            obj.para.direction = Some(ParaDirection::RightToLeft);
+            obj.edit_paras(None, |pa| pa.direction = Some(ParaDirection::RightToLeft));
         } else if obj.plain_text().split('\n').any(|p| vectorcraft_text::paragraph_is_rtl(p, None)) {
-            obj.para.direction = Some(ParaDirection::LeftToRight);
+            obj.edit_paras(None, |pa| pa.direction = Some(ParaDirection::LeftToRight));
         }
         // The placeholder covers the text (laid out when a paint server needs its bounding box).
         let b = if paints.is_empty() { obj.bounds() } else { Some(obj.xf.transform_rect_bbox(measure(&obj).bounds)) }.unwrap_or_default();
@@ -708,8 +851,18 @@ fn finite(v: f64) -> f64 {
     if v.is_finite() { v } else { 0.0 }
 }
 
+/// The alignment of an SVG text chunk anchored at `anchor` (0 start, 0.5 middle, 1 end).
+fn justify_of(anchor: f64) -> Justify {
+    match anchor {
+        a if a >= 1.0 => Justify::Right,
+        a if a > 0.0 => Justify::Center,
+        _ => Justify::Left,
+    }
+}
+
 /// Point type: line breaks, baseline shifts and kerning from the positioning lists. Returns the
-/// justification and the x of the first line's left (or anchor) edge.
+/// justification, the x of the first line's left (or anchor) edge and, when no character is
+/// placed on its own, each line's first character and anchor x.
 #[allow(clippy::too_many_arguments)]
 fn lines(
     cells: &mut [Cell],
@@ -720,7 +873,7 @@ fn lines(
     anchor: f64,
     x0: f64,
     breaks: &mut Vec<Break>,
-) -> (Justify, f64) {
+) -> (Justify, f64, Option<Vec<(usize, f64)>>) {
     let n = cells.len();
     let y0 = y[0].unwrap_or(0.0) + dy[0];
     let (mut base, mut cur) = (y0, y0);
@@ -758,12 +911,7 @@ fn lines(
         }
     }
     if targets.is_empty() {
-        let justify = match anchor {
-            a if a >= 1.0 => Justify::Right,
-            a if a > 0.0 => Justify::Center,
-            _ => Justify::Left,
-        };
-        return (justify, x0);
+        return (justify_of(anchor), x0, Some(lines));
     }
     // Absolutely placed characters: lay the text out left-aligned and kern each one onto its x.
     // SVG anchors every absolutely placed chunk on its own, so with a middle/end anchor each
@@ -819,7 +967,7 @@ fn lines(
             break;
         }
     }
-    (Justify::Left, left)
+    (Justify::Left, left, None)
 }
 
 /// A left-aligned point text of `runs` at the origin (for measuring).
@@ -865,7 +1013,7 @@ fn assemble(cells: &[Cell], breaks: &[Break]) -> (Runs, Vec<usize>) {
             r.text.push(ch);
             return;
         }
-        runs.push(TextRun { text: ch.into(), style });
+        runs.push(TextRun { text: ch.into(), style, inline: None });
         keys.push(key);
     }
     let mut out: Runs = (vec![], vec![]);

@@ -19,7 +19,7 @@ pub const OPTIONS: &[FormatOption] = &[
         name: "useArtboards",
         ty: "boolean",
         default: "true",
-        description: "false: one SVG of the bounds of all art instead of artboards (several artboards write one file each)",
+        description: "false: one SVG of the bounds of all art instead of artboards (several artboards write one file each; a named artboard's file holds only the art over it)",
     },
     FormatOption {
         name: "styling",
@@ -70,7 +70,7 @@ pub const OPTIONS: &[FormatOption] = &[
         name: "hiddenLayers",
         ty: "boolean",
         default: "false",
-        description: "keep hidden layers, not displayed (display:none); document.save sets it unless given",
+        description: "keep hidden layers and objects, not displayed (display=\"none\"); document.save sets it unless given",
     },
     FormatOption {
         name: "encoding",
@@ -125,8 +125,10 @@ pub fn options_map(p: &Value) -> Result<Map<String, Value>, String> {
     Ok(m)
 }
 
-/// The writer options and the artboards (`None`: the art bounds) an SVG export of `doc` covers.
-fn plan(doc: &Document, p: &Value) -> Result<(ExportOptions, Vec<Option<usize>>), String> {
+/// The writer options and the artboards (`None`: the art bounds) an SVG export of `doc` covers,
+/// and whether `p` named those artboards (else the first stands for the whole document, as Save
+/// writes it).
+fn plan(doc: &Document, p: &Value) -> Result<(ExportOptions, Vec<Option<usize>>, bool), String> {
     let mut m = options_map(p)?;
     // Fonts: unless chosen, Document Setup → Type → Export decides (appearance = outlines).
     if !m.contains_key("outlineText") && doc.setup.export_text == vectorcraft_doc::ExportText::Appearance {
@@ -138,21 +140,31 @@ fn plan(doc: &Document, p: &Value) -> Result<(ExportOptions, Vec<Option<usize>>)
     opts.check().map_err(|e| format!("SVG options: {e}"))?;
     let n = doc.artboards.len();
     if n == 0 || boards.use_artboards == Some(false) {
-        return Ok((opts, vec![None]));
+        return Ok((opts, vec![None], false));
     }
-    let picked = boards.pick.resolve(n)?.unwrap_or_else(|| vec![0]);
-    Ok((opts, picked.into_iter().map(Some).collect()))
+    let named = boards.pick.resolve(n)?;
+    let chosen = named.is_some();
+    Ok((opts, named.unwrap_or_else(|| vec![0]).into_iter().map(Some).collect(), chosen))
 }
 
 /// Encode `doc` as SVG (or gzipped, SVGZ): one file per chosen artboard, with the images they
 /// link to and the writer's warnings.
 pub(super) fn encode(doc: &Document, p: &Value, compressed: bool) -> Result<Encoded, String> {
-    let (opts, boards) = plan(doc, p)?;
+    let (opts, boards, chosen) = plan(doc, p)?;
     // Preserve editing embeds the native document (once, shared by every file).
     let native = opts.preserve_editing.then(|| vectorcraft_format::save(doc, false));
-    let mut enc = Encoded::default();
+    // Draw linked files as vectors when available, or their previews with a warning. Keep
+    // that preparation out of the native attachment so missing links remain relinkable.
+    let (full, warnings) = crate::cmd::place::document::full_documents(doc);
+    let doc = &*full;
+    // SVG has no filters for the Photoshop-style effects: their objects go in as images.
+    let flat = crate::cmd::rasterfx::flatten_pixel_effects(doc);
+    let doc = flat.as_ref().unwrap_or(doc);
+    let mut enc = Encoded { warnings, ..Encoded::default() };
     for artboard in boards {
-        let mut out = vectorcraft_svg::export_full(doc, &ExportOptions { artboard, ..opts.clone() }, native.as_deref());
+        // A chosen artboard's file holds the art over it (#550).
+        let over = artboard.filter(|_| chosen).and_then(|b| doc.artboards.get(b)).map(|a| super::export::art_over(doc, a.rect));
+        let mut out = vectorcraft_svg::export_full(over.as_ref().unwrap_or(doc), &ExportOptions { artboard, ..opts.clone() }, native.as_deref());
         let bytes = out.take_bytes();
         for l in out.linked {
             if !enc.linked.iter().any(|e| e.name == l.name) {

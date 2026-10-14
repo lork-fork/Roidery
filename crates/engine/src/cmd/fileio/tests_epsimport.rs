@@ -92,6 +92,31 @@ fn postscript_ai_files_and_garbage() {
     assert_eq!((&r["format"], &r["restored"]), (&json!("ai"), &json!(false)), "{r}");
     assert_eq!(s.doc().unwrap().path, None);
     assert_eq!(objects(&s), 1);
+    // Illustrator's groups come in as groups, nested as they were.
+    let ai = b"%!PS-Adobe-3.0
+%%Creator: Adobe Illustrator(R) 8.0
+%%BoundingBox: 0 0 100 100
+%%EndComments
+               /u {} def /U {} def /L {lineto} def /f {closepath fill} def
+               u 0 0 moveto 9 0 L 9 9 L f u 20 0 moveto 29 0 L 29 9 L f 40 0 moveto 49 0 L 49 9 L f U U
+showpage
+%%EOF
+";
+    open(&mut s, "groups.ai", ai).unwrap();
+    let d = s.doc().unwrap().doc.clone();
+    let outer = &d.layers[0].children().unwrap()[0];
+    let inner = outer.children().map(|c| (c.len(), c[1].children().map(Vec::len))).unwrap();
+    assert!(matches!(outer.kind, vectorcraft_doc::NodeKind::Group { clip: false, .. }), "{:?}", outer.kind);
+    assert_eq!(inner, (2, Some(2)));
+    // One that names the prolog defining its operators without including it (as other apps write
+    // the format) opens with the layers its program has (#1027).
+    let named = b"%!PS-Adobe-3.0\n%%BoundingBox: 0 0 100 100\n%%DocumentNeededResources: procset Adobe_IllustratorA_AI3 1.0 0\n%AI3_TemplateBox: 50 50 50 50\n%%EndComments\n\
+                  %%BeginProlog\n%%IncludeResource: procset Adobe_IllustratorA_AI3 1.0 0\n%%EndProlog\n%%BeginSetup\nAdobe_IllustratorA_AI3 /initialize get exec\n%%EndSetup\n\
+                  %AI5_BeginLayer\n1 1 1 1 0 0 2 0 0 0 Lb\n(PLAN::Walls) Ln\n0 0 0 1 K\n0 i 1 w\n10 10 m\n90 90 L\nS\nLB\n%AI5_EndLayer--\n%%PageTrailer\n%%Trailer\n%%EOF\n";
+    let r = open(&mut s, "cad.ai", named).unwrap();
+    assert_eq!(r["warnings"].as_array().map_or(0, Vec::len), 0, "{r}");
+    let d = s.doc().unwrap().doc.clone();
+    assert_eq!((d.layers.len(), d.layers[0].name.as_deref(), objects(&s)), (1, Some("PLAN::Walls"), 1));
     // A .ait one opens as a new untitled document.
     let r = open(&mut s, "legacy.ait", ps).unwrap();
     assert!(r["title"].as_str().unwrap().starts_with("Untitled"), "{r}");

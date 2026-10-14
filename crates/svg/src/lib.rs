@@ -41,8 +41,9 @@
 //! * One CSS pixel (user unit) is one point, as on export, and absolute lengths (`in`, `cm`, `mm`,
 //!   `pt`, `pc`) keep their physical size (72 pt per inch): `font-size="12pt"` is 12 pt. A root
 //!   `width`/`height` in absolute units keeps its physical size, so a 210 mm SVG opens on a 210 mm
-//!   artboard, its user units being CSS pixels of it (96 per inch). The document's units follow the
-//!   unit of the root `width` (pixels when it has none).
+//!   artboard, its user units being CSS pixels of it (96 per inch), the other side's too when only
+//!   one is absolute. The document's units follow the unit of the root `width` (pixels when it has
+//!   none).
 //! * `<mask>` imports as a luminance opacity mask; a mask we exported keeps its options and art
 //!   (its `data-vectorcraft-mask="noclip invert"` lists the options that differ from clipping and
 //!   not inverted). Nested clip paths (`<clipPath clip-path>`) are clip groups in clip groups.
@@ -208,7 +209,8 @@ pub struct ExportOptions {
     /// One positioned `<tspan>` per line of type instead of one per style run, tab stop and
     /// justified word (smaller; viewers then space the line with their own font metrics).
     pub fewer_tspans: bool,
-    /// Keep hidden layers, written hidden (`display:none`), as Save does; exports leave them out.
+    /// Keep hidden layers and objects, written hidden (`display="none"`), as Save does; exports
+    /// leave them out unless asked.
     pub hidden_layers: bool,
     /// The file's character encoding (see [`Output::bytes`]).
     pub encoding: Encoding,
@@ -310,6 +312,9 @@ pub struct LinkedImage {
 pub enum SvgError {
     #[error("SVG parse error: {0}")]
     Parse(String),
+    /// Its elements nest (references followed) deeper than the reader goes.
+    #[error("the SVG's elements are nested more than {0} deep")]
+    TooDeep(usize),
 }
 
 /// Export a document as an SVG string (linked images are not returned: see [`export_full`]).
@@ -345,7 +350,8 @@ pub struct Editing {
 
 /// The native document an SVG carries, if any, and whether the SVG was edited since.
 pub fn editing(svg: &str) -> Option<Editing> {
-    if !svg.contains(EDITING_NS) {
+    // (An SVG nested too deep for the XML reader carries none: it isn't one of ours.)
+    if !svg.contains(EDITING_NS) || import::xml_too_deep(svg) {
         return None;
     }
     let opts = usvg::roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
@@ -498,14 +504,18 @@ pub fn import_with_report(svg: &str) -> Result<(Document, Vec<String>), SvgError
     import_with(svg, &ImportOptions::default())
 }
 
+pub use import::MAX_ELEMENT_DEPTH;
+
 /// Import an SVG document reading the files it links to as `opts` says, also returning warnings.
 pub fn import_with(svg: &str, opts: &ImportOptions) -> Result<(Document, Vec<String>), SvgError> {
-    import::import(svg, opts)
+    // usvg converts the tree by recursion, in large stack frames: the nesting it is given is
+    // capped (`import::depth`), and it gets room for that cap whatever thread asks.
+    vectorcraft_doc::depth::with_deep_stack(|| import::import(svg, opts))
 }
 
 /// Reads a linked file: its bytes and the link to it (absolute path, size, time and hash), or
 /// `None` when there is no readable file at the (absolute) path.
-pub type ReadFile<'a> = &'a dyn Fn(&str) -> Option<(Vec<u8>, vectorcraft_doc::LinkInfo)>;
+pub type ReadFile<'a> = &'a (dyn Fn(&str) -> Option<(Vec<u8>, vectorcraft_doc::LinkInfo)> + Sync);
 
 /// How [`import_with`] reads the files an SVG's `<image>` elements link to.
 ///
@@ -565,10 +575,26 @@ pub fn xml_escape(s: &str) -> String {
 
 /// Format a number with at most `decimals` places, trimming trailing zeros.
 pub fn fmt_num(v: f64, decimals: u8) -> String {
+    let mut s = String::new();
+    push_num(&mut s, v, decimals);
+    s
+}
+
+/// [`fmt_num`] appended to `out`, without allocating.
+pub fn push_num(out: &mut String, v: f64, decimals: u8) {
+    use std::fmt::Write as _;
     let v = if v.is_finite() { v } else { 0.0 };
-    let s = format!("{:.*}", decimals as usize, v);
-    let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s };
-    if s == "-0" || s.is_empty() { "0".into() } else { s }
+    let start = out.len();
+    let _ = write!(out, "{:.*}", decimals as usize, v); // writing to a String can't fail
+    let s = out.get(start..).unwrap_or_default();
+    if s.contains('.') {
+        let keep = s.trim_end_matches('0').trim_end_matches('.').len();
+        out.truncate(start + keep);
+    }
+    if matches!(out.get(start..), Some("-0" | "")) {
+        out.truncate(start);
+        out.push('0');
+    }
 }
 
 #[cfg(test)]

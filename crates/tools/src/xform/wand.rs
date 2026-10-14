@@ -115,25 +115,15 @@ impl Tool for LassoTool {
                     }
                 });
                 hits.retain(|(id, _)| cx.doc.is_editable(*id) && cx.doc.is_visible(*id));
-                if sub {
-                    // Current anchor selection minus the lassoed anchors.
-                    let mut items = vec![];
-                    for id in &cx.selection.objects {
-                        let Some(path) = cx.doc.node(*id).and_then(|n| n.path_data()) else { continue };
-                        let cur: BTreeSet<AnchorRef> = match cx.selection.partial(*id) {
-                            Some(s) => s.clone(),
-                            None => path.anchors().map(|(s, i, _)| (s, i)).collect(),
-                        };
-                        let remove = hits.iter().find(|(h, _)| h == id).map(|(_, v)| v.clone()).unwrap_or_default();
-                        let rest: BTreeSet<AnchorRef> = cur.difference(&remove).copied().collect();
-                        if !rest.is_empty() {
-                            items.push(json!({ "id": id.0, "anchors": anchors_json(&rest) }));
-                        }
-                    }
-                    return vec![Action::Exec("select.anchorsMany".into(), json!({ "items": items, "add": false }))];
-                }
                 let items: Vec<Value> = hits.iter().map(|(id, v)| json!({ "id": id.0, "anchors": anchors_json(v) })).collect();
-                vec![Action::Exec("select.anchorsMany".into(), json!({ "items": items, "add": add }))]
+                let mode = if sub {
+                    "subtract"
+                } else if add {
+                    "add"
+                } else {
+                    "set"
+                };
+                vec![Action::Exec("select.anchorsMany".into(), json!({ "items": items, "mode": mode }))]
             }
             _ => vec![],
         }
@@ -198,7 +188,7 @@ mod tests {
         assert_eq!(c, "select.anchorsMany");
         assert_eq!(v["items"][0]["id"], id.0);
         assert_eq!(v["items"][0]["anchors"].as_array().unwrap().len(), 1);
-        assert_eq!(v["add"], false);
+        assert_eq!(v["mode"], "set");
         assert!(point_in_polygon(&[Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(0.0, 10.0)], Point::new(2.0, 2.0)));
     }
 }

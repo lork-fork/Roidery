@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use vectorcraft_color::Paint;
-use vectorcraft_doc::{Node, NodeKind};
+use vectorcraft_doc::{Node, NodeKind, Scaling};
 use vectorcraft_geom::{Affine, Point, Rect, Vec2};
 
 use super::edit::selected_roots;
@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Move Artboard",
             [],
             None,
-            "{index, dx, dy, moveArt?: bool, copy?: bool} move an artboard (and the art fully inside it; locked and hidden art only with prefs moveLockedWithArtboard); `copy` (Alt-drag) leaves them and moves copies → {index, moved: the art moved or the copies}",
+            "{index | indices: [index…], dx, dy, moveArt?: bool, copy?: bool, patterns?: bool (Transform Patterns: pattern fills and strokes transform with the art; default: prefs transformPatternTiles)} move artboards (and the art fully inside them; locked and hidden art only with prefs moveLockedWithArtboard), several in one step; `copy` (Alt-drag) leaves them and moves copies → {index (the first), indices: the artboards moved or the copies, moved: the art moved or the copies}",
             has_doc,
             artboard_move
         ),
@@ -132,32 +132,29 @@ fn warp_node(n: &mut Node, pr: &Projective) {
 }
 
 fn distort(s: &mut Session, p: &Value) -> Result<Value> {
-    let corners: Vec<Point> = p
+    const C: &str = "object.distort";
+    // All four corners or nothing, each exactly [x, y]: nothing malformed is left out.
+    let corners: Option<Vec<Point>> = p
         .get("corners")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|c| Some(Point::new(c.get(0)?.as_f64()?, c.get(1)?.as_f64()?))).collect())
-        .unwrap_or_default();
-    if corners.len() != 4 {
-        return Err(bad("object.distort", "corners must be 4 [x,y] points (TL, TR, BR, BL)"));
+        .filter(|a| a.len() == 4)
+        .and_then(|a| a.iter().map(|c| finite_numbers(c).map(|[x, y]| Point::new(x, y))).collect());
+    let Some(&[tl, tr, br, bl]) = corners.as_deref() else { return Err(bad(C, "corners must be 4 [x, y] points (TL, TR, BR, BL)")) };
+    let ids = if p.get("ids").is_some_and(|v| !v.is_null()) { checked_ids_param(s, p, "ids", C)? } else { selected_roots(s)? };
+    if ids.is_empty() {
+        return Err(bad(C, "nothing to distort"));
     }
-    let ids = match ids_param(p, "ids") {
-        Some(v) => v,
-        None => selected_roots(s)?,
-    };
-    let src = match p.get("from").and_then(Value::as_array) {
-        Some(a) if a.len() == 4 => {
-            let f: Vec<f64> = a.iter().filter_map(Value::as_f64).collect();
-            if f.len() != 4 {
-                return Err(bad("object.distort", "from must be [x0,y0,x1,y1]"));
-            }
-            Rect::new(f[0], f[1], f[2], f[3])
+    let src = match p.get("from").filter(|v| !v.is_null()) {
+        None => s.doc()?.doc.bounds_of(&ids, false).ok_or_else(|| bad(C, "nothing to distort"))?,
+        Some(v) => {
+            let [x0, y0, x1, y1] = finite_numbers(v).ok_or_else(|| bad(C, "from must be [x0, y0, x1, y1]"))?;
+            Rect::new(x0, y0, x1, y1)
         }
-        _ => s.doc()?.doc.bounds_of(&ids, false).ok_or_else(|| EngineError::Other("nothing to distort".into()))?,
     };
-    if src.width().abs() < 1e-9 || src.height().abs() < 1e-9 {
-        return Err(EngineError::Other("cannot distort a zero-size bounding box".into()));
+    if !src.width().is_finite() || !src.height().is_finite() || src.width().abs() < 1e-9 || src.height().abs() < 1e-9 {
+        return Err(bad(C, "cannot distort a zero-size or non-finite bounding box"));
     }
-    let pr = Projective::from_rect(src, [corners[0], corners[1], corners[2], corners[3]]);
+    let pr = Projective::from_rect(src, [tl, tr, br, bl]);
     s.edit("Free Distort", |d, _| {
         for id in &ids {
             if let Some(n) = d.node_mut(*id) {
@@ -369,37 +366,42 @@ fn sample_color(s: &mut Session, p: &Value) -> Result<Value> {
 // ---------- artboards ----------
 
 fn artboard_move(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = p.get("index").and_then(Value::as_u64).ok_or_else(|| bad("artboard.move", "missing index"))? as usize;
+    let indices = super::panelcmds::artboard_indices(&s.doc()?.doc, p, "artboard.move")?;
     let dv = Vec2::new(f64_or(p, "dx", 0.0), f64_or(p, "dy", 0.0));
     let move_art = bool_or(p, "moveArt", false);
-    let st = s.doc()?;
-    let rect = st.doc.artboards.get(i).map(|a| a.rect).ok_or_else(|| EngineError::Other("no such artboard".into()))?;
-    let art = if move_art { st.doc.art_on_artboard(rect, s.prefs.move_locked_with_artboard) } else { vec![] };
-    let scale_strokes = s.prefs.scale_strokes;
+    // Each artboard's art, an object counted once (artboards can overlap).
+    let mut arts: Vec<(usize, Vec<NodeId>)> = vec![];
+    for &i in &indices {
+        let art = super::panelcmds::artboard_art(s, i, move_art)?;
+        let art = art.into_iter().filter(|id| !arts.iter().any(|(_, a)| a.contains(id))).collect();
+        arts.push((i, art));
+    }
+    let ids: Vec<NodeId> = arts.iter().flat_map(|(_, a)| a.iter().copied()).collect();
+    let sc = Scaling { patterns: super::object::transform_patterns(s, p, &ids)?, ..Scaling::default() };
     let copy = bool_or(p, "copy", false);
     let (index, moved) = s.edit(if copy { "Duplicate Artboard" } else { "Move Artboard" }, |d, _| {
-        let src = d.artboards.get(i).cloned().ok_or_else(|| EngineError::Other("no such artboard".into()))?;
-        // A copy keeps the artboard (and its art) where they are and moves duplicates instead.
-        if !copy {
-            if let Some(a) = d.artboards.get_mut(i) {
-                a.rect = src.rect + dv;
+        let (mut index, mut moved) = (vec![], vec![]);
+        for (i, art) in &arts {
+            // A copy keeps the artboard (and its art) where they are and moves duplicates instead.
+            if copy {
+                let (at, copies) = super::panelcmds::copy_artboard(d, *i, dv, art, sc)?;
+                index.push(at);
+                moved.extend(copies);
+                continue;
             }
-            for id in &art {
+            let a = d.artboards.get_mut(*i).ok_or_else(|| EngineError::Other("no such artboard".into()))?;
+            a.rect = a.rect + dv;
+            let id = a.id;
+            d.move_artboard_guides(id, dv);
+            for id in art {
                 if let Some(n) = d.node_mut(*id) {
-                    n.transform(Affine::translate(dv), scale_strokes);
+                    n.transform(Affine::translate(dv), sc);
                 }
             }
-            return Ok((i, art.clone()));
+            index.push(*i);
+            moved.extend(art.iter().copied());
         }
-        let index = super::panelcmds::push_artboard_copy(d, &src, src.rect + dv);
-        let mut copies = Vec::with_capacity(art.len());
-        for id in &art {
-            let (Some((parent, at, _)), Some(n)) = (d.position(*id), d.node(*id).cloned()) else { continue };
-            let mut c = d.reid(&n);
-            c.transform(Affine::translate(dv), scale_strokes);
-            copies.push(d.insert(parent, at + 1, c)?);
-        }
-        Ok((index, copies))
+        Ok((index, moved))
     })?;
-    Ok(json!({ "index": index, "moved": moved.iter().map(|i| i.0).collect::<Vec<_>>() }))
+    Ok(json!({ "index": index.first(), "indices": index, "moved": moved.iter().map(|i| i.0).collect::<Vec<_>>() }))
 }

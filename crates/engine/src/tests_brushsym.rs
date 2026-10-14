@@ -1,7 +1,7 @@
 //! Brushes and symbols: commands, tools, rendering and persistence.
 
 use serde_json::{Value, json};
-use vectorcraft_doc::{Node, NodeKind};
+use vectorcraft_doc::{Document, Node, NodeKind};
 use vectorcraft_geom::Rect;
 use vectorcraft_tools::{Mods, PointerEvent, PointerKind};
 
@@ -193,6 +193,181 @@ fn paintbrush_tool_uses_the_current_brush() {
     assert!(s.execute("brush.setCurrent", &json!({"name": "Nope"})).is_err());
 }
 
+/// A Size: Pressure variant of "3 pt. Round" (3 ± 3 pt).
+fn pressure_round(s: &mut Session) {
+    let params = json!({"variation": [0, 0, 3], "modes": ["fixed", "fixed", "pressure"]});
+    s.execute("brush.options", &json!({"name": "3 pt. Round", "params": params})).unwrap();
+}
+
+fn pressure_of(s: &Session, id: NodeId) -> Option<vectorcraft_doc::PressureProfile> {
+    node(s, id).appearance.stroke().and_then(|st| st.pressure.clone())
+}
+
+/// #852: the Paintbrush records the pen pressure on the stroke, the brush draws it, and it lasts
+/// through saving and every export; a mouse stroke records none.
+#[test]
+fn paintbrush_records_pen_pressure_on_the_stroke() {
+    let mut s = session();
+    pressure_round(&mut s);
+    s.execute("brush.setCurrent", &json!({"name": "3 pt. Round"})).unwrap();
+    let v = ViewInfo::default();
+    s.select_tool("paintbrush", v).unwrap();
+    let strokes = |s: &mut Session, y: f64, pressure: [f32; 4]| {
+        let kinds = [PointerKind::Down, PointerKind::Drag, PointerKind::Drag, PointerKind::Up];
+        for ((k, x), p) in kinds.into_iter().zip([20.0, 120.0, 220.0, 320.0]).zip(pressure) {
+            s.pointer(&PointerEvent { pressure: p, ..PointerEvent::new(k, x, y) }, v).unwrap();
+        }
+        let id = s.doc().unwrap().selection.objects[0];
+        // Deselected, so the next stroke starts a path of its own.
+        select(s, &[]);
+        id
+    };
+    let pen = strokes(&mut s, 60.0, [0.0, 0.4, 0.8, 1.0]);
+    let p = pressure_of(&s, pen).expect("pressure recorded");
+    assert!(p.at(0.0) < 0.05 && p.at(1.0) > 0.95 && (p.at(0.5) - 0.6).abs() < 0.05, "{p:?}");
+    let mouse = strokes(&mut s, 200.0, [1.0; 4]);
+    assert_eq!(pressure_of(&s, mouse), None, "a mouse presses fully: nothing to record");
+    // Drawn: thin where the pen pressed lightly, 6 pt where it pressed fully.
+    let doc: Document = (*s.doc().unwrap().doc).clone();
+    let art = |d: &Document, id: NodeId| vectorcraft_brush::node_pieces(d, d.node(id).unwrap()).unwrap();
+    let heavy_end = vectorcraft_brush::pieces_bounds(&art(&doc, pen)).unwrap();
+    assert!((heavy_end.height() - 6.0).abs() < 0.3, "{heavy_end:?}");
+    let even = vectorcraft_brush::pieces_bounds(&art(&doc, mouse)).unwrap();
+    assert!((even.height() - 3.0).abs() < 0.1, "no pressure draws the size itself: {even:?}");
+    // Saved and reopened as it was.
+    let back = vectorcraft_format::load(&vectorcraft_format::save(&doc, false)).unwrap();
+    assert_eq!(back.node(pen).unwrap().appearance.stroke().unwrap().pressure, Some(p));
+    // SVG and PDF draw the brush through the same stroke code: without the pressure they differ.
+    let mut flat = doc.clone();
+    flat.node_mut(pen).unwrap().appearance.stroke_mut().unwrap().pressure = None;
+    assert_ne!(vectorcraft_svg::export(&doc, &Default::default()), vectorcraft_svg::export(&flat, &Default::default()));
+    let pdf = |d: &Document| {
+        vectorcraft_pdf::export(d, &vectorcraft_pdf::PdfOptions { created: Some(0), ..vectorcraft_pdf::PdfOptions::uncompressed() }).unwrap()
+    };
+    assert_ne!(pdf(&doc), pdf(&flat));
+}
+
+/// Continuing a pressure stroke keeps its pressure where it was and adds the new stroke's after it.
+#[test]
+fn continuing_a_stroke_joins_its_pressure() {
+    let mut s = session();
+    let r = s.execute("path.freehand", &json!({"points": [[0, 50, 0], [100, 50, 1]], "style": "brush"})).unwrap();
+    let id = NodeId(r["id"].as_u64().unwrap());
+    s.execute("path.freehand", &json!({"points": [[100, 50, 1], [200, 50, 0]], "style": "brush", "extend": {"id": id.0, "end": "end"}})).unwrap();
+    let p = pressure_of(&s, id).unwrap();
+    assert!(p.at(0.0) < 0.05 && (p.at(0.5) - 1.0).abs() < 0.05 && p.at(1.0) < 0.05, "{p:?}");
+    // Continued at its start: the new stroke comes first, running backwards from where it joined.
+    let r = s.execute("path.freehand", &json!({"points": [[0, 150], [100, 150]], "style": "brush"})).unwrap();
+    let id = NodeId(r["id"].as_u64().unwrap());
+    s.execute("path.freehand", &json!({"points": [[0, 150, 1], [-100, 150, 0]], "style": "brush", "extend": {"id": id.0, "end": "start"}})).unwrap();
+    let p = pressure_of(&s, id).unwrap();
+    assert!(p.at(0.0) < 0.05 && (p.at(0.5) - 1.0).abs() < 0.05, "{p:?}");
+    assert_eq!(p.at(1.0), vectorcraft_doc::PressureProfile::MID, "the old part had no pressure");
+}
+
+/// Pen pressure belongs to its path: new art, graphic styles and Brush Options' edits leave it.
+#[test]
+fn pressure_stays_with_its_own_path() {
+    let mut s = session();
+    s.execute("appearance.setNewArtBasic", &json!({"on": false})).unwrap();
+    let r = s.execute("brush.freehand", &json!({"points": [[0, 50, 0.2], [100, 50, 0.9]], "style": "brush", "brush": "3 pt. Round"})).unwrap();
+    let id = NodeId(r["id"].as_u64().unwrap());
+    assert!(pressure_of(&s, id).is_some());
+    select(&mut s, &[id]);
+    s.execute("graphicStyle.new", &json!({"name": "Inked"})).unwrap();
+    let style = s.doc().unwrap().doc.graphic_style("Inked").unwrap().appearance.clone();
+    assert!(style.stroke().is_some_and(|st| st.pressure.is_none()));
+    let other = rect(&mut s, 10.0, 100.0, 50.0, 50.0);
+    assert_eq!(pressure_of(&s, other), None, "new art takes the look, not the pressure");
+    pressure_round(&mut s);
+    assert!(pressure_of(&s, id).is_some(), "editing the brush keeps the strokes' pressure");
+}
+
+/// Brush Options sets the variation modes; bad modes are refused, never a panic.
+#[test]
+fn brush_options_set_variation_modes() {
+    let mut s = session();
+    pressure_round(&mut s);
+    let b = s.execute("brush.get", &json!({"name": "3 pt. Round"})).unwrap();
+    assert_eq!(b["modes"], json!(["fixed", "fixed", "pressure"]));
+    assert_eq!(b["variation"], json!([0.0, 0.0, 3.0]));
+    for bad in [json!({"modes": ["fixed", "fixed", "tilt"]}), json!({"modes": "pressure"}), json!({"variation": "x"}), json!({"modes": [1, 2, 3]})] {
+        assert!(s.execute("brush.options", &json!({"name": "3 pt. Round", "params": bad})).is_err(), "{bad}");
+    }
+    assert_eq!(s.execute("brush.get", &json!({"name": "3 pt. Round"})).unwrap(), b, "a refused edit changes nothing");
+}
+
+/// The bounds of the brush art `id`'s strokes draw.
+fn brushed_bounds(s: &Session, id: NodeId) -> Rect {
+    let st = s.doc().unwrap();
+    let pieces = vectorcraft_brush::node_pieces(&st.doc, &node(s, id)).expect("brushed");
+    vectorcraft_brush::pieces_bounds(&pieces).expect("draws")
+}
+
+/// Scatter, Art and Pattern Brush Options: the params reach the brush and every stroke painted
+/// with it redraws; values out of range are clamped, unknown choices refused.
+#[test]
+fn scatter_art_and_pattern_brush_options_update_strokes() {
+    let mut s = session();
+    // A rectangle as an art brush (straight edges: no flattening between sizes).
+    let r = rect(&mut s, 10.0, 200.0, 40.0, 8.0);
+    let bar = s.execute("brush.new", &json!({"type": "art", "name": "Bar", "ids": [r.0]})).unwrap()["name"].as_str().unwrap().to_string();
+    let id = line(&mut s);
+    select(&mut s, &[id]);
+    let edit = |s: &mut Session, name: &str, params: Value| -> f64 {
+        s.execute("brush.apply", &json!({ "name": name })).unwrap();
+        let before = brushed_bounds(s, id).height();
+        s.execute("brush.options", &json!({ "name": name, "params": params })).unwrap();
+        brushed_bounds(s, id).height() / before
+    };
+    // Art: Width 300 % draws the art three times as wide across the path.
+    let art = json!({"width": 300, "direction": "rightToLeft", "flip_across": true});
+    assert!((edit(&mut s, &bar, art) - 3.0).abs() < 1e-6);
+    s.execute("brush.options", &json!({"name": bar, "params": {"scale": {"mode": "betweenGuides", "start": 0.2, "end": 0.6}}})).unwrap();
+    let b = s.execute("brush.get", &json!({ "name": bar })).unwrap();
+    assert_eq!(
+        (&b["direction"], &b["flip_across"], &b["scale"]),
+        (&json!("rightToLeft"), &json!(true), &json!({"mode": "betweenGuides", "start": 0.2, "end": 0.6}))
+    );
+    // Pattern: Scale 200 % doubles the tiles.
+    assert!((edit(&mut s, "Stitches", json!({"scale": 200, "spacing": 50, "fit": "addSpace", "flip_along": true})) - 2.0).abs() < 0.05);
+    let b = s.execute("brush.get", &json!({"name": "Stitches"})).unwrap();
+    assert_eq!((&b["spacing"], &b["fit"]), (&json!(50.0), &json!("addSpace")));
+    // Scatter: a fixed Size of 200 % doubles the dots; the modes and Hue Shift are kept.
+    let key = json!({"model": "rgb", "r": 0.0, "g": 0.0, "b": 0.0});
+    let scatter = json!({"size": [200, 50], "modes": ["fixed", "fixed", "fixed", "random"], "rotation_relative_to_path": true, "colorization": {"method": "hueShift", "key": key}});
+    assert!((edit(&mut s, "Dots", scatter) - 2.0).abs() < 0.05);
+    let b = s.execute("brush.get", &json!({"name": "Dots"})).unwrap();
+    assert_eq!(
+        (&b["modes"], &b["colorization"]["method"], &b["colorization"]["key"]),
+        (&json!(["fixed", "fixed", "fixed", "random"]), &json!("hueShift"), &key)
+    );
+    // Out of range: clamped. Unknown choices: refused, nothing changes.
+    let junk = json!({"size": [1e308, -1e308], "spacing": [0, 1e308], "rotation": [720, -1e9], "scatter": [-1e308, 5]});
+    s.execute("brush.options", &json!({"name": "Dots", "params": junk})).unwrap();
+    let b = s.execute("brush.get", &json!({"name": "Dots"})).unwrap();
+    assert_eq!(
+        (&b["size"], &b["spacing"], &b["rotation"], &b["scatter"]),
+        (&json!([10000.0, 1.0]), &json!([1.0, 10000.0]), &json!([180.0, -180.0]), &json!([-1000.0, 5.0]))
+    );
+    assert!(brushed_bounds(&s, id).is_finite());
+    for (name, bad) in [
+        ("Dots", json!({"modes": ["fixed", "tilt", "fixed", "fixed"]})),
+        ("Dots", json!({"modes": ["fixed"]})),
+        ("Dots", json!({"colorization": {"method": "sparkle"}})),
+        ("Arrow", json!({"direction": "diagonal"})),
+        ("Arrow", json!({"width": "wide"})),
+        ("Chain", json!({"fit": "squeeze"})),
+    ] {
+        let before = s.execute("brush.get", &json!({ "name": name })).unwrap();
+        assert!(s.execute("brush.options", &json!({ "name": name, "params": bad })).is_err(), "{bad}");
+        assert_eq!(s.execute("brush.get", &json!({ "name": name })).unwrap(), before);
+    }
+    s.execute("brush.options", &json!({"name": "Chain", "params": {"scale": 1e308, "spacing": -1e308}})).unwrap();
+    let b = s.execute("brush.get", &json!({"name": "Chain"})).unwrap();
+    assert_eq!((&b["scale"], &b["spacing"]), (&json!(10000.0), &json!(0.0)));
+}
+
 // ---------- symbols ----------
 
 fn make_symbol(s: &mut Session) -> (NodeId, String, Rect) {
@@ -221,6 +396,25 @@ fn new_symbol_replaces_selection_with_instance_of_same_bounds() {
     assert_eq!(s.execute("symbol.new", &json!({"name": "Box"})).unwrap()["name"], "Box 2");
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.doc().unwrap().doc.symbols.len(), 1);
+}
+
+/// New Symbol given `ids` that list an object and then the group that holds it puts the instance
+/// where the group was and removes both, as removing one object at a time does.
+#[test]
+fn new_symbol_of_an_object_and_the_group_that_holds_it_keeps_order_and_ids() {
+    let mut s = session();
+    let (a, b) = (rect(&mut s, 0.0, 0.0, 10.0, 10.0), rect(&mut s, 100.0, 0.0, 10.0, 10.0));
+    select(&mut s, &[a, b]);
+    let group = NodeId(s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap());
+    let c = rect(&mut s, 200.0, 0.0, 10.0, 10.0);
+    let before = s.doc().unwrap().doc.clone();
+    let r = s.execute("symbol.new", &json!({"name": "Pair", "ids": [a.0, group.0]})).unwrap();
+    let inst = NodeId(r["id"].as_u64().unwrap());
+    let ids = |n: &Node| n.children().unwrap().iter().map(|c| c.id).collect::<Vec<_>>();
+    assert_eq!(ids(&s.doc().unwrap().doc.layers[0]), [inst, c]);
+    assert_eq!(s.doc().unwrap().selection.objects, [inst]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(*s.doc().unwrap().doc == *before, "Undo gives back the document");
 }
 
 #[test]

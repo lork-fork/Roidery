@@ -179,6 +179,35 @@ proptest! {
         prop_assert!((q.length() - p.length()).abs() < 1e-3 * p.length().max(1.0));
     }
 
+    /// Cutting at anchors keeps every segment as it was, in order (a closed subpath's from its
+    /// first cut), in open pieces of two or more anchors. A smoothed corner gets handles on a line
+    /// through it.
+    #[test]
+    fn cut_at_keeps_the_segments(p in arb_path_data(), cuts in proptest::collection::btree_set(0usize..12, 0..4), pick in 0usize..100) {
+        let sp = &p.subpaths[pick % p.subpaths.len()];
+        let n = sp.anchors.len();
+        let pieces = sp.cut_at(&cuts);
+        let segs = |s: &vectorcraft_geom::SubPath| (0..s.segment_count()).map(|i| s.segment(i)).collect::<Vec<_>>();
+        let mut want = segs(sp);
+        if pieces.len() > 1 || pieces.first().is_some_and(|q| q.closed != sp.closed) {
+            prop_assert!(pieces.iter().all(|q| !q.closed && q.anchors.len() >= 2));
+            if sp.closed {
+                want.rotate_left(cuts.iter().copied().find(|&c| c < n).unwrap_or(0));
+            }
+        } else {
+            prop_assert_eq!(&pieces, &vec![sp.clone()]);
+        }
+        prop_assert_eq!(pieces.iter().flat_map(segs).collect::<Vec<_>>(), want);
+        let mut s = sp.clone();
+        let i = pick % n.max(1);
+        let corner = s.anchors.get(i).is_some_and(|a| a.kind == vectorcraft_geom::AnchorKind::Corner);
+        if s.smooth_anchor(i) && corner {
+            let a = s.anchors[i];
+            let (u, v) = (a.h_in - a.p, a.h_out - a.p);
+            prop_assert!(u.cross(v).abs() <= 1e-6 * (1.0 + u.hypot() * v.hypot()) && u.dot(v) <= 0.0, "{a:?}");
+        }
+    }
+
     /// Polygon area via the shoelace formula equals the path's signed area magnitude and
     /// SubPath::area.
     #[test]

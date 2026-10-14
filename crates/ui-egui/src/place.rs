@@ -10,7 +10,7 @@ use vectorcraft_engine::cmd::fileio;
 use vectorcraft_geom::Point;
 
 use crate::theme::{self, Tokens};
-use crate::{VectorcraftApp, io};
+use crate::{VectorcraftApp, io, widgets};
 
 /// The loaded place cursor's thumbnail size (px on the longer side).
 const THUMB: u32 = 64;
@@ -37,13 +37,21 @@ pub struct DropAt {
     pub embed: bool,
 }
 
-/// Where files dropped on the window go.
+/// Where a file dropped on the window goes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DropTarget {
-    /// The canvas of the document they were dropped on.
+    /// The canvas of the document it was dropped on.
     Place(DropAt),
-    /// Opened as documents: no document is open, or the drop missed the canvas (the tab bar).
+    /// Opened as File → Open opens it: no document is open, the drop missed the canvas (the tab
+    /// bar), it is a document dropped where the platform doesn't say, or it is a library, a presets
+    /// file or a plug-in.
     Open,
+}
+
+/// Does a file named `name` open as a document of its own (vector art: native, SVG, PDF, `.ai`,
+/// EPS, DXF, metafiles) rather than being a picture or text to place?
+pub fn is_document(name: &str) -> bool {
+    fileio::format_for_name(name).is_some_and(|f| f.read && !f.raster)
 }
 
 /// The app's Place state (not saved with the preferences).
@@ -128,10 +136,10 @@ fn pick(app: &mut VectorcraftApp) -> Result<(), String> {
         f();
         return Ok(());
     }
-    let paths = match (app.services.pick_open_multi.as_mut(), app.services.pick_open.as_mut()) {
-        (Some(f), _) => f(),
-        (None, Some(f)) => f(&crate::FilePick { filters: fileio::place_filters().collect(), ..Default::default() }).into_iter().collect(),
-        (None, None) => vec![],
+    let paths = if app.services.pick_open_multi.is_some() {
+        crate::picks::open_many(app)
+    } else {
+        crate::picks::open(app, &crate::FilePick { filters: fileio::place_filters().collect(), ..Default::default() }).into_iter().collect()
     };
     if paths.is_empty() {
         return Err("cancelled".into());
@@ -153,9 +161,18 @@ fn open_dialog(app: &mut VectorcraftApp, files: Vec<Value>) {
             "template": false,
             "replace": false,
             "__replace": files.len() == 1 && one_object,
+            "__documents": files.iter().any(is_vectorcraft_file),
+            "__others": !files.iter().all(is_vectorcraft_file),
             "__info": info,
         }),
     ));
+}
+
+/// Is dialog file entry `file` a VectorCraft document on disk (what Link places as one locked
+/// object)?
+fn is_vectorcraft_file(file: &Value) -> bool {
+    let native = ["vectorcraft", vectorcraft_format::LEGACY_EXTENSION, "vctemplate"];
+    file.get("path").and_then(Value::as_str).is_some_and(|p| native.contains(&fileio::extension(p).as_str()))
 }
 
 /// The engine params naming `file` (a dialog file entry).
@@ -281,33 +298,49 @@ pub fn paint_cursor(app: &mut VectorcraftApp, ctx: &egui::Context, painter: &egu
 // ---------- drops ----------
 
 impl VectorcraftApp {
-    /// Where files dropped with the pointer at `pos` (screen points; `None` when the platform
-    /// doesn't tell) go: onto the canvas of the open document (Shift embeds them), else opened. An
-    /// unknown position counts as the middle of the view.
-    pub fn drop_target(&self, pos: Option<egui::Pos2>, shift: bool) -> DropTarget {
+    /// Where file `name` dropped with the pointer at `pos` (screen points) goes: as in Illustrator,
+    /// onto the canvas of the open document (Shift embeds it), else opened. Where the platform
+    /// doesn't say (`None`: desktop drags carry no position), a document opens as a tab of its
+    /// own and a picture or text is placed in the middle of the view. A library, a presets file, a
+    /// plug-in or a script opens wherever it is dropped, as File → Open opens it ([`io::opens_as`]).
+    pub fn drop_target(&self, name: &str, pos: Option<egui::Pos2>, shift: bool) -> DropTarget {
         let (Some(rect), Some(st), Some(v)) = (self.canvas_rect, self.session.active(), self.view()) else { return DropTarget::Open };
         let at = match pos {
+            _ if io::opens_as(name).is_some() => return DropTarget::Open,
             Some(p) if !rect.contains(p) => return DropTarget::Open,
             Some(p) => crate::canvas::Xf::new(rect, v).to_doc(p),
+            None if is_document(name) => return DropTarget::Open,
             None => v.center,
         };
         DropTarget::Place(DropAt { doc: st.uid, at, embed: shift })
     }
 }
 
-/// Files dropped on the window (`(name, path, bytes)`): placed on the canvas or opened (and added
-/// to Open Recent Files), as `target` says. Files for a canvas go to the document they were
-/// dropped on, which becomes active again; none are placed when it has closed since.
-pub fn drop_files(app: &mut VectorcraftApp, files: Vec<(String, Option<String>, Vec<u8>)>, target: DropTarget) {
-    if let DropTarget::Place(d) = target {
-        let Some(i) = app.session.documents().iter().position(|st| st.uid == d.doc) else {
-            let names: Vec<&str> = files.iter().map(|(name, ..)| name.as_str()).collect();
-            app.status(format!("Couldn't place {}: the document it was dropped on was closed", names.join(", ")));
-            return;
-        };
-        app.session.set_active(i);
-    }
-    for (name, path, bytes) in files {
+/// Where the pointer is during a file drag over the window, as far as egui knows: nowhere on the
+/// desktop, whose drags carry no position (the one egui had before is stale; files dropped there
+/// go by their kind, see [`VectorcraftApp::drop_target`]). On the web, egui's own position (for
+/// the highlight: the web host follows its drags itself for drops).
+pub fn drag_pos(ctx: &egui::Context) -> Option<egui::Pos2> {
+    if cfg!(target_arch = "wasm32") { ctx.input(|i| i.pointer.latest_pos()) } else { None }
+}
+
+/// A file dropped on the window: its name, path (when it has one) and bytes.
+pub type DropFile = (String, Option<String>, Vec<u8>);
+
+/// Files dropped on the window, each placed on a canvas or opened (and added to Open Recent
+/// Files) as its target says: the placed ones first, so the last document opened is the one
+/// shown. A file for a canvas goes to the document it was dropped on, which becomes active again;
+/// it isn't placed when that document has closed since.
+pub fn drop_files(app: &mut VectorcraftApp, mut files: Vec<(DropTarget, DropFile)>) {
+    files.sort_by_key(|(target, _)| *target == DropTarget::Open);
+    for (target, (name, path, bytes)) in files {
+        if let DropTarget::Place(d) = target {
+            let Some(i) = app.session.documents().iter().position(|st| st.uid == d.doc) else {
+                app.status(format!("Couldn't place {name}: the document it was dropped on was closed"));
+                continue;
+            };
+            app.session.set_active(i);
+        }
         let r = match target {
             DropTarget::Place(DropAt { at, embed, .. }) => {
                 let mut p = match &path {
@@ -318,14 +351,19 @@ pub fn drop_files(app: &mut VectorcraftApp, files: Vec<(String, Option<String>, 
                 p["link"] = json!(!embed);
                 run(app, &p).map(|_| ())
             }
-            DropTarget::Open => io::open_bytes(app, &name, &bytes, path.clone()).map(|_| {
-                if let Some(path) = &path {
-                    io::note_recent(app, path);
-                }
-            }),
+            DropTarget::Open => match path.as_deref() {
+                Some(path) if app.services.read.is_some() => io::open_path(app, path).map(|_| ()),
+                _ => io::open_bytes(app, &name, &bytes, path.clone()).map(|_| {
+                    if let Some(path) = &path {
+                        io::note_recent(app, path);
+                    }
+                }),
+            },
         };
-        if let Err(e) = r {
-            app.status(format!("Couldn't {} {name}: {e}", if target == DropTarget::Open { "open" } else { "place" }));
+        match r {
+            Err(e) if target == DropTarget::Open => io::report_open_error(app, &name, &e),
+            Err(e) => app.status(format!("Couldn't place {name}: {e}")),
+            Ok(()) => {}
         }
     }
 }
@@ -338,7 +376,7 @@ pub fn drain(app: &mut VectorcraftApp) {
     let mut picked = vec![];
     for a in arrived {
         match a.drop {
-            Some(d) => drop_files(app, vec![(a.name, None, a.bytes)], DropTarget::Place(d)),
+            Some(d) => drop_files(app, vec![(DropTarget::Place(d), (a.name, None, a.bytes))]),
             None => {
                 picked.push(json!({ "name": a.name }));
                 app.place.picked.retain(|(n, _)| *n != a.name);
@@ -351,10 +389,18 @@ pub fn drain(app: &mut VectorcraftApp) {
     }
 }
 
-/// Files dragged over the window: the canvas is outlined where they would be placed.
+/// Files dragged over the window: the canvas is outlined where they would be placed. On the web
+/// the browser gives a dragged file's type but not its name, so the canvas is outlined for any
+/// file dragged over it, including libraries, presets and plug-ins, which open when dropped.
 pub fn paint_drop_highlight(app: &VectorcraftApp, ctx: &egui::Context, painter: &egui::Painter, rect: egui::Rect) {
-    let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
-    if !hovering || matches!(app.drop_target(ctx.input(|i| i.pointer.latest_pos()), false), DropTarget::Open) {
+    let pos = drag_pos(ctx);
+    let placed = ctx.input(|i| {
+        i.raw.hovered_files.iter().any(|f| {
+            let name = f.path.as_deref().map(|p| p.to_string_lossy()).unwrap_or_default();
+            app.drop_target(&name, pos, false) != DropTarget::Open
+        })
+    });
+    if !placed {
         return;
     }
     let t = Tokens::get(ctx);
@@ -386,14 +432,41 @@ pub fn image_summary(i: &Value) -> (String, String) {
     (name, format!("{}   PPI: {}", i["colorMode"].as_str().unwrap_or("RGB"), fmt_ppi(ppi)))
 }
 
-/// The Control bar's details for the one selected image: Linked File or Embedded, its file name,
-/// colour mode and effective resolution.
-pub fn control_bar_details(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
-    let Some(i) = selected_image_info(app) else { return };
+/// The Control bar for the one selected image: Linked File or Embedded, its file name, colour mode
+/// and effective resolution, Embed or Unembed, Edit Original (a linked file), Image Trace, Mask and
+/// Crop Image. Whether one image is selected.
+pub fn control_bar_details(app: &mut VectorcraftApp, ui: &mut egui::Ui) -> bool {
+    let Some(i) = selected_image_info(app) else { return false };
     let (name, details) = image_summary(i);
+    let (Some(id), linked) = (i["id"].as_u64(), i["linked"] == true) else { return false };
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(name).size(12.0).color(t.text_strong));
+    ui.label(egui::RichText::new(&name).size(12.0).color(t.text_strong));
     ui.separator();
     ui.label(egui::RichText::new(details).size(12.0).color(t.text_dim));
     ui.separator();
+    link_buttons(app, ui, id, linked, &name, None);
+    crate::panels::image_trace::trace_button(app, ui, crate::panels::image_trace::TRACE_BUTTON_W);
+    for (label, cmd, w) in [(tl!("Mask"), "object.maskImage", 52.0), (tl!("Crop Image"), "ui.cropImage", 84.0)] {
+        if widgets::flat_button(ui, label, w).clicked() {
+            crate::menus::invoke(app, cmd, json!({}));
+        }
+    }
+    ui.separator();
+    true
+}
+
+/// Embed (and Edit Original) for linked image `id`, Unembed… for an embedded one named `name`
+/// (Control bar, Properties). The buttons are `width` wide, or fit their labels.
+pub fn link_buttons(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: u64, linked: bool, name: &str, width: Option<f32>) {
+    let w = |fit: f32| width.unwrap_or(fit);
+    if linked {
+        if widgets::flat_button(ui, tl!("Embed"), w(60.0)).clicked() {
+            app.run("links.embed", json!({ "ids": [id] })).ok();
+        }
+        if widgets::flat_button(ui, tl!("Edit Original"), w(92.0)).clicked() {
+            crate::menus::invoke(app, "links.editOriginal", json!({ "id": id }));
+        }
+    } else if widgets::flat_button(ui, tl!("Unembed…"), w(80.0)).clicked() {
+        crate::panels::links::unembed(app, id, name);
+    }
 }

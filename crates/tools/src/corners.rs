@@ -1,163 +1,330 @@
-//! Live Corners: the widgets inside the corners of a selected live rectangle. Dragging one rounds
-//! (or sharpens) the corners whose widgets show together: all four when the whole shape is
-//! selected, those with a selected anchor when Direct Selection picked some. Alt-clicking a widget
-//! cycles their corner kind (round, inverted round, chamfer); double-clicking one opens the
-//! Corners dialog. The Selection and Direct Selection tools share this, and the canvas draws the
-//! widgets from the same geometry.
+//! Live Corners: the widgets inside the corners of the selected paths. The Selection tool shows
+//! them on live rectangles and polygons, Direct Selection on any path (a star, a pen path) at each
+//! corner anchor: one that isn't smooth, where two sides, straight or curved, meet at an angle. Dragging one rounds (or
+//! sharpens) the corners whose widgets show together, on every selected path (#938): every corner
+//! of a path selected whole, those with a selected anchor when Direct Selection picked some. Alt-clicking a widget cycles their corner
+//! kind (round, inverted round, chamfer); double-clicking one opens the Corners dialog. The
+//! Selection and Direct Selection tools share this, and the canvas draws the widgets from the same
+//! geometry.
 
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{Document, LiveShape, NodeId, NodeKind, Selection};
+use vectorcraft_doc::{Document, LiveCorners, LiveShape, NodeId, NodeKind, Selection};
+use vectorcraft_geom::corners::{Corner, cut_corners};
 use vectorcraft_geom::shapes::CornerKind;
-use vectorcraft_geom::{Affine, Point, Vec2};
+use vectorcraft_geom::{Affine, BezPath, PathData, Point, Vec2};
 
 use crate::{Action, Overlay, PointerEvent, ToolContext};
 
 /// The dialog a double-click on a corner widget opens: `{id, corners}`.
 pub const DIALOG: &str = "corners";
 
-/// Widgets sit at least this far inside their corner (screen px), further in once the radius is.
+/// Widgets sit at least this far inside their corner along each side of a right angle (screen px;
+/// √2 times it along the bisector, at any angle), further in once the radius is.
 const MIN_INSET_PX: f64 = 10.0;
-/// Shapes whose shorter side is smaller than this on screen (px) hide their widgets.
+/// Corners with a side shorter than this on screen (px) hide their widgets.
 const MIN_SIDE_PX: f64 = 3.0 * MIN_INSET_PX;
-/// Corners in radii order (top-left, top-right, bottom-right, bottom-left): position as factors
-/// of (w, h) and the inward diagonal.
-const CORNERS: [((f64, f64), (f64, f64)); 4] =
-    [((0.0, 0.0), (1.0, 1.0)), ((1.0, 0.0), (-1.0, 1.0)), ((1.0, 1.0), (-1.0, -1.0)), ((0.0, 1.0), (1.0, -1.0))];
 
-/// The corner widgets of a selection that is exactly one editable live rectangle.
+/// One corner's widget.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CornerWidgets {
-    pub id: NodeId,
-    w: f64,
-    h: f64,
-    radii: [f64; 4],
-    kinds: [CornerKind; 4],
+struct Widget {
+    /// The corner, in the corners' own space.
+    corner: Corner,
+    /// The radius it is set to (document units) and its kind.
+    radius: f64,
+    kind: CornerKind,
+    /// The angle between its sides in the document, in degrees.
+    angle: f64,
+    /// The widget's centre in the document.
+    at: Point,
+}
+
+/// The corner widgets of one selected path.
+#[derive(Clone, Debug, PartialEq)]
+struct PathWidgets {
+    id: NodeId,
+    /// Maps the corners' space into the document (a live rectangle's own; else none).
     xf: Affine,
-    /// Widget centres in document coordinates, in radii order.
-    pub points: [Point; 4],
-    /// The corners whose widgets show (and which a drag edits).
-    pub shown: [bool; 4],
+    /// The widgets that show (and which a drag edits), in anchor order.
+    widgets: Vec<Widget>,
+    /// Every corner of the path shows its widget.
+    all: bool,
+}
+
+impl PathWidgets {
+    /// The widgets of path `id` at `zoom` (screen px per document point), if it has any: any path
+    /// with Direct Selection (`any_path`), live rectangles and polygons with Selection.
+    fn of(doc: &Document, selection: &Selection, id: NodeId, zoom: f64, any_path: bool) -> Option<Self> {
+        if !doc.is_editable(id) || selection.segments.contains_key(&id) {
+            return None;
+        }
+        let NodeKind::Path { path, live, .. } = &doc.node(id)?.kind else { return None };
+        if !any_path && !matches!(live.as_deref(), Some(LiveShape::Rectangle { .. } | LiveShape::Polygon { .. })) {
+            return None;
+        }
+        let lc = LiveCorners::new(path, live.as_deref())?;
+        let det = lc.xf.determinant().abs();
+        if det < 1e-12 {
+            return None;
+        }
+        // Screen pixels per unit of the corners' space (a rectangle's may be skewed).
+        let scale = zoom * det.sqrt();
+        let picked = lc.picked(selection.partial(id));
+        let widgets: Vec<_> = lc
+            .corners
+            .iter()
+            .filter(|c| picked.contains(&c.index) && c.lu.min(c.lv) * scale >= MIN_SIDE_PX)
+            .map(|c| {
+                // On the bisector at the centre of the arc as drawn, at least the minimum inset
+                // in and at most half the shorter side.
+                let radius = lc.radius(c.index);
+                let k = (c.fitted(radius) / c.sin()).max(MIN_INSET_PX / (scale * (1.0 + c.cos()).sqrt())).min(c.lu.min(c.lv) / 2.0);
+                Widget { corner: *c, radius, kind: lc.kind(c.index), angle: angle_in(lc.xf, c), at: lc.xf * c.on_bisector(k) }
+            })
+            .collect();
+        let all = widgets.len() == lc.corners.len();
+        (!widgets.is_empty()).then_some(Self { id, xf: lc.xf, widgets, all })
+    }
+
+    /// The corners whose widgets show: anchor indices of the path's uncut outline.
+    fn corners(&self) -> Vec<usize> {
+        self.widgets.iter().map(|w| w.corner.index).collect()
+    }
+}
+
+/// The corner widgets of the selected paths that have some.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CornerWidgets {
+    paths: Vec<PathWidgets>,
 }
 
 impl CornerWidgets {
-    /// The widgets at `zoom` (screen px per document point), if the selection has them.
-    pub fn of(doc: &Document, selection: &Selection, zoom: f64) -> Option<Self> {
-        let [id] = selection.objects[..] else { return None };
-        if !doc.is_editable(id) {
-            return None;
-        }
-        let Some(NodeKind::Path { live: Some(live), .. }) = doc.node(id).map(|n| &n.kind) else { return None };
-        let LiveShape::Rectangle { w, h, radii, kinds, xf } = live else { return None };
-        let (w, h, radii, kinds, xf) = (*w, *h, *radii, *kinds, *xf);
-        // Screen pixels per shape unit along each side (the shape may be scaled or skewed).
-        let c = xf.as_coeffs();
-        let (px, py) = (Vec2::new(c[0], c[1]).hypot() * zoom, Vec2::new(c[2], c[3]).hypot() * zoom);
-        if xf.determinant().abs() < 1e-12 || (w * px).min(h * py) < MIN_SIDE_PX {
-            return None;
-        }
-        let points = std::array::from_fn(|k| {
-            let ((fx, fy), (sx, sy)) = CORNERS[k];
-            let ix = radii[k].max(MIN_INSET_PX / px).min(w / 2.0);
-            let iy = radii[k].max(MIN_INSET_PX / py).min(h / 2.0);
-            xf * Point::new(fx * w + sx * ix, fy * h + sy * iy)
-        });
-        Some(Self { id, w, h, radii, kinds, xf, points, shown: live.picked_corners(selection.partial(id)) })
+    /// The widgets at `zoom` (screen px per document point), if the selection has them: on any
+    /// path with Direct Selection (`any_path`), on live rectangles and polygons with Selection.
+    pub fn of(doc: &Document, selection: &Selection, zoom: f64, any_path: bool) -> Option<Self> {
+        let paths: Vec<_> = selection.objects.iter().filter_map(|id| PathWidgets::of(doc, selection, *id, zoom, any_path)).collect();
+        (!paths.is_empty()).then_some(Self { paths })
     }
 
     /// Selection & Anchor Display → Hide Corner Widget for angles greater than: the widgets of
-    /// corners wider than `max` degrees (a skewed rectangle's obtuse ones) hide; none if all do.
+    /// corners wider than `max` degrees (in the document) hide; none if all do.
     pub fn within_angle(mut self, max: f64) -> Option<Self> {
-        // The angle between the shape's sides where they meet at the top-left corner; the
-        // top-right and bottom-left corners are its supplement.
-        let c = self.xf.as_coeffs();
-        let (u, v) = (Vec2::new(c[0], c[1]), Vec2::new(c[2], c[3]));
-        let a = u.cross(v).abs().atan2(u.dot(v)).to_degrees();
-        for (k, shown) in self.shown.iter_mut().enumerate() {
-            let angle = if k % 2 == 0 { a } else { 180.0 - a };
-            *shown &= angle <= max + 1e-9;
+        for p in &mut self.paths {
+            let n = p.widgets.len();
+            p.widgets.retain(|w| w.angle <= max + 1e-9);
+            p.all &= p.widgets.len() == n;
         }
-        self.shown.contains(&true).then_some(self)
+        self.paths.retain(|p| !p.widgets.is_empty());
+        (!self.paths.is_empty()).then_some(self)
     }
 
-    /// The widgets the active tool can drag (View → Show Corner Widget on).
-    pub fn for_tool(cx: &ToolContext) -> Option<Self> {
-        if !cx.corner_widgets {
+    /// The widgets on show: [`Self::of`] with View → Show Corner Widget `on`, less those wider
+    /// than `max_angle` ([`Self::within_angle`]).
+    pub fn showing(doc: &Document, selection: &Selection, zoom: f64, any_path: bool, on: bool, max_angle: f64) -> Option<Self> {
+        if !on {
             return None;
         }
-        Self::of(cx.doc, cx.selection, cx.zoom)?.within_angle(cx.corner_widget_max_angle)
+        Self::of(doc, selection, zoom, any_path)?.within_angle(max_angle)
+    }
+
+    /// The widgets the active tool can drag (Direct Selection: `any_path`).
+    pub fn for_tool(cx: &ToolContext, any_path: bool) -> Option<Self> {
+        Self::showing(cx.doc, cx.selection, cx.zoom, any_path, cx.corner_widgets, cx.corner_widget_max_angle)
     }
 
     /// The centres of the widgets that show.
     pub fn visible(&self) -> impl Iterator<Item = Point> + '_ {
-        self.points.iter().zip(self.shown).filter(|(_, on)| *on).map(|(p, _)| *p)
+        self.visible_on().map(|(_, at)| at)
     }
 
-    /// The indices of the shown corners.
-    fn shown_indices(&self) -> Value {
-        (0..4).filter(|k| self.shown[*k]).collect()
+    /// The centres of the widgets that show, each with the object it belongs to.
+    pub fn visible_on(&self) -> impl Iterator<Item = (NodeId, Point)> + '_ {
+        self.paths.iter().flat_map(|p| p.widgets.iter().map(move |w| (p.id, w.at)))
     }
 
-    /// Index of the shown widget nearest to `p` within `tol` (document units).
-    pub fn hit(&self, p: Point, tol: f64) -> Option<usize> {
-        let d = |k: &usize| self.points[*k].distance(p);
-        (0..4).filter(|k| self.shown[*k] && d(k) <= tol).min_by(|a, b| d(a).total_cmp(&d(b)))
+    /// The corners whose widgets show, path after path: anchor indices of each path's uncut
+    /// outline.
+    pub fn corners(&self) -> Vec<usize> {
+        self.paths.iter().flat_map(PathWidgets::corners).collect()
     }
 
-    /// `object.setLiveShape` params setting `key` on the shown corners (all four unless some are
-    /// hidden, which `corners` then leaves out).
+    /// The widget nearest to `p` within `tol` (document units): its path's and its own index.
+    fn hit(&self, p: Point, tol: f64) -> Option<(usize, usize)> {
+        let d = |&(i, k): &(usize, usize)| self.widget(i, k).map_or(f64::INFINITY, |w| w.at.distance(p));
+        self.paths
+            .iter()
+            .enumerate()
+            .flat_map(|(i, path)| (0..path.widgets.len()).map(move |k| (i, k)))
+            .filter(|ik| d(ik) <= tol)
+            .min_by(|a, b| d(a).total_cmp(&d(b)))
+    }
+
+    fn widget(&self, path: usize, k: usize) -> Option<&Widget> {
+        self.paths.get(path).and_then(|p| p.widgets.get(k))
+    }
+
+    /// `object.setLiveShape` params setting `key` on the shown corners (every corner of a path
+    /// unless some are hidden, which `corners` then leaves out): one path by its `id`, several as
+    /// `items`.
     fn command(&self, key: &str, value: Value) -> Value {
-        let mut p = Map::new();
-        p.insert("id".into(), json!(self.id.0));
-        p.insert(key.into(), value);
-        if self.shown != [true; 4] {
-            p.insert("corners".into(), self.shown_indices());
+        let corners = |p: &PathWidgets| (!p.all).then(|| p.corners());
+        let mut out = Map::new();
+        match self.paths.as_slice() {
+            [p] => {
+                out.insert("id".into(), json!(p.id.0));
+                if let Some(c) = corners(p) {
+                    out.insert("corners".into(), json!(c));
+                }
+            }
+            paths => {
+                let items: Vec<Value> = paths
+                    .iter()
+                    .map(|p| match corners(p) {
+                        Some(c) => json!({ "id": p.id.0, "corners": c }),
+                        None => json!({ "id": p.id.0 }),
+                    })
+                    .collect();
+                out.insert("items".into(), Value::Array(items));
+            }
         }
-        Value::Object(p)
+        out.insert(key.into(), value);
+        Value::Object(out)
     }
 }
 
-/// Is `p` over a corner widget the active tool would drag?
-pub fn over_widget(cx: &ToolContext, p: Point) -> bool {
-    CornerWidgets::for_tool(cx).and_then(|w| w.hit(p, cx.tol(5.0))).is_some()
+/// The angle between corner `c`'s sides once `xf` maps them into the document, in degrees.
+fn angle_in(xf: Affine, c: &Corner) -> f64 {
+    let [a, b, cc, d, _, _] = xf.as_coeffs();
+    let map = |v: Vec2| Vec2::new(a * v.x + cc * v.y, b * v.x + d * v.y);
+    let (u, v) = (map(c.u), map(c.v));
+    u.cross(v).abs().atan2(u.dot(v)).to_degrees()
 }
 
-/// A double-click on a corner widget opens the Corners dialog for the shown corners.
-pub fn double_click(cx: &ToolContext, p: Point) -> Option<Action> {
-    let w = CornerWidgets::for_tool(cx)?;
-    w.hit(p, cx.tol(5.0))?;
-    Some(Action::Dialog(DIALOG.into(), json!({ "id": w.id.0, "corners": w.shown_indices() })))
+/// Is `p` over a corner widget the active tool would drag (Direct Selection: `any_path`)?
+pub fn over_widget(cx: &ToolContext, p: Point, any_path: bool) -> bool {
+    CornerWidgets::for_tool(cx, any_path).and_then(|w| w.hit(p, cx.tol(5.0))).is_some()
 }
 
-/// Dragging a corner widget: the radius follows the pointer along the corner's diagonal. An
+/// A double-click on a corner widget opens the Corners dialog for the shown corners of its path.
+pub fn double_click(cx: &ToolContext, p: Point, any_path: bool) -> Option<Action> {
+    let w = CornerWidgets::for_tool(cx, any_path)?;
+    let (i, _) = w.hit(p, cx.tol(5.0))?;
+    let path = w.paths.get(i)?;
+    Some(Action::Dialog(DIALOG.into(), json!({ "id": path.id.0, "corners": path.corners() })))
+}
+
+/// A path's uncut outline with its corners' radii and kinds, and the corners' space (to outline
+/// the corners at their largest).
+#[derive(Clone, Debug)]
+struct Outline {
+    base: PathData,
+    radii: Vec<f64>,
+    kinds: Vec<CornerKind>,
+    xf: Affine,
+}
+
+/// Dragging a corner widget: the radius follows the pointer along the corner's bisector. An
 /// Alt-click (no drag) cycles the corner kind instead.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct CornerDrag {
     widgets: CornerWidgets,
-    corner: usize,
+    /// The dragged widget: its path's and its own index among the shown ones.
+    widget: (usize, usize),
+    /// Each shown path's outline, in the order of [`CornerWidgets`]' paths.
+    outlines: Vec<Outline>,
     start: Point,
     began: bool,
     alt: bool,
     radius: f64,
+    /// The pointer went past fully round: the dragged corner is at its largest radius.
+    at_limit: bool,
     at: Point,
+    /// Direct Selection: what a click (no drag) on the pressed widget selects.
+    click: Option<CornerClick>,
+}
+
+/// Direct Selection: the drawn anchors of a widget's corner, which a click on the widget selects
+/// (Shift: toggles), as a click on the corner's anchor does.
+#[derive(Clone, Debug)]
+struct CornerClick {
+    id: NodeId,
+    anchors: Vec<(usize, usize)>,
+    shift: bool,
 }
 
 impl CornerDrag {
-    /// Start a drag when the press `ev` is on a widget of the selection.
-    pub fn hit(cx: &ToolContext, ev: &PointerEvent) -> Option<Self> {
-        let (widgets, p) = (CornerWidgets::for_tool(cx)?, ev.pos);
-        let corner = widgets.hit(p, cx.tol(5.0))?;
-        Some(Self { widgets, corner, start: p, began: false, alt: ev.mods.alt, radius: widgets.radii[corner], at: p })
+    /// The drag has left the click: the corner radius is changing.
+    pub fn adjusting(&self) -> bool {
+        self.began
+    }
+
+    /// Start a drag when the press `ev` is on a widget of the selection (Direct Selection:
+    /// `any_path`).
+    pub fn hit(cx: &ToolContext, ev: &PointerEvent, any_path: bool) -> Option<Self> {
+        let (widgets, p) = (CornerWidgets::for_tool(cx, any_path)?, ev.pos);
+        let widget = widgets.hit(p, cx.tol(5.0))?;
+        let radius = widgets.widget(widget.0, widget.1)?.radius;
+        let click = any_path
+            .then(|| {
+                let path = widgets.paths.get(widget.0)?;
+                let corner = path.widgets.get(widget.1)?.corner.index;
+                let lc = cx.doc.node(path.id).and_then(LiveCorners::of)?;
+                Some(CornerClick { id: path.id, anchors: lc.anchors_of(&[corner].into()).into_iter().collect(), shift: ev.mods.shift })
+            })
+            .flatten();
+        let outlines = widgets
+            .paths
+            .iter()
+            .map(|w| {
+                let lc = cx.doc.node(w.id).and_then(LiveCorners::of)?;
+                let n = lc.base.anchor_count();
+                let (radii, kinds) = ((0..n).map(|k| lc.radius(k)).collect(), (0..n).map(|k| lc.kind(k)).collect());
+                Some(Outline { base: lc.base.into_owned(), radii, kinds, xf: w.xf })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self { widgets, widget, outlines, start: p, began: false, alt: ev.mods.alt, radius, at_limit: false, at: p, click })
     }
 
     /// The start radius (as drawn: no larger than fits) plus the pointer's travel along the
-    /// corner's inward diagonal (in the shape's own units), from square to fully round.
-    fn radius_at(&self, p: Point) -> f64 {
-        let w = &self.widgets;
-        let inv = w.xf.inverse();
-        let d = inv * p - inv * self.start;
-        let (_, (sx, sy)) = CORNERS[self.corner];
-        let max = (w.w.abs().min(w.h.abs()) / 2.0).max(0.0);
-        (w.radii[self.corner].min(max) + (d.x * sx + d.y * sy) / 2.0).clamp(0.0, max)
+    /// corner's bisector (in the corners' own units), from square to fully round; and whether the
+    /// travel reached fully round.
+    fn radius_at(&self, p: Point) -> (f64, bool) {
+        let (path, k) = self.widget;
+        let (Some(w), Some(xf)) = (self.widgets.widget(path, k), self.widgets.paths.get(path).map(|p| p.xf)) else {
+            return (self.radius, self.at_limit);
+        };
+        let inv = xf.inverse();
+        let max = w.corner.max_radius();
+        let r = w.corner.fitted(w.radius) + w.corner.radius_change(inv * p - inv * self.start);
+        (r.min(max).max(0.0), max > 0.0 && r >= max)
+    }
+
+    /// The cuts of the edited corners that are at their largest radius, in document coordinates.
+    fn corners_at_limit(&self) -> BezPath {
+        let mut out = BezPath::new();
+        for (shown, o) in self.widgets.paths.iter().zip(&self.outlines) {
+            let shown = &shown.widgets;
+            let mut radii = o.radii.clone();
+            for w in shown {
+                if let Some(r) = radii.get_mut(w.corner.index) {
+                    *r = self.radius;
+                }
+            }
+            let full = |k: &usize| shown.iter().any(|w| w.corner.index == *k && self.radius >= w.corner.max_radius() - 1e-9);
+            let (path, sources) = cut_corners(&o.base, &radii, &o.kinds);
+            for (sp, from) in path.transformed(o.xf).subpaths.iter().zip(&sources) {
+                // A corner's cut is the segment between its two anchors (the last one, for a
+                // closed subpath's first corner).
+                for i in 0..sp.segment_count() {
+                    let (a, b) = (from.get(i), from.get(i + 1).or(from.first()));
+                    if a == b && a.is_some_and(full) {
+                        let c = sp.segment(i);
+                        out.move_to(c.p0);
+                        out.curve_to(c.p1, c.p2, c.p3);
+                    }
+                }
+            }
+        }
+        out
     }
 
     pub fn drag(&mut self, cx: &ToolContext, p: Point) -> Vec<Action> {
@@ -169,7 +336,7 @@ impl CornerDrag {
             self.began = true;
             out.push(Action::Begin("Corner Radius".into()));
         }
-        self.radius = self.radius_at(p);
+        (self.radius, self.at_limit) = self.radius_at(p);
         self.at = p;
         out.push(Action::Preview("object.setLiveShape".into(), self.widgets.command("radius", json!(self.radius))));
         out
@@ -178,20 +345,28 @@ impl CornerDrag {
     pub fn finish(self) -> Vec<Action> {
         if self.began {
             vec![Action::Commit]
-        } else if self.alt {
-            let kind = self.widgets.kinds[self.corner].next();
-            vec![Action::Exec("object.setLiveShape".into(), self.widgets.command("kind", json!(kind)))]
+        } else if let Some(w) = self.widgets.widget(self.widget.0, self.widget.1).filter(|_| self.alt) {
+            vec![Action::Exec("object.setLiveShape".into(), self.widgets.command("kind", json!(w.kind.next())))]
+        } else if let Some(c) = self.click {
+            // Direct Selection: the click selects the widget's corner, so the next drag on this
+            // widget rounds that corner alone (its widget is then the only one showing).
+            let mode = if c.shift { "toggle" } else { "set" };
+            vec![Action::Exec("select.anchors".into(), json!({"id": c.id.0, "anchors": c.anchors, "mode": mode}))]
         } else {
             vec![]
         }
     }
 
-    /// The radius readout next to the pointer.
+    /// The radius readout next to the pointer; at the largest radius, the corners there in red.
     pub fn overlays(&self, cx: &ToolContext) -> Vec<Overlay> {
         if !self.began {
             return vec![];
         }
-        vec![Overlay::Measure { p: self.at, text: format!("Radius: {}", cx.len(self.radius)) }]
+        let mut out = vec![Overlay::Measure { p: self.at, text: format!("Radius: {}", cx.len(self.radius)) }];
+        if self.at_limit {
+            out.push(Overlay::Path { path: self.corners_at_limit(), color: crate::builder::HIGHLIGHT_RED, width: 2.0, dashed: false });
+        }
+        out
     }
 }
 
@@ -204,22 +379,41 @@ mod tests {
 
     /// A live 100 × 100 rectangle at (100, 100) with corner radius `r`.
     fn live_rect(r: f64, xf: Affine) -> (Document, NodeId) {
+        live_shape(100.0, 100.0, r, xf)
+    }
+
+    /// A live `w` × `h` rectangle with corner radius `r`.
+    fn live_shape(w: f64, h: f64, r: f64, xf: Affine) -> (Document, NodeId) {
+        let live = LiveShape::Rectangle { w, h, radii: [r; 4], kinds: Default::default(), xf };
+        doc_with(live.to_path(), Some(live))
+    }
+
+    /// A document holding one path with its live shape.
+    fn doc_with(path: PathData, live: Option<LiveShape>) -> (Document, NodeId) {
         let mut d = Document::new(500.0, 500.0);
         let l = d.layers[0].id;
         let id = d.alloc_id();
-        let live = LiveShape::Rectangle { w: 100.0, h: 100.0, radii: [r; 4], kinds: Default::default(), xf };
-        let mut n = Node::path(id, live.to_path(), Appearance::default_art());
+        let mut n = Node::path(id, path, Appearance::default_art());
         if let NodeKind::Path { live: slot, .. } = &mut n.kind {
-            *slot = Some(live);
+            *slot = live.map(Box::new);
         }
         d.insert(Some(l), 0, n).unwrap();
         (d, id)
+    }
+
+    /// A five-pointed star at (200, 200) of radii 60 and 30 (#511): a plain path.
+    fn star() -> (Document, NodeId) {
+        doc_with(vectorcraft_geom::shapes::star(Point::new(200.0, 200.0), 60.0, 30.0, 5, 0.0), None)
     }
 
     fn selected(id: NodeId) -> Selection {
         let mut s = Selection::default();
         s.add(id);
         s
+    }
+
+    fn pts(w: &CornerWidgets) -> Vec<Point> {
+        w.visible().collect()
     }
 
     fn radius(a: &Action) -> f64 {
@@ -231,17 +425,19 @@ mod tests {
     #[test]
     fn widgets_sit_inside_each_corner() {
         let (d, id) = live_rect(0.0, Affine::translate((100.0, 100.0)));
-        let w = CornerWidgets::of(&d, &selected(id), 1.0).unwrap();
-        assert_eq!(w.points, [Point::new(110.0, 110.0), Point::new(190.0, 110.0), Point::new(190.0, 190.0), Point::new(110.0, 190.0)]);
+        let w = CornerWidgets::of(&d, &selected(id), 1.0, false).unwrap();
+        assert_eq!(pts(&w), [Point::new(110.0, 110.0), Point::new(190.0, 110.0), Point::new(190.0, 190.0), Point::new(110.0, 190.0)]);
         // A larger radius moves them to the arc centres; zooming in keeps a 10 px minimum.
         let (d, id) = live_rect(20.0, Affine::translate((100.0, 100.0)));
-        assert_eq!(CornerWidgets::of(&d, &selected(id), 1.0).unwrap().points[0], Point::new(120.0, 120.0));
-        assert_eq!(CornerWidgets::of(&d, &selected(id), 4.0).unwrap().points[2], Point::new(180.0, 180.0));
-        // Hidden when the shape is tiny on screen, for plain paths and without a single selection.
-        assert!(CornerWidgets::of(&d, &selected(id), 0.2).is_none());
+        assert_eq!(pts(&CornerWidgets::of(&d, &selected(id), 1.0, false).unwrap())[0], Point::new(120.0, 120.0));
+        assert_eq!(pts(&CornerWidgets::of(&d, &selected(id), 4.0, false).unwrap())[2], Point::new(180.0, 180.0));
+        // Hidden when the shape is tiny on screen and without a single selection; a plain path
+        // shows them with Direct Selection only.
+        assert!(CornerWidgets::of(&d, &selected(id), 0.2, true).is_none());
         let (d, id) = doc_with_rect();
-        assert!(CornerWidgets::of(&d, &selected(id), 1.0).is_none());
-        assert!(CornerWidgets::of(&d, &Selection::default(), 1.0).is_none());
+        assert!(CornerWidgets::of(&d, &selected(id), 1.0, false).is_none());
+        assert_eq!(pts(&CornerWidgets::of(&d, &selected(id), 1.0, true).unwrap())[0], Point::new(110.0, 110.0));
+        assert!(CornerWidgets::of(&d, &Selection::default(), 1.0, true).is_none());
     }
 
     #[test]
@@ -264,6 +460,86 @@ mod tests {
         }
     }
 
+    /// #938: with two rectangles selected, both show their widgets, and a drag on either rounds
+    /// the corners of both in one step; with Direct Selection, each its shown corners.
+    #[test]
+    fn widgets_of_several_selected_paths_drag_together() {
+        let (mut d, a) = live_rect(0.0, Affine::translate((100.0, 100.0)));
+        let live = LiveShape::Rectangle { w: 100.0, h: 100.0, radii: [0.0; 4], kinds: Default::default(), xf: Affine::translate((300.0, 100.0)) };
+        let b = d.alloc_id();
+        let mut n = Node::path(b, live.to_path(), Appearance::default_art());
+        if let NodeKind::Path { live: slot, .. } = &mut n.kind {
+            *slot = Some(Box::new(live));
+        }
+        let l = d.layers[0].id;
+        d.insert(Some(l), 1, n).unwrap();
+        let mut s = selected(a);
+        s.add(b);
+        assert_eq!(pts(&CornerWidgets::of(&d, &s, 1.0, false).unwrap()).len(), 8);
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let mut t = crate::create("selection");
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 390.0, 191.0));
+        let preview = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 375.0, 176.0));
+        assert!((radius(&preview[1]) - 15.0).abs() < 1e-9);
+        let Action::Preview(_, v) = &preview[1] else { panic!() };
+        assert_eq!(v["items"], json!([{"id": a.0}, {"id": b.0}]));
+        // Direct Selection with one anchor of the first: its corner, and the whole second.
+        s.anchors.insert(a, [(0, 2)].into());
+        let w = CornerWidgets::of(&d, &s, 1.0, true).unwrap();
+        assert_eq!(w.corners(), [2, 0, 1, 2, 3]);
+        assert_eq!(w.command("radius", json!(5.0)), json!({"items": [{"id": a.0, "corners": [2]}, {"id": b.0}], "radius": 5.0}));
+    }
+
+    /// #442: on a 200 × 80 rectangle the widgets sit at the centres of the corners as drawn, also
+    /// with a radius past half the shorter side; a drag past fully round stops every corner there
+    /// and outlines them in red.
+    #[test]
+    fn widgets_of_a_non_square_rectangle_follow_the_drawn_corners() {
+        let (d, id) = live_shape(200.0, 80.0, 60.0, Affine::translate((100.0, 100.0)));
+        let s = selected(id);
+        let w = CornerWidgets::of(&d, &s, 1.0, false).unwrap();
+        let centres = [Point::new(140.0, 140.0), Point::new(260.0, 140.0), Point::new(260.0, 140.0), Point::new(140.0, 140.0)];
+        assert_eq!(pts(&w), centres);
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let red = |t: &dyn crate::Tool| {
+            t.overlays(&cx).into_iter().find_map(|o| match o {
+                Overlay::Path { path, color, .. } if color == crate::builder::HIGHLIGHT_RED => Some(path),
+                _ => None,
+            })
+        };
+        let mut t = crate::create("selection");
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 140.0, 140.0));
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 200.0, 200.0));
+        assert_eq!(radius(&a[1]), 40.0);
+        // The four arcs, each a quarter circle of radius 40 starting on a side.
+        let arcs = red(t.as_ref()).expect("the limit shows");
+        let starts: Vec<_> =
+            arcs.elements().iter().filter_map(|e| if let vectorcraft_geom::PathEl::MoveTo(p) = e { Some(*p) } else { None }).collect();
+        assert_eq!(starts, [Point::new(260.0, 100.0), Point::new(300.0, 140.0), Point::new(140.0, 180.0), Point::new(100.0, 140.0)]);
+        // Back below the limit, the outline goes.
+        assert_eq!(radius(&t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 130.0, 130.0))[0]), 30.0);
+        assert!(red(t.as_ref()).is_none());
+    }
+
+    /// #442: a rectangle saved stretched (an uneven scale in its transform, before #291) shows its
+    /// widgets and drags its radius in document units, as `object.setLiveShape` sets it.
+    #[test]
+    fn a_stretched_rectangle_drags_its_radius_in_document_units() {
+        // 50 × 80 with 10 pt corners stretched 4 × 1: drawn 200 × 80, a mean radius of 20.
+        let (d, id) = live_shape(50.0, 80.0, 10.0, Affine::translate((100.0, 100.0)) * Affine::scale_non_uniform(4.0, 1.0));
+        let s = selected(id);
+        let w = CornerWidgets::of(&d, &s, 1.0, false).unwrap();
+        assert_eq!(pts(&w)[0], Point::new(120.0, 120.0));
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let mut t = crate::create("directSelection");
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 120.0, 120.0));
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 110.0, 110.0));
+        assert!((radius(&a[1]) - 10.0).abs() < 1e-9, "{a:?}");
+    }
+
     #[test]
     fn drag_follows_a_rotated_shape_and_a_click_does_nothing() {
         // Rotated 90°: the shape's top-left corner is at document (200, 100).
@@ -272,8 +548,8 @@ mod tests {
         let s = selected(id);
         let p = paint();
         let cx = cx(&d, &s, &p);
-        let w = CornerWidgets::of(&d, &s, 1.0).unwrap();
-        assert!(w.points[0].distance(Point::new(190.0, 110.0)) < 1e-9);
+        let w = CornerWidgets::of(&d, &s, 1.0, false).unwrap();
+        assert!(pts(&w)[0].distance(Point::new(190.0, 110.0)) < 1e-9);
         let mut t = crate::create("directSelection");
         t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 190.0, 110.0));
         let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 180.0, 120.0));
@@ -284,6 +560,37 @@ mod tests {
         assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, 190.0, 110.0)).is_empty());
     }
 
+    /// Direct Selection: a click on a widget (no drag) selects its corner, as a click on the
+    /// corner's anchor does, so the next drag on that widget rounds that corner alone; Shift
+    /// toggles the corner. The Selection tool's click still does nothing.
+    #[test]
+    fn a_click_on_a_widget_with_direct_selection_selects_its_corner() {
+        let (d, id) = live_rect(10.0, Affine::translate((100.0, 100.0)));
+        let s = selected(id);
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let w = pts(&CornerWidgets::of(&d, &s, 1.0, true).unwrap())[2];
+        // The bottom-right corner of a rounded rectangle is drawn with two anchors.
+        let anchors: Vec<(usize, usize)> = LiveCorners::of(d.node(id).unwrap()).unwrap().anchors_of(&[2].into()).into_iter().collect();
+        assert_eq!(anchors.len(), 2);
+        let mut t = crate::create("directSelection");
+        assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, w.x, w.y)).is_empty());
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Up, w.x, w.y));
+        assert_eq!(a, vec![Action::Exec("select.anchors".into(), json!({"id": id.0, "anchors": anchors, "mode": "set"}))]);
+        let shift = Mods { shift: true, ..Mods::default() };
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, w.x, w.y).with_mods(shift));
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Up, w.x, w.y).with_mods(shift));
+        assert_eq!(a, vec![Action::Exec("select.anchors".into(), json!({"id": id.0, "anchors": anchors, "mode": "toggle"}))]);
+        // With that corner selected, its widget alone shows, and a drag rounds it alone
+        // (`direct_selected_corners_show_their_widgets_alone_and_round_alone`).
+        let mut part = selected(id);
+        part.anchors.insert(id, anchors.iter().copied().collect());
+        assert_eq!(CornerWidgets::of(&d, &part, 1.0, true).unwrap().corners(), [2]);
+        let mut t = crate::create("selection");
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, w.x, w.y));
+        assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Up, w.x, w.y)).is_empty());
+    }
+
     #[test]
     fn direct_selected_corners_show_their_widgets_alone_and_round_alone() {
         let (d, id) = live_rect(0.0, Affine::translate((100.0, 100.0)));
@@ -292,10 +599,10 @@ mod tests {
         s.anchors.insert(id, [(0, 2)].into());
         let p = paint();
         let cx = cx(&d, &s, &p);
-        let w = CornerWidgets::of(&d, &s, 1.0).unwrap();
-        assert_eq!(w.shown, [false, false, true, false]);
-        assert_eq!(w.visible().collect::<Vec<_>>(), [Point::new(190.0, 190.0)]);
-        assert!(!over_widget(&cx, Point::new(110.0, 110.0)), "the other corners hide theirs");
+        let w = CornerWidgets::of(&d, &s, 1.0, true).unwrap();
+        assert_eq!(w.corners(), [2]);
+        assert_eq!(pts(&w), [Point::new(190.0, 190.0)]);
+        assert!(!over_widget(&cx, Point::new(110.0, 110.0), true), "the other corners hide theirs");
         let mut t = crate::create("directSelection");
         assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, 190.0, 191.0)).is_empty());
         let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 175.0, 176.0));
@@ -330,7 +637,10 @@ mod tests {
         let cx2 = cx(&d, &whole, &p);
         let a = crate::create("selection").pointer(&cx2, &PointerEvent::new(PointerKind::DoubleClick, 190.0, 110.0));
         assert_eq!(a, vec![Action::Dialog(DIALOG.into(), json!({"id": id.0, "corners": [0, 1, 2, 3]}))]);
-        assert!(crate::create("selection").pointer(&cx2, &PointerEvent::new(PointerKind::DoubleClick, 150.0, 150.0)).is_empty());
+        // Off the widgets, the Selection tool's double-click isolates the shape (Double Click To
+        // Isolate) instead.
+        let a = crate::create("selection").pointer(&cx2, &PointerEvent::new(PointerKind::DoubleClick, 150.0, 150.0));
+        assert_eq!(a, vec![Action::Exec("object.isolate".into(), json!({"id": id.0}))]);
     }
 
     /// Hide Corner Widget for angles greater than (#394): a rectangle's right angles hide below
@@ -338,20 +648,20 @@ mod tests {
     #[test]
     fn corners_wider_than_the_preference_hide_their_widgets() {
         let (d, id) = live_rect(0.0, Affine::translate((100.0, 100.0)));
-        let w = CornerWidgets::of(&d, &selected(id), 1.0).unwrap();
-        assert_eq!(w.within_angle(177.0).map(|w| w.shown), Some([true; 4]));
-        assert_eq!(w.within_angle(90.0).map(|w| w.shown), Some([true; 4]));
+        let w = CornerWidgets::of(&d, &selected(id), 1.0, false).unwrap();
+        assert_eq!(w.clone().within_angle(177.0).map(|w| w.corners()), Some(vec![0, 1, 2, 3]));
+        assert_eq!(w.clone().within_angle(90.0).map(|w| w.corners()), Some(vec![0, 1, 2, 3]));
         assert!(w.within_angle(89.0).is_none());
         // Sheared by 30°: 60° at the top-left and bottom-right corners, 120° at the others.
         let shear = Affine::translate((100.0, 100.0)) * Affine::new([1.0, 0.0, 30f64.to_radians().tan(), 1.0, 0.0, 0.0]);
         let (d, id) = live_rect(0.0, shear);
-        let w = CornerWidgets::of(&d, &selected(id), 1.0).unwrap();
-        assert_eq!(w.within_angle(100.0).map(|w| w.shown), Some([true, false, true, false]));
+        let w = CornerWidgets::of(&d, &selected(id), 1.0, false).unwrap();
+        assert_eq!(w.clone().within_angle(100.0).map(|w| w.corners()), Some(vec![0, 2]));
         let s = selected(id);
         let p = paint();
         let c = ToolContext { corner_widget_max_angle: 100.0, ..cx(&d, &s, &p) };
-        assert!(over_widget(&c, w.points[0]));
-        assert!(!over_widget(&c, w.points[1]), "the 120° corner's widget is hidden");
+        assert!(over_widget(&c, pts(&w)[0], false));
+        assert!(!over_widget(&c, pts(&w)[1], false), "the 120° corner's widget is hidden");
     }
 
     #[test]
@@ -360,14 +670,113 @@ mod tests {
         let s = selected(id);
         let p = paint();
         let mut c = cx(&d, &s, &p);
-        assert!(over_widget(&c, Point::new(110.0, 110.0)));
-        assert!(!over_widget(&c, Point::new(150.0, 150.0)));
+        assert!(over_widget(&c, Point::new(110.0, 110.0), false));
+        assert!(!over_widget(&c, Point::new(150.0, 150.0), false));
         c.corner_widgets = false;
-        assert!(!over_widget(&c, Point::new(110.0, 110.0)));
+        assert!(!over_widget(&c, Point::new(110.0, 110.0), true));
         // With the widgets hidden, a drag from the same spot moves the object.
         let mut t = crate::create("selection");
         t.pointer(&c, &PointerEvent::new(PointerKind::Down, 110.0, 110.0));
         let a = t.pointer(&c, &PointerEvent::new(PointerKind::Drag, 130.0, 110.0));
         assert_eq!(a[0], Action::Begin("Move".into()));
+    }
+
+    /// #511: Direct Selection shows a widget in each of a star's ten corners (the Selection tool
+    /// none: a star isn't a live shape); dragging a tip's inward rounds them all as one step.
+    #[test]
+    fn a_star_shows_widgets_in_every_corner_with_direct_selection() {
+        let (d, id) = star();
+        let s = selected(id);
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        assert!(CornerWidgets::for_tool(&cx, false).is_none());
+        let w = CornerWidgets::for_tool(&cx, true).expect("widgets on a plain path");
+        assert_eq!(w.corners(), (0..10).collect::<Vec<_>>());
+        // The top tip's widget sits 10 √2 px down its bisector.
+        let tip = pts(&w)[0];
+        assert!(tip.distance(Point::new(200.0, 140.0 + 10.0 * 2f64.sqrt())) < 1e-9, "{tip:?}");
+        let mut t = crate::create("directSelection");
+        assert!(t.pointer(&cx, &PointerEvent::new(PointerKind::Down, tip.x, tip.y)).is_empty());
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, tip.x, tip.y + 10.0));
+        assert_eq!(a[0], Action::Begin("Corner Radius".into()));
+        // The widget follows the arc's centre: r / sin(angle / 2) along the bisector.
+        let c = vectorcraft_geom::corners::path_corners(&star_path(&d, id))[0];
+        let want = 10.0 * (c.angle_deg() / 2.0).to_radians().sin();
+        assert!((radius(&a[1]) - want).abs() < 1e-9, "{a:?} want {want}");
+        assert!(matches!(&a[1], Action::Preview(_, v) if v["id"] == id.0 && v.get("corners").is_none()), "every corner: {a:?}");
+        // The Selection tool drags the star instead.
+        let mut t = crate::create("selection");
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, tip.x, tip.y));
+        assert_eq!(t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, tip.x, tip.y + 10.0))[0], Action::Begin("Move".into()));
+    }
+
+    fn star_path(d: &Document, id: NodeId) -> PathData {
+        let Some(NodeKind::Path { path, .. }) = d.node(id).map(|n| &n.kind) else { panic!("not a path") };
+        path.clone()
+    }
+
+    /// #511: a Direct-Selected anchor of the star shows its corner's widget alone, and the
+    /// preference hides the star's wide inner corners (about 125°) below their angle.
+    #[test]
+    fn star_corners_follow_the_anchors_and_the_angle_preference() {
+        let (d, id) = star();
+        let mut s = selected(id);
+        s.anchors.insert(id, [(0, 3)].into());
+        let p = paint();
+        let c = cx(&d, &s, &p);
+        let w = CornerWidgets::for_tool(&c, true).unwrap();
+        assert_eq!(w.corners(), [3]);
+        let mut t = crate::create("directSelection");
+        let at = pts(&w)[0];
+        t.pointer(&c, &PointerEvent::new(PointerKind::Down, at.x, at.y));
+        let a = t.pointer(&c, &PointerEvent::new(PointerKind::Drag, at.x + 20.0, at.y + 20.0));
+        assert!(matches!(&a[1], Action::Preview(_, v) if v["corners"] == json!([3])), "{a:?}");
+        // Corners wider than 90° hide: the five tips keep theirs.
+        let whole = selected(id);
+        let c = ToolContext { corner_widget_max_angle: 90.0, ..cx(&d, &whole, &p) };
+        let w = CornerWidgets::for_tool(&c, true).unwrap();
+        assert_eq!(w.corners(), [0, 2, 4, 6, 8]);
+        assert_eq!(w.command("radius", json!(4.0))["corners"], json!([0, 2, 4, 6, 8]));
+    }
+
+    /// A live polygon shows its widgets to the Selection tool too; past every corner's limit the
+    /// cuts outline in red.
+    #[test]
+    fn a_live_polygon_rounds_with_either_tool() {
+        let live = LiveShape::Polygon { radius: 80.0, sides: 6, xf: Affine::translate((200.0, 200.0)), radii: vec![], kinds: vec![] };
+        let (d, id) = doc_with(live.to_path(), Some(live));
+        let s = selected(id);
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        for any_path in [false, true] {
+            assert_eq!(CornerWidgets::for_tool(&cx, any_path).unwrap().corners().len(), 6);
+        }
+        let tip = pts(&CornerWidgets::for_tool(&cx, false).unwrap())[0];
+        let mut t = crate::create("selection");
+        t.pointer(&cx, &PointerEvent::new(PointerKind::Down, tip.x, tip.y));
+        let a = t.pointer(&cx, &PointerEvent::new(PointerKind::Drag, 200.0, 300.0));
+        // A hexagon's 120° corners stop where their cuts meet: 40 · tan 60°.
+        assert!((radius(&a[1]) - 40.0 * 3f64.sqrt()).abs() < 1e-9, "{a:?}");
+        let red = t
+            .overlays(&cx)
+            .into_iter()
+            .any(|o| matches!(o, Overlay::Path { color, path, .. } if color == crate::builder::HIGHLIGHT_RED && path.elements().len() == 12));
+        assert!(red, "six arcs at the limit");
+    }
+
+    /// A pen path's corners show widgets, curved ones too (#1144); its ends don't.
+    #[test]
+    fn a_pen_path_shows_widgets_on_its_corners_only() {
+        let mut sp = vectorcraft_geom::SubPath::polyline(
+            &[Point::new(100.0, 100.0), Point::new(300.0, 100.0), Point::new(300.0, 300.0), Point::new(100.0, 300.0)],
+            false,
+        );
+        sp.anchors[2].h_out = Point::new(250.0, 350.0);
+        let (d, id) = doc_with(PathData::single(sp), None);
+        let s = selected(id);
+        let p = paint();
+        let w = CornerWidgets::for_tool(&cx(&d, &s, &p), true).unwrap();
+        assert_eq!(w.corners(), [1, 2]);
+        assert_eq!(pts(&w)[0], Point::new(290.0, 110.0));
     }
 }

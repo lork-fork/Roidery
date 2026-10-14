@@ -136,9 +136,115 @@ fn tiff_inks(bytes: &[u8]) -> Option<Inks> {
     Inks::new(w, h, data)
 }
 
+/// A TIFF whose pixels have samples after their colour, which the image decoder doesn't read at
+/// all, as RGBA pixels: CMYK with an alpha channel (5 samples), each colour converted by `rgb` (ink
+/// amounts 0..1 → sRGB 0..1; the inks can't be kept with the transparency, so they show as RGB),
+/// and grayscale with extra samples, of which the first is the alpha when the file says so (other
+/// channels are left out). Associated (premultiplied) alpha is divided back out. `None` for other
+/// images, planar ones and ones larger than [`MAX_CMYK_PIXELS`].
+pub fn extra_samples_tiff_rgba(bytes: &[u8], rgb: impl Fn([f32; 4]) -> [f32; 3]) -> Option<image::RgbaImage> {
+    use tiff::tags::Tag;
+    let (kind, mut d) = tiff(bytes)?;
+    let (w, h) = d.dimensions().ok()?;
+    let planar = d.find_tag_unsigned::<u16>(Tag::PlanarConfiguration).ok().flatten().is_some_and(|p| p != 1);
+    // 0: white is zero, 1: black is zero (the two grayscales).
+    let photometric = d.find_tag_unsigned::<u16>(Tag::PhotometricInterpretation).ok().flatten();
+    // ExtraSamples 1: associated alpha (premultiplied colour), 2: unassociated alpha, 0: not alpha.
+    let extra = d.find_tag_unsigned_vec::<u16>(Tag::ExtraSamples).ok().flatten().and_then(|v| v.first().copied());
+    // (samples in a pixel, how many of them are its colour, is the next one alpha?)
+    let (samples, colour, alpha) = match kind {
+        tiff::ColorType::CMYKA(8 | 16) => (5, 4, true),
+        tiff::ColorType::Multiband { bit_depth: 8 | 16, num_samples: n @ 2.. } if matches!(photometric, Some(0 | 1)) => {
+            (usize::from(n), 1, matches!(extra, Some(1 | 2)))
+        }
+        _ => return None,
+    };
+    if planar {
+        return None;
+    }
+    let n = usize::try_from(pixels(w, h)?).ok()?;
+    let data: Vec<u8> = match d.read_image().ok()? {
+        tiff::decoder::DecodingResult::U8(v) => v,
+        tiff::decoder::DecodingResult::U16(v) => v.iter().map(|s| (s >> 8) as u8).collect(),
+        _ => return None,
+    };
+    if Some(data.len()) != n.checked_mul(samples) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(n * 4);
+    for p in data.chunks_exact(samples) {
+        let opacity = if alpha { p.get(colour).copied().unwrap_or(u8::MAX) } else { u8::MAX };
+        let a = f32::from(opacity) / 255.0;
+        let level = |v: u8| {
+            let v = f32::from(v) / 255.0;
+            if extra == Some(1) && a > 0.0 { (v / a).min(1.0) } else { v }
+        };
+        let [r, g, b] = match *p {
+            [c, m, y, k, ..] if colour == 4 => rgb([level(c), level(m), level(y), level(k)]),
+            [v, ..] if photometric == Some(0) => [1.0 - level(v); 3],
+            [v, ..] => [level(v); 3],
+            [] => continue,
+        };
+        out.extend([r, g, b].map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8));
+        out.push(opacity);
+    }
+    image::RgbaImage::from_raw(w, h, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cmyk_tiff_with_alpha_reads_as_rgba() {
+        use tiff::encoder::{TiffEncoder, colortype::CMYKA8};
+        // 2 × 1: full cyan opaque, then 100% K at half alpha (premultiplied: K 128, alpha 128).
+        let mut file = Cursor::new(Vec::new());
+        let mut enc = TiffEncoder::new(&mut file).unwrap();
+        let mut img = enc.new_image::<CMYKA8>(2, 1).unwrap();
+        img.encoder().write_tag(tiff::tags::Tag::ExtraSamples, &[1u16][..]).unwrap();
+        img.write_data(&[255, 0, 0, 0, 255, 0, 0, 0, 128, 128]).unwrap();
+        let bytes = file.into_inner();
+        let naive = |[c, m, y, k]: [f32; 4]| [(1.0 - c) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k)];
+        let px = extra_samples_tiff_rgba(&bytes, naive).expect("CMYKA reads");
+        assert_eq!(px.dimensions(), (2, 1));
+        assert_eq!(px.get_pixel(0, 0).0, [0, 255, 255, 255], "cyan, opaque");
+        assert_eq!(px.get_pixel(1, 0).0, [0, 0, 0, 128], "the premultiplied K divided back out: black at half alpha");
+        // Not CMYKA: not this reader's.
+        assert!(extra_samples_tiff_rgba(&ImageBlob::cmyk_tiff(&inks()).unwrap().bytes, naive).is_none());
+    }
+
+    /// Two 8-bit samples a pixel: gray and one extra sample, which the file's `ExtraSamples` names.
+    struct GrayExtra8;
+    impl tiff::encoder::colortype::ColorType for GrayExtra8 {
+        type Inner = u8;
+        const TIFF_VALUE: tiff::tags::PhotometricInterpretation = tiff::tags::PhotometricInterpretation::BlackIsZero;
+        const BITS_PER_SAMPLE: &'static [u16] = &[8, 8];
+        const SAMPLE_FORMAT: &'static [tiff::tags::SampleFormat] = &[tiff::tags::SampleFormat::Uint; 2];
+        fn horizontal_predict(row: &[u8], result: &mut Vec<u8>) {
+            result.extend_from_slice(row);
+        }
+    }
+
+    /// A grayscale TIFF with an alpha channel, or with a channel that isn't one (#1466): the image
+    /// decoder reads neither.
+    #[test]
+    fn a_grayscale_tiff_with_an_extra_channel_reads_as_rgba() {
+        let gray = |extra: u16| {
+            let mut file = Cursor::new(Vec::new());
+            let mut enc = tiff::encoder::TiffEncoder::new(&mut file).unwrap();
+            let mut img = enc.new_image::<GrayExtra8>(3, 1).unwrap();
+            img.encoder().write_tag(tiff::tags::Tag::ExtraSamples, &[extra][..]).unwrap();
+            // White opaque, a gray of 64 at 80% alpha (premultiplied: 51), black with no alpha.
+            img.write_data(&[255, 255, 51, 204, 0, 0]).unwrap();
+            let bytes = file.into_inner();
+            assert!(image::load_from_memory(&bytes).is_err(), "the image decoder reads it now: this reader may go");
+            extra_samples_tiff_rgba(&bytes, |_| [0.0; 3]).expect("gray with an extra sample reads").into_raw()
+        };
+        assert_eq!(gray(1), [255, 255, 255, 255, 64, 64, 64, 204, 0, 0, 0, 0], "associated alpha, divided back out");
+        assert_eq!(gray(2), [255, 255, 255, 255, 51, 51, 51, 204, 0, 0, 0, 0], "unassociated alpha");
+        assert_eq!(gray(0), [255, 255, 255, 255, 51, 51, 51, 255, 0, 0, 0, 255], "a channel that isn't alpha: opaque");
+    }
 
     fn inks() -> Inks {
         Inks::new(3, 2, vec![0, 40, 100, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 12, 34, 56, 78]).unwrap()

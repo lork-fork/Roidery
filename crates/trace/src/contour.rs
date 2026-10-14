@@ -51,7 +51,8 @@ fn step(d: u8) -> (i32, i32) {
 fn label(mask: &[bool], w: usize, h: usize) -> (Vec<u32>, Vec<usize>) {
     let mut comp = vec![u32::MAX; w * h];
     let mut sizes = Vec::new();
-    let mut stack = Vec::new();
+    // (Indices as `u32`: a mask has at most 64 million pixels, and this stack can hold them all.)
+    let mut stack: Vec<u32> = Vec::new();
     for s in 0..w * h {
         if !mask[s] || comp[s] != u32::MAX {
             continue;
@@ -59,14 +60,15 @@ fn label(mask: &[bool], w: usize, h: usize) -> (Vec<u32>, Vec<usize>) {
         let id = sizes.len() as u32;
         let mut n = 0usize;
         comp[s] = id;
-        stack.push(s);
+        stack.push(s as u32);
         while let Some(i) = stack.pop() {
+            let i = i as usize;
             n += 1;
             let (x, y) = (i % w, i / w);
             let mut go = |j: usize| {
                 if mask[j] && comp[j] == u32::MAX {
                     comp[j] = id;
-                    stack.push(j);
+                    stack.push(j as u32);
                 }
             };
             if x > 0 {

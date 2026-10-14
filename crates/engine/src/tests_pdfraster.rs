@@ -103,7 +103,7 @@ fn groups_layers_type_images_and_symbols_keep_their_raster_effects() {
     let xf = Affine::translate((40.0, 50.0)) * Affine::scale(2.5);
     let im = Node::new(
         d.alloc_id(),
-        NodeKind::Image(ImageObject { key: "pic".into(), width: 40, height: 30, xf, link: None, placement: Default::default() }),
+        NodeKind::Image(Box::new(ImageObject { key: "pic".into(), width: 40, height: 30, xf, link: None, placement: Default::default() })),
     );
     add(&mut d, with(im, shadow()));
     assert_written("image", &d);
@@ -149,4 +149,75 @@ fn live_objects_and_single_fills_and_strokes_keep_their_raster_effects() {
         let pieces = flat.layers[0].children().unwrap()[0].children().map_or(0, |c| c.len());
         assert_eq!(pieces, 2, "item {item}: one piece per fill and stroke");
     }
+}
+
+#[test]
+fn shadows_and_glows_keep_their_blend_modes() {
+    // #827: a red Screen glow over grey can't darken it, as Normal would.
+    let glow = Effect {
+        id: "stylize.outerGlow".into(),
+        params: json!({"mode": "screen", "color": "#ff0000", "opacity": 100.0, "blur": 20.0}),
+        visible: true,
+    };
+    let mut d = Document::new(200.0, 200.0);
+    let back = rect(&mut d, Rect::new(0.0, 0.0, 200.0, 200.0), Color::rgb(0.5, 0.5, 0.5));
+    add(&mut d, back);
+    let dot = rect(&mut d, Rect::new(70.0, 70.0, 130.0, 130.0), Color::rgb(0.12, 0.12, 0.12));
+    add(&mut d, with(dot, glow.clone()));
+    assert_written("screen glow", &d);
+    let r = crate::cmd::rasterfx::export_pdf_with_report(&d, &Default::default()).unwrap();
+    let back = render(&vectorcraft_pdf::import(&r.bytes).unwrap());
+    for x in [133, 138, 145] {
+        let i = (100 * back.width as usize + x) * 4;
+        let (red, green, blue) = (back.pixels[i], back.pixels[i + 1], back.pixels[i + 2]);
+        assert!(red > green && green >= 124 && blue >= 124, "x {x}: {:?}", (red, green, blue));
+    }
+
+    // A Multiply shadow and the Screen glow: an image each, composited with its mode.
+    let mut d = Document::new(200.0, 200.0);
+    let dot = rect(&mut d, Rect::new(70.0, 70.0, 130.0, 130.0), Color::rgb(0.12, 0.12, 0.12));
+    add(&mut d, with(with(dot, shadow()), glow));
+    let flat = crate::flatten_raster_effects(&d).unwrap();
+    let modes: Vec<_> =
+        flat.layers[0].children().unwrap()[0].children().unwrap().iter().filter(|c| matches!(c.kind, NodeKind::Image(_))).map(|c| c.blend).collect();
+    assert_eq!(modes, [vectorcraft_color::BlendMode::Multiply, vectorcraft_color::BlendMode::Screen]);
+}
+
+#[test]
+fn pdf_resolution_cap_warns_once_for_original_object_when_appearance_items_split() {
+    let mut d = Document::new(300.0, 300.0);
+    d.raster_effects_ppi = 2400.0;
+    d.raster_effects.anti_alias = false;
+    let mut n = Node::path(
+        d.alloc_id(),
+        shapes::rectangle(Rect::new(20.0, 20.0, 270.0, 270.0)),
+        Appearance::basic(Paint::solid(Color::BLACK), Paint::solid(Color::BLACK), 20.0),
+    );
+    let id = n.id;
+    n.name = Some("Large original".into());
+    for item in &mut n.appearance.items {
+        item.effects_mut().push(Effect { params: json!({"radius": 0.0}), ..blur() });
+    }
+    add(&mut d, n);
+
+    let r = crate::cmd::rasterfx::export_pdf_with_report(&d, &Default::default()).unwrap();
+
+    assert!(String::from_utf8_lossy(&r.bytes).contains("/Subtype/Image"));
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+    let warning = &r.warnings[0];
+    assert!(warning.contains(&format!("object {}", id.0)) && warning.contains("Large original"), "{warning}");
+    assert!(warning.contains("requested 2400.0 ppi") && warning.contains("achieved 1268.7 ppi"), "{warning}");
+}
+
+#[test]
+fn pdf_resolution_cap_stays_quiet_when_small_effect_meets_requested_ppi() {
+    let mut d = Document::new(50.0, 50.0);
+    d.raster_effects_ppi = 300.0;
+    let n = with(rect(&mut d, Rect::new(10.0, 10.0, 30.0, 30.0), Color::BLACK), blur());
+    add(&mut d, n);
+
+    let r = crate::cmd::rasterfx::export_pdf_with_report(&d, &Default::default()).unwrap();
+
+    assert!(String::from_utf8_lossy(&r.bytes).contains("/Subtype/Image"));
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
 }

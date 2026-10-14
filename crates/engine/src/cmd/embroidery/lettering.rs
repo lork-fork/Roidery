@@ -149,7 +149,7 @@ fn laid_bounds(l: &Lettering) -> Option<Rect> {
 fn lettering_of(n: &Node) -> Option<Lettering> {
     match &n.kind {
         NodeKind::Group { .. } => {
-            let v = n.attrs.as_ref()?.stitch.as_ref()?.get("lettering")?;
+            let v = n.extras().attrs.as_ref()?.stitch.as_ref()?.get("lettering")?;
             serde_json::from_value::<Lettering>(v.clone()).ok().map(|l| l.sanitized())
         }
         NodeKind::Path { .. } => match parts::slots(n).get(Part::Stroke) {
@@ -225,7 +225,7 @@ fn piece_node(d: &mut Document, p: &roidery_fonts::PlacedPiece, color: Option<[u
     let rule = if fill { FillRule::EvenOdd } else { FillRule::NonZero };
     let mut n = Node::new(d.alloc_id(), NodeKind::Path { path: PathData::from_bezpath(&p.path), rule, live: None, clipping: false, guide: false });
     let paint = |set: bool, rgb: Option<[u8; 3]>| if set { solid(color.or(rgb).unwrap_or([0, 0, 0])) } else { Paint::None };
-    n.appearance = Appearance::basic(paint(fill, p.fill_rgb), paint(p.stroke.is_some(), p.stroke_rgb), THREAD_MM / MM_PER_PT);
+    n.appearance = Appearance::basic(paint(fill, p.fill_rgb), paint(p.stroke.is_some(), p.stroke_rgb), THREAD_MM / MM_PER_PT).into();
     round(&mut n.appearance);
     let slot = |s: &Option<StitchSettings>| s.clone().map_or_else(|| Slot::Set(StitchSettings::of(StitchType::None)), Slot::Set);
     parts::write(&mut n, &Slots::only(slot(&p.fill), slot(&p.stroke)), true);
@@ -251,7 +251,7 @@ fn build_group(d: &mut Document, id: NodeId, l: &Lettering, placed: Vec<Placed>,
     }
     let mut n = Node::new(id, NodeKind::Group { children: letters, clip: false });
     n.name = Some(name_of(l));
-    n.attrs = Some(Box::new(ObjectAttributes { stitch: Some(json!({ "lettering": l })), ..Default::default() }));
+    n.extras_mut().attrs = Some(Box::new(ObjectAttributes { stitch: Some(json!({ "lettering": l })), ..Default::default() }));
     n
 }
 
@@ -267,9 +267,9 @@ fn path_settings(l: &Lettering, c: &'static str) -> Result<Value> {
 /// sew, with round ends.
 fn build_path(id: NodeId, l: &Lettering, path: &BezPath, color: [u8; 3], c: &'static str) -> Result<Node> {
     let mut n = Node::new(id, super::super::create::path_kind(PathData::from_bezpath(path), None));
-    n.appearance = Appearance::basic(Paint::None, solid(color), l.column_width() / MM_PER_PT);
+    n.appearance = Appearance::basic(Paint::None, solid(color), l.column_width() / MM_PER_PT).into();
     round(&mut n.appearance);
-    n.attrs = Some(Box::new(ObjectAttributes { stitch: Some(path_settings(l, c)?), ..Default::default() }));
+    n.extras_mut().attrs = Some(Box::new(ObjectAttributes { stitch: Some(path_settings(l, c)?), ..Default::default() }));
     n.name = Some(name_of(l));
     Ok(n)
 }
@@ -687,7 +687,8 @@ mod tests {
         assert_eq!(l["lettering"]["lineSpacing"], 1.5, "the font's leading");
 
         // Moved, then retyped with only a letter picked: the lettering changes where it is.
-        run(&mut s, "object.move", json!({"dx": 30, "dy": 0, "ids": [id]}));
+        run(&mut s, "select.set", json!({"ids": [id]}));
+        run(&mut s, "object.move", json!({"dx": 30, "dy": 0}));
         let letter = children[1].id.0;
         let r = run(&mut s, "stitch.setLettering", json!({"text": "OH", "ids": [letter]}));
         assert_eq!(r["changed"], 1);

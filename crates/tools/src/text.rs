@@ -3,7 +3,8 @@
 //! Type: click places point type, drag draws an area-type frame, clicking into existing text
 //! places the caret. Area Type / Type on a Path: click a path to turn it into a text frame or a
 //! baseline (`text.createInPath`). Point type placed by a click and left empty is discarded when
-//! editing ends (`text.discardEmpty`); frames keep their shape.
+//! editing ends (`text.discardEmpty`); frames keep their shape. Where new type goes (the click, the
+//! frame's corners) snaps to Smart Guides ([`DrawSnap`]), hovering too.
 //!
 //! While editing: caret movement by character / word (Cmd or Alt) / line (Up/Down) / line ends
 //! (Home/End; Cmd = whole text), Shift extends the selection, drag selects, double-click selects a
@@ -27,6 +28,7 @@ use vectorcraft_doc::{NodeId, NodeKind, TextKind, TextObject, TextRun};
 use vectorcraft_geom::{BezPath, Point, Rect, Shape};
 use vectorcraft_text::{FontDb, TextLayout, edit};
 
+use crate::guides::DrawSnap;
 use crate::{Action, Cursor, Mods, Overlay, PointerEvent, PointerKind, Tool, ToolContext, ToolKey};
 
 /// Which of the Type tools this is.
@@ -42,6 +44,10 @@ enum Mode {
 struct Typing {
     base: Vec<TextRun>,
     cur: Vec<TextRun>,
+    /// The first byte any edit of the session touched (the text before it is unchanged): the
+    /// previewed span starts no later, so Return at a paragraph's end splits that paragraph (its
+    /// style continues), not the next one.
+    lo: usize,
 }
 
 /// IME marked text inside the typing session, not yet committed.
@@ -52,6 +58,9 @@ struct Preedit {
     /// The clause being converted, in bytes relative to `range.start` (empty: the IME's cursor).
     active: Option<Range<usize>>,
 }
+
+/// The edited text's layout, keyed by the font database's generation and the text.
+type CachedLayout = ((u64, TextObject), Arc<TextLayout>);
 
 #[derive(Default)]
 pub struct TypeTool {
@@ -68,15 +77,19 @@ pub struct TypeTool {
     goal_x: Option<f64>,
     typing: Option<Typing>,
     preedit: Option<Preedit>,
-    press: Option<Point>,
+    /// Where the button went down, and where new type goes from there (snapped to Smart Guides).
+    press: Option<(Point, Point)>,
+    /// The other corner of an area dragged out (snapped).
     drag: Option<Point>,
+    /// Smart Guides for where new type goes.
+    snap: DrawSnap,
     /// The press landed in the edited text: dragging selects.
     selecting: bool,
     /// Click counting for double/triple click (position of the last click, count).
     clicks: (Option<Point>, u8),
     /// Styled copy of the last copied range (pasting the same plain text keeps its styles).
     clipboard: Vec<TextRun>,
-    cache: Mutex<Option<(TextObject, Arc<TextLayout>)>>,
+    cache: Mutex<Option<CachedLayout>>,
 }
 
 impl TypeTool {
@@ -96,16 +109,19 @@ impl TypeTool {
         }
     }
 
-    /// Layout of `t`, cached by content (overlays run every frame).
+    /// Layout of `t`, cached by content (overlays run every frame) and by the fonts available (the
+    /// web build adds fonts after startup).
     fn layout(&self, t: &TextObject) -> Arc<TextLayout> {
+        let fonts = FontDb::global().generation();
         let mut c = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((k, l)) = c.as_ref()
+        if let Some(((g, k), l)) = c.as_ref()
+            && *g == fonts
             && k == t
         {
             return l.clone();
         }
         let l = Arc::new(vectorcraft_text::layout(FontDb::global(), t));
-        *c = Some((t.clone(), l.clone()));
+        *c = Some(((fonts, t.clone()), l.clone()));
         l
     }
 
@@ -168,9 +184,10 @@ impl TypeTool {
         if self.typing.is_none() {
             out.push(Action::Begin("Typing".into()));
         }
-        let ty = self.typing.get_or_insert_with(|| Typing { base: t.runs.clone(), cur: t.runs.clone() });
+        let ty = self.typing.get_or_insert_with(|| Typing { base: t.runs.clone(), cur: t.runs.clone(), lo: usize::MAX });
         let len = edit::runs_len(&ty.cur);
         let (a, b) = (self.caret.min(self.anchor).min(len), self.caret.max(self.anchor).min(len));
+        ty.lo = ty.lo.min(a);
         let caret = match &styled {
             Some(r) => edit::replace_range_styled(&mut ty.cur, a, b, r),
             None => edit::replace_range(&mut ty.cur, a, b, insert),
@@ -181,7 +198,7 @@ impl TypeTool {
         // One preview for the whole session: the changed span of base → cur, with its runs.
         let base: String = ty.base.iter().map(|r| r.text.as_str()).collect();
         let cur: String = ty.cur.iter().map(|r| r.text.as_str()).collect();
-        let (p, s) = common_affixes(&base, &cur);
+        let (p, s) = common_affixes(&base, &cur, ty.lo);
         let runs = edit::slice_runs(&ty.cur, p, cur.len() - s);
         let runs = if runs.is_empty() { json!([]) } else { serde_json::to_value(&runs).unwrap_or(json!([])) };
         out.push(Action::Preview("text.editRange".into(), json!({"id": id.0, "start": p, "end": base.len() - s, "runs": runs})));
@@ -230,7 +247,7 @@ impl TypeTool {
 
     /// Path under `p` for the Area Type / Type on a Path tools.
     fn path_at(cx: &ToolContext, p: Point, closed: bool) -> Option<NodeId> {
-        let h = hit_test(cx.doc, p, vectorcraft_doc::hit::HitOptions { tol: cx.tol(4.0), outline: true, path_only: false, inside: false })?;
+        let h = hit_test(cx.doc, p, vectorcraft_doc::hit::HitOptions { tol: cx.tol(4.0), outline: true, ..Default::default() })?;
         match &cx.doc.node(h.leaf)?.kind {
             NodeKind::Path { path, .. } if !closed || path.is_closed() => Some(h.leaf),
             _ => None,
@@ -238,9 +255,10 @@ impl TypeTool {
     }
 
     /// Start editing the type under `p` with the caret there → the actions (ending the previous
-    /// edit, selecting the type); None when no type is under `p`.
+    /// edit, selecting the type); None when no type is under `p`. A click among the characters
+    /// edits them, whatever Type Object Selection by Path Only says.
     fn edit_at(&mut self, cx: &ToolContext, p: Point) -> Option<Vec<Action>> {
-        let h = hit_test(cx.doc, p, cx.hit_options())?;
+        let h = hit_test(cx.doc, p, vectorcraft_doc::hit::HitOptions { type_path_only: false, ..cx.hit_options() })?;
         let Some(NodeKind::Text(t)) = cx.doc.node(h.leaf).map(|n| &n.kind) else { return None };
         let lay = self.layout(t);
         let byte = vectorcraft_text::hit_byte(&lay, t.xf.inverse() * p);
@@ -251,7 +269,8 @@ impl TypeTool {
         Some(out)
     }
 
-    fn on_up(&mut self, cx: &ToolContext, start: Point) -> Vec<Action> {
+    /// The button released after a press at `start` (new type goes at `at`).
+    fn on_up(&mut self, cx: &ToolContext, start: Point, at: Point) -> Vec<Action> {
         // Click into existing text: place the caret.
         if let Some(out) = self.edit_at(cx, start) {
             return out;
@@ -271,10 +290,10 @@ impl TypeTool {
                 return out;
             }
         }
-        let area = drag.map(|d| Rect::from_points(start, d)).filter(|r| r.width() > cx.tol(6.0) && r.height() > cx.tol(6.0));
+        let area = drag.map(|d| Rect::from_points(at, d)).filter(|r| r.width() > cx.tol(6.0) && r.height() > cx.tol(6.0));
         let mut params = match area {
             Some(r) => json!({"x": r.x0, "y": r.y0, "text": "", "area": {"width": r.width(), "height": r.height()}}),
-            None => json!({"x": start.x, "y": start.y, "text": ""}),
+            None => json!({"x": at.x, "y": at.y, "text": ""}),
         };
         params["vertical"] = json!(self.vertical);
         params["placeholder"] = json!(cx.placeholder_text);
@@ -324,11 +343,12 @@ fn char_range_to_bytes(s: &str, r: Range<usize>) -> Option<Range<usize>> {
     (a <= b).then_some(a..b)
 }
 
-/// Lengths of the common prefix and suffix of `a` and `b` (on char boundaries, not overlapping).
-fn common_affixes(a: &str, b: &str) -> (usize, usize) {
+/// Lengths of the common prefix (at most `max_prefix`) and suffix of `a` and `b` (on char
+/// boundaries, not overlapping).
+fn common_affixes(a: &str, b: &str, max_prefix: usize) -> (usize, usize) {
     let mut p = 0;
     for ((i, x), y) in a.char_indices().zip(b.chars()) {
-        if x != y {
+        if x != y || i + x.len_utf8() > max_prefix {
             break;
         }
         p = i + x.len_utf8();
@@ -361,6 +381,10 @@ impl Tool for TypeTool {
     fn wants_text(&self) -> bool {
         self.editing.is_some()
     }
+    /// Escape while editing is the tool's: it goes on to the Selection tool (#1686).
+    fn claims_key(&self, _: &ToolContext, key: ToolKey) -> bool {
+        key == ToolKey::Escape && self.editing.is_some()
+    }
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
         match ev.kind {
             PointerKind::Down => {
@@ -385,7 +409,7 @@ impl Tool for TypeTool {
                     self.selecting = true;
                     return out;
                 }
-                self.press = Some(ev.pos);
+                self.press = Some((ev.pos, self.snap.press(cx, ev.pos, self.editing.as_slice(), None)));
                 self.drag = None;
                 vec![]
             }
@@ -397,7 +421,7 @@ impl Tool for TypeTool {
                         self.clicks = (None, 0);
                     }
                 } else if self.press.is_some() {
-                    self.drag = Some(ev.pos);
+                    self.drag = Some(self.snap.drag(cx, ev.pos, None));
                 }
                 vec![]
             }
@@ -406,8 +430,9 @@ impl Tool for TypeTool {
                     self.selecting = false;
                     return vec![];
                 }
-                let Some(start) = self.press.take() else { return vec![] };
-                self.on_up(cx, start)
+                self.snap.clear();
+                let Some((start, at)) = self.press.take() else { return vec![] };
+                self.on_up(cx, start, at)
             }
             PointerKind::DoubleClick => {
                 if self.editing.is_some() && self.hit_edited(cx, ev.pos).is_some() {
@@ -416,7 +441,11 @@ impl Tool for TypeTool {
                 }
                 vec![]
             }
-            PointerKind::Move => vec![],
+            PointerKind::Move => {
+                // The type being edited is no target: its guides would only point at itself.
+                self.snap.hover(cx, ev.pos, self.editing.as_slice(), None);
+                vec![]
+            }
         }
     }
     fn text_input(&mut self, cx: &ToolContext, s: &str) -> Vec<Action> {
@@ -497,7 +526,13 @@ impl Tool for TypeTool {
             self.goal_x = None;
         }
         match key {
-            ToolKey::Escape => self.finish(cx),
+            // Escape ends editing and goes to the Selection tool, the type selected: the keyboard
+            // is free for tool shortcuts again (#1686).
+            ToolKey::Escape => {
+                let mut out = self.finish(cx);
+                out.push(Action::SwitchTool("selection".into()));
+                out
+            }
             ToolKey::Enter => self.replace(cx, "\n", None),
             ToolKey::Tab => self.replace(cx, "\t", None),
             ToolKey::Backspace | ToolKey::Delete if a != b => self.replace(cx, "", None),
@@ -505,8 +540,10 @@ impl Tool for TypeTool {
                 self.anchor = if word { edit::prev_word(&text, self.caret) } else { edit::prev_char(&text, self.caret) };
                 self.replace(cx, "", None)
             }
+            // Backspace takes back one character (a mistyped Thai tone mark, say); Delete, the
+            // Left and Right arrows a whole cluster.
             ToolKey::Delete if self.caret < len => {
-                self.anchor = if word { edit::next_word(&text, self.caret) } else { edit::next_char(&text, self.caret) };
+                self.anchor = if word { edit::next_word(&text, self.caret) } else { edit::next_cluster(&text, self.caret) };
                 self.replace(cx, "", None)
             }
             ToolKey::Left => {
@@ -524,7 +561,7 @@ impl Tool for TypeTool {
                     if lay.glyphs.iter().any(|g| g.rtl) {
                         vectorcraft_text::caret_horizontal(&lay, self.caret, false)
                     } else {
-                        edit::prev_char(&text, self.caret)
+                        edit::prev_cluster(&text, self.caret)
                     }
                 };
                 self.move_to(to, mods.shift)
@@ -544,7 +581,7 @@ impl Tool for TypeTool {
                     if lay.glyphs.iter().any(|g| g.rtl) {
                         vectorcraft_text::caret_horizontal(&lay, self.caret, true)
                     } else {
-                        edit::next_char(&text, self.caret)
+                        edit::next_cluster(&text, self.caret)
                     }
                 };
                 self.move_to(to, mods.shift)
@@ -699,8 +736,8 @@ impl Tool for TypeTool {
         }
     }
     fn overlays(&self, cx: &ToolContext) -> Vec<Overlay> {
-        let mut o = vec![];
-        if let (Some(s), Some(d)) = (self.press, self.drag) {
+        let mut o = self.snap.guides().to_vec();
+        if let (Some((_, s)), Some(d)) = (self.press, self.drag) {
             o.push(Overlay::Marquee(Rect::from_points(s, d)));
         }
         // Overflow markers on selected text.

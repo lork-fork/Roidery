@@ -272,11 +272,17 @@ pub(super) fn choice<T: Choice>(d: &Dialog, path: &str) -> Option<T> {
 /// A dropdown of the choices `T` (options for which `enabled` is false are greyed).
 pub(super) fn pick<T: Choice>(ui: &mut egui::Ui, d: &mut Dialog, path: &str, width: f32, enabled: impl Fn(T) -> bool) -> bool {
     let current = choice_index::<T>(d, path);
-    let label = current.and_then(|i| T::LABELS.get(i)).copied().unwrap_or_default();
-    let chosen = widgets::dropdown_with(ui, path, label, T::LABELS, width, |i| T::ALL.get(i).is_some_and(|c| enabled(*c)));
+    let labels: Vec<_> = T::LABELS.iter().map(|label| choice_label(crate::i18n::current(), path, label)).collect();
+    let label = current.and_then(|i| labels.get(i)).copied().unwrap_or_default();
+    let chosen = widgets::dropdown_with(ui, path, label, &labels, width, |i| T::ALL.get(i).is_some_and(|c| enabled(*c)));
     let Some(id) = chosen.and_then(|i| T::IDS.get(i)) else { return false };
     set(d, path, json!(id));
     true
+}
+
+/// Printer mark styles use adjectives, separately from interface language names.
+pub(super) fn choice_label<'a>(lang: crate::i18n::Lang, path: &str, label: &'a str) -> &'a str {
+    if path == "marks.kind" { crate::i18n::tr_ctx(lang, "mark-style", label) } else { crate::i18n::tr(lang, label) }
 }
 
 pub(super) fn number(ui: &mut egui::Ui, d: &mut Dialog, path: &str, suffix: &str, enabled: bool) {
@@ -371,7 +377,7 @@ pub(super) fn section_list(ui: &mut egui::Ui, d: &mut Dialog, sections: &[&str],
     for s in sections {
         let sel = *s == section;
         let label = egui::RichText::new(tl!(*s)).size(12.5).color(if sel { t.text_strong } else { t.text });
-        if ui.add(egui::Button::selectable(sel, label).frame_when_inactive(false).min_size(egui::vec2(LIST_WIDTH - 12.0, 24.0))).clicked() {
+        if ui.add(egui::Button::selectable(sel, label).min_size(egui::vec2(LIST_WIDTH - 12.0, 24.0))).clicked() {
             d.fields.insert("__section".into(), json!(s));
         }
     }
@@ -455,7 +461,7 @@ fn general(ui: &mut egui::Ui, d: &mut Dialog, editor: bool) {
     flag(ui, d, "viewAfterSaving", tl!("View PDF after saving"), true);
     // PDF layers need PDF 1.5, and PDF/X-1a and PDF/X-3 have none.
     let layers = standard.allows_layers() && choice::<Compatibility>(d, "compatibility").unwrap_or_default().has_layers();
-    flag(ui, d, "createLayers", tl!("Create PDF layers from top-level layers"), layers);
+    flag(ui, d, "createLayers", tl!("Create PDF layers from layers and sublayers"), layers);
     flag(ui, d, "includeNonPrinting", tl!("Include non-printing layers"), true);
     if editor {
         heading(ui, tl!("Description"));
@@ -785,6 +791,7 @@ pub(super) fn option_rows<'a>(ui: &mut egui::Ui, changed: impl IntoIterator<Item
     for c in changed {
         let value = match &c["value"] {
             Value::Bool(b) => if *b { tl!("On") } else { tl!("Off") }.to_string(),
+            Value::String(s) if c["option"] == "marks.kind" => choice_label(crate::i18n::current(), "marks.kind", s).to_string(),
             Value::String(s) => s.clone(),
             other => other.to_string(),
         };

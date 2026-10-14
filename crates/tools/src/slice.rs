@@ -43,7 +43,7 @@ fn snap(cx: &ToolContext, p: Point) -> (Point, Vec<Overlay>) {
         cx.doc
             .guides
             .iter()
-            .filter(|g| g.vertical == vertical && (g.pos - v).abs() <= tol)
+            .filter(|g| g.vertical == vertical && (g.pos - v).abs() <= tol && cx.doc.guide_shown(g) && cx.doc.guide_passes(g, p, tol))
             .min_by(|a, b| (a.pos - v).abs().total_cmp(&(b.pos - v).abs()))
     };
     if let Some(g) = nearest(true, p.x) {
@@ -116,7 +116,9 @@ impl Tool for SliceTool {
             Some(s) if self.began => {
                 let d = self.last - s;
                 let mut o = self.guides.clone();
-                o.push(Overlay::Measure { p: self.last, text: cx.size_label(d.x.abs(), d.y.abs()) });
+                if cx.measurement_labels {
+                    o.push(Overlay::Measure { p: self.last, text: cx.size_label(d.x.abs(), d.y.abs()) });
+                }
                 o
             }
             _ => vec![],
@@ -280,7 +282,8 @@ impl Tool for SliceSelectionTool {
                 o.extend(Handle::ALL.iter().map(|h| Overlay::Anchor { p: h.pos(r), color: BLUE, filled: false, size: 7.0 }));
             }
         }
-        match &self.drag {
+        // Smart Guides › Measurement Labels: the size readouts while resizing or moving slices.
+        match self.drag.as_ref().filter(|_| cx.measurement_labels) {
             Some(Drag::Resize { id, began: true, .. }) => {
                 if let Some(r) = cx.doc.slice_bounds(*id) {
                     o.push(Overlay::Measure {
@@ -341,7 +344,7 @@ mod tests {
     #[test]
     fn the_slice_tool_drags_out_a_slice_in_one_undo_step() {
         let (mut d, _) = doc_with_rect();
-        d.guides.push(Guide { vertical: true, pos: 403.0 });
+        d.guides.push(Guide::new(true, 403.0));
         let s = Selection::default();
         let p = paint();
         let mut c = cx(&d, &s, &p);

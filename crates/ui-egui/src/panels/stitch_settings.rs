@@ -596,6 +596,7 @@ mod tests {
     #[test]
     fn properties_shows_an_embroidery_section_for_sewable_selections() {
         let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.ui.embroidery = true;
         run(&mut app, "file.new", json!({"width": 200, "height": 200}));
         let section = |app: &mut VectorcraftApp| {
             let ctx = egui::Context::default();

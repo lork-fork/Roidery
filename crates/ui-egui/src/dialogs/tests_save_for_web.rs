@@ -24,7 +24,10 @@ fn app(dir: &std::path::Path, web: bool) -> (VectorcraftApp, Log) {
         ..Default::default()
     };
     if web {
-        services.download = Some(Box::new(move |name: &str, b: &[u8]| l2.borrow_mut().push(format!("download {name} {}", b.len()))));
+        services.download = Some(Box::new(move |name: &str, b: &[u8]| {
+            l2.borrow_mut().push(format!("download {name} {}", b.len()));
+            Ok(())
+        }));
     }
     let mut app = VectorcraftApp::new(Session::new(), services);
     app.run("file.new", json!({"width": 60, "height": 40})).unwrap();

@@ -1,0 +1,13 @@
+[package]
+name = "vectorcraft-three-d"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Portable 3D effect geometry (revolve, extrude and bevel, inflate, rotate) and projected vector shading"
+
+[lints]
+workspace = true
+
+[dependencies]
+vectorcraft-geom = { workspace = true }
+vectorcraft-pathops = { workspace = true }

@@ -224,6 +224,57 @@ fn right_arrow_lists_a_familys_styles_and_they_preview() {
     assert_eq!(picked, Some(FontPick::Chosen("Source Sans 3".into(), Some(styles[1].clone()))));
 }
 
+/// #1116: styles listed above the highlight (a click on another family's triangle) leave it on its
+/// family; it doesn't land on one of those styles and preview it.
+#[test]
+fn styles_listed_above_the_highlight_leave_it_on_its_family() {
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let frame = |events: Vec<egui::Event>| {
+        let input =
+            egui::RawInput { events, screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 800.0))), ..Default::default() };
+        let (mut at, mut picked) = (egui::Pos2::ZERO, None);
+        let mut out = ctx.run_ui(input, |ui| {
+            at = ui.next_widget_position();
+            picked = font_menu(ui, "test-rebuild", "Source Sans 3", 260.0, None, MenuLook::default());
+        });
+        out.textures_delta.clear();
+        // The family's row: the lowest text naming it (the menu's button above names it too).
+        let row = out
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.text() == "Source Sans 3" => Some(t.pos + egui::vec2(0.0, t.galley.size().y * 0.5)),
+                _ => None,
+            })
+            .max_by(|a, b| a.y.total_cmp(&b.y));
+        (at, picked, row)
+    };
+    let (at, ..) = frame(vec![]);
+    let click = at + egui::vec2(40.0, 10.0);
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    frame(vec![egui::Event::PointerMoved(click), button(click, true)]);
+    frame(vec![button(click, false)]);
+    let mut row = None;
+    for _ in 0..5 {
+        row = frame(vec![]).2;
+    }
+    // The family's disclosure triangle, left of its name: hovered, it highlights the family.
+    let triangle = row.expect("the family is listed") - egui::vec2(7.0, 0.0);
+    frame(vec![egui::Event::PointerMoved(triangle)]);
+    let (_, picked, _) = frame(key(egui::Key::ArrowDown));
+    let Some(FontPick::Preview(next, None)) = picked else { panic!("↓ previews the next family: {picked:?}") };
+    // A click on the triangle, the pointer still: the styles are listed between the two families.
+    frame(vec![button(triangle, true)]);
+    frame(vec![button(triangle, false)]);
+    for _ in 0..3 {
+        let (_, picked, _) = frame(vec![]);
+        assert_eq!(picked, None, "{next} stays highlighted and previewed");
+    }
+    let (_, picked, _) = frame(key(egui::Key::Enter));
+    assert_eq!(picked, Some(FontPick::Chosen(next, None)));
+}
+
 #[test]
 fn stars_mark_favourites_and_the_preferences_size_the_rows() {
     let mut app = VectorcraftApp::new(Session::new(), crate::Services::default());
@@ -269,4 +320,110 @@ fn menus_that_only_pick_a_font_leave_the_document_alone() {
     assert_eq!(app.ui.favorite_fonts, ["Inter"], "a star is still toggled");
     assert_eq!(picked(&mut app, Some(FontPick::Favorite("inter".into()))), None);
     assert!(app.ui.favorite_fonts.is_empty());
+}
+
+/// #555: the menu's search field and filters stay at its top while the wheel scrolls the families,
+/// past the list's end too: the list is the menu's one scrolling part.
+#[test]
+fn the_search_field_stays_put_while_the_list_scrolls() {
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let frame = |events: Vec<egui::Event>| {
+        let input =
+            egui::RawInput { events, screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 500.0))), ..Default::default() };
+        let mut at = egui::Pos2::ZERO;
+        let mut out = ctx.run_ui(input, |ui| {
+            // Low in the window, as in a panel at the bottom of the dock: the menu opens upwards.
+            ui.add_space(390.0);
+            at = ui.next_widget_position();
+            font_menu(ui, "test-scroll", "Inter", 260.0, None, MenuLook::default());
+        });
+        out.textures_delta.clear();
+        let search = out.shapes.iter().find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.text() == "Search" => Some(t.pos),
+            _ => None,
+        });
+        (at, search)
+    };
+    let (at, _) = frame(vec![]);
+    let click = at + egui::vec2(40.0, 10.0);
+    let button = |pressed| egui::Event::PointerButton { pos: click, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    frame(vec![egui::Event::PointerMoved(click), button(true)]);
+    frame(vec![button(false)]);
+    let mut field = None;
+    for _ in 0..5 {
+        field = frame(vec![]).1;
+    }
+    let field = field.expect("the search field shows");
+    let over_list = egui::pos2(field.x + 40.0, field.y + 120.0);
+    for dy in [-400.0, -4000.0, -4000.0] {
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, dy),
+            modifiers: Default::default(),
+            phase: egui::TouchPhase::Move,
+        };
+        frame(vec![egui::Event::PointerMoved(over_list), wheel]);
+        for _ in 0..10 {
+            assert_eq!(frame(vec![]).1, Some(field), "the field stays where it was");
+        }
+    }
+}
+
+/// #563: a preview stays on the text while the menu stays on its family. The menu's caller passes
+/// the text's font, which the preview changed; the menu keeps the font from before the preview as
+/// the current one, so it doesn't take the previewed family for it and end the preview, then
+/// preview it again, every frame (the text flickered).
+#[test]
+fn a_preview_stays_put_while_the_menu_is_still() {
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let mut app = VectorcraftApp::new(Session::new(), Default::default());
+    app.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+    let id = app.session.execute("text.create", &json!({"x": 20, "y": 50, "text": "Gagaku", "font": "Inter"})).unwrap()["id"].as_u64().unwrap();
+    app.session.execute("select.set", &json!({"ids": [id]})).unwrap();
+    let font = |app: &VectorcraftApp| match &app.session.active().unwrap().doc.node(vectorcraft_doc::NodeId(id)).unwrap().kind {
+        NodeKind::Text(t) => t.first_style().font_family,
+        _ => String::new(),
+    };
+    let revision = |app: &VectorcraftApp| app.session.active().unwrap().revision;
+    // A panel's frame: the menu shows the text's font, and what it picks is applied.
+    let frame = |app: &mut VectorcraftApp, events: Vec<egui::Event>| {
+        let input =
+            egui::RawInput { events, screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 800.0))), ..Default::default() };
+        let current = font(app);
+        let (mut at, mut picked) = (egui::Pos2::ZERO, None);
+        let mut out = ctx.run_ui(input, |ui| {
+            crate::font_menu::end_stale_preview(app, ui.ctx());
+            at = ui.next_widget_position();
+            picked = font_menu(ui, "test-steady", &current, 260.0, None, MenuLook::default());
+            if let Some(p) = picked.clone() {
+                crate::font_menu::apply(app, ui.ctx(), p);
+            }
+        });
+        out.textures_delta.clear();
+        (at, picked)
+    };
+    let (at, _) = frame(&mut app, vec![]);
+    let click = at + egui::vec2(40.0, 10.0);
+    let button = |pressed| egui::Event::PointerButton { pos: click, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    frame(&mut app, vec![egui::Event::PointerMoved(click), button(true)]);
+    frame(&mut app, vec![button(false)]);
+    for _ in 0..5 {
+        frame(&mut app, vec![]);
+    }
+    let (_, picked) = frame(&mut app, key(egui::Key::ArrowDown));
+    assert!(matches!(picked, Some(FontPick::Preview(..))), "{picked:?}");
+    let previewed = font(&app);
+    assert_ne!(previewed, "Inter");
+    let rev = revision(&app);
+    for _ in 0..6 {
+        let (_, picked) = frame(&mut app, vec![]);
+        assert_eq!(picked, None, "nothing more to apply");
+    }
+    assert_eq!((font(&app), revision(&app)), (previewed, rev), "the preview stays, untouched");
+    // Back on the text's own family, the preview ends.
+    let (_, picked) = frame(&mut app, key(egui::Key::ArrowUp));
+    assert_eq!(picked, Some(FontPick::EndPreview));
+    assert_eq!(font(&app), "Inter");
 }

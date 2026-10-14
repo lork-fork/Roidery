@@ -15,7 +15,13 @@ pub(crate) struct Lexer<'a> {
     /// The whitespace character that ended the last token is still unread (data the program
     /// reads from itself starts after it).
     fresh: bool,
+    /// The last object read has immediately evaluated names (`//name`) in it, read as executable
+    /// names starting with [`IMMEDIATE`] for the interpreter to replace by their values.
+    pub immediate: bool,
 }
+
+/// How an immediately evaluated name (`//name`) is read, until the interpreter replaces it.
+pub(crate) const IMMEDIATE: &str = "//";
 
 fn is_space(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x0c' | b'\0')
@@ -31,7 +37,7 @@ fn syntax<T>(what: &str) -> Res<T> {
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a [u8]) -> Self {
-        Self { src, pos: 0, fresh: false }
+        Self { src, pos: 0, fresh: false, immediate: false }
     }
 
     /// What is left to read.
@@ -86,6 +92,7 @@ impl<'a> Lexer<'a> {
 
     /// The next object at the top level (`None` at the end of the file).
     pub fn next(&mut self) -> Res<Option<Obj>> {
+        self.immediate = false;
         let t = self.token(0);
         self.fresh = true;
         t
@@ -140,13 +147,14 @@ impl<'a> Lexer<'a> {
             }
             b'}' | b')' => return syntax(&char::from(b).to_string()),
             b'/' => {
-                // `//name` is looked up when run (rather than when read).
+                // `//name` stands for the name's value when it is read.
                 let immediate = self.peek() == Some(b'/');
                 if immediate {
                     self.pos += 1;
+                    self.immediate = true;
                 }
                 let name = self.word();
-                if immediate { Obj::Exec(Rc::from(name.as_str())) } else { Obj::Name(Rc::from(name.as_str())) }
+                if immediate { Obj::Exec(Rc::from(format!("{IMMEDIATE}{name}").as_str())) } else { Obj::Name(Rc::from(name.as_str())) }
             }
             _ => {
                 self.pos -= 1;

@@ -13,7 +13,7 @@ mod wmf;
 use std::sync::Arc;
 
 use vectorcraft_color::{Color, Paint};
-use vectorcraft_doc::clipnest::{Clip, Drawn, nest};
+use vectorcraft_doc::clipnest::{Clip, Drawn, MAX_NEST, deep_clips, nest};
 use vectorcraft_doc::{
     Appearance, AppearanceItem, CharStyle, Dash, Document, FillLayer, ImageBlob, ImageObject, Justify, LayerColor, LineCap, LineJoin, Node, NodeKind,
     StrokeLayer, TextObject,
@@ -696,8 +696,11 @@ impl Player {
         if lines && path.elements().len() <= 6 && around.contains(self.frame.origin()) && around.contains(Point::new(self.frame.x1, self.frame.y1)) {
             return;
         }
+        if self.dc.clips.len() >= MAX_NEST {
+            return self.warn(&deep_clips());
+        }
         self.next_clip += 1;
-        self.dc.clips.push(Arc::new(Clip { id: self.next_clip, path, rule }));
+        self.dc.clips.push(Arc::new(Clip { id: self.next_clip, region: Some((path, rule)) }));
     }
 
     /// SelectClipPath (`mode`: 1 and, 5 copy; the others cut out, which isn't read).
@@ -786,7 +789,7 @@ impl Player {
             return;
         }
         let im = ImageObject { key, width: img.width, height: img.height, xf, link: None, placement: Default::default() };
-        let mut n = Node::new(vectorcraft_doc::NodeId(0), NodeKind::Image(im));
+        let mut n = Node::new(vectorcraft_doc::NodeId(0), NodeKind::Image(Box::new(im)));
         n.opacity = opacity.clamp(0.0, 1.0) as f32;
         self.push(n);
     }

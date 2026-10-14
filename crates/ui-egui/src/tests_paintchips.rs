@@ -51,12 +51,13 @@ fn paints_rect(shapes: &[Shape], color: Color32) -> bool {
     })
 }
 
-/// The Control bar's Fill and Stroke chips (22 pt squares with a chevron), left to right.
+/// The Fill and Stroke chips (22 pt squares with a chevron): left to right in the Control bar,
+/// top to bottom in the Properties panel.
 fn chips(ctx: &egui::Context) -> (Rect, Rect) {
     let mut r: Vec<Rect> = ctx.viewport(|vp| {
         vp.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).filter(|w| w.rect.size() == vec2(38.0, 22.0)).map(|w| w.rect).collect()
     });
-    r.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    r.sort_by(|a, b| (a.left() + a.top()).total_cmp(&(b.left() + b.top())));
     (r[0], r[1])
 }
 
@@ -126,6 +127,37 @@ fn a_popover_tile_click_sets_the_fill() {
     assert!(text.contains("Recent Colors"), "the Color panel's body: {text}");
 }
 
+/// The Properties panel has the Control bar's Fill and Stroke chips and stroke weight, with
+/// nothing selected too, where they set up the next object drawn (Discord feedback).
+#[test]
+fn the_properties_panel_has_the_control_bars_fill_and_stroke() {
+    let mut app = app();
+    let props = panels::properties::show;
+    let text = crate::tests_labels::painted_text(&mut app, props);
+    for s in ["Document", "Appearance", "Fill", "Stroke", "1 pt"] {
+        assert!(text.lines().any(|l| l == s), "{s}: {text}");
+    }
+    let ctx = context();
+    frame(&mut app, &ctx, vec![], Modifiers::NONE, props);
+    let (fill, stroke) = chips(&ctx);
+    assert!(stroke.top() > fill.bottom(), "Fill above Stroke");
+    click(&mut app, &ctx, fill.center(), Modifiers::NONE, props);
+    let tile = ctx.read_response(egui::Id::new(("swatch-pop-tile", "Red"))).expect("the popover shows the swatches").rect;
+    click(&mut app, &ctx, tile.center(), Modifiers::NONE, props);
+    assert_eq!(fill_hex(&app), "#ed1c24", "the next object's fill");
+    app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
+    assert_eq!(fill_hex(&app), "#ed1c24", "the new rectangle (selected) has it");
+    // With the rectangle selected: the same chips, under the Transform section.
+    click(&mut app, &ctx, Pos2::new(1300.0, 900.0), Modifiers::NONE, props);
+    frame(&mut app, &ctx, vec![], Modifiers::NONE, props);
+    let (fill, _) = chips(&ctx);
+    click(&mut app, &ctx, fill.center(), Modifiers::NONE, props);
+    let tile = ctx.read_response(egui::Id::new(("swatch-pop-tile", "Black"))).expect("the popover shows the swatches").rect;
+    click(&mut app, &ctx, tile.center(), Modifiers::NONE, props);
+    assert_eq!(fill_hex(&app), "#000000");
+    assert_eq!(app.session.doc().unwrap().history.undo.last().unwrap().label, "Fill Color");
+}
+
 #[test]
 fn recolor_is_a_quick_action_for_multicolour_selections() {
     let mut app = app();
@@ -162,4 +194,131 @@ fn the_shortcut_table_maps_f6_to_color() {
     // The Window menu lists them.
     let color = crate::menus::menu_entries(&app).into_iter().find(|e| e.path == ["Window"] && e.label == "Color").unwrap();
     assert_eq!(color.shortcut, "F6");
+}
+
+/// Illustrator's other Window menu panel keys (Discord feedback: Shift+F7 for Align), the dock's
+/// Layers tab (F7) among them; the menu shows them and the Keyboard Shortcuts editor lists every
+/// panel, so they can be changed.
+#[test]
+fn the_window_menu_panel_keys() {
+    let mut app = app();
+    let ctx = context();
+    let press = |app: &mut VectorcraftApp, key, modifiers| {
+        let events = vec![Event::ModifiersChanged(modifiers), Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }];
+        ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| shortcuts::handle(app, ui.ctx())).textures_delta.clear();
+    };
+    let (cmd, shift, alt) = (Modifiers::COMMAND, Modifiers::SHIFT, Modifiers::ALT);
+    for (key, m, panel) in [
+        (egui::Key::F5, Modifiers::NONE, "brushes"),
+        (egui::Key::F7, shift, "align"),
+        (egui::Key::F8, shift, "transform"),
+        (egui::Key::F8, cmd, "info"),
+        (egui::Key::F9, cmd | shift, "pathfinder"),
+        (egui::Key::F11, cmd | shift, "symbols"),
+        (egui::Key::T, cmd, "character"),
+        (egui::Key::T, cmd | alt, "paragraph"),
+        (egui::Key::T, cmd | shift, "tabs"),
+        (egui::Key::T, cmd | alt | shift, "openType"),
+    ] {
+        press(&mut app, key, m);
+        assert_eq!(app.ui.open_panel.as_deref(), Some(panel), "{m:?}+{key:?}");
+        press(&mut app, key, m);
+        assert_eq!(app.ui.open_panel, None, "{m:?}+{key:?} again hides it");
+    }
+    press(&mut app, egui::Key::F7, Modifiers::NONE);
+    assert_eq!(app.ui.dock_tab, crate::state::DockTab::Layers);
+    let entries = crate::menus::menu_entries(&app);
+    let shortcut =
+        |label: &str| entries.iter().find(|e| e.path.first().map(String::as_str) == Some("Window") && e.label == label).unwrap().shortcut.clone();
+    assert_eq!((shortcut("Align"), shortcut("Layers"), shortcut("Paragraph")), ("Shift+F7".into(), "F7".into(), "Cmd+Alt+T".into()));
+    assert!(shortcut_editor::entry("panel:layers").is_some(), "the dock's tabs can be given keys too");
+    // Changed in the editor, the old key is free.
+    app.ui.shortcut_overrides.insert("panel:align".into(), "Cmd+Alt+Shift+F7".into());
+    shortcut_editor::sync(&app.ui);
+    press(&mut app, egui::Key::F7, shift);
+    assert_eq!(app.ui.open_panel, None);
+    press(&mut app, egui::Key::F7, cmd | alt | shift);
+    assert_eq!(app.ui.open_panel.as_deref(), Some("align"));
+    app.ui.shortcut_overrides.clear();
+    shortcut_editor::sync(&app.ui);
+}
+
+/// Where `shapes` paint the text `s`.
+fn text_rect(shapes: &[Shape], s: &str) -> Option<Rect> {
+    shapes.iter().find_map(|sh| match sh {
+        Shape::Text(t) if t.galley.text() == s => Some(t.visual_bounding_rect()),
+        Shape::Vec(v) => text_rect(v, s),
+        _ => None,
+    })
+}
+
+#[test]
+fn the_transform_link_opens_the_transform_panel() {
+    let mut app = app();
+    app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
+    let ctx = context();
+    frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar);
+    let shapes = frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar);
+    let link = text_rect(&shapes, "Transform").expect("the Control bar shows the Transform link");
+    assert!(text_rect(&shapes, "Scale Corners").is_none());
+    click(&mut app, &ctx, link.center(), Modifiers::NONE, control_bar);
+    let shapes = frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar);
+    for s in ["Scale Corners", "Scale Strokes & Effects", "0°"] {
+        assert!(text_rect(&shapes, s).is_some(), "the popover shows {s}");
+    }
+    // A click outside closes it.
+    click(&mut app, &ctx, Pos2::new(1300.0, 900.0), Modifiers::NONE, control_bar);
+    assert!(text_rect(&frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar), "Scale Corners").is_none());
+}
+
+/// The 24 pt icon buttons of the popover's bottom bar (its Swatch Libraries Menu first), left to
+/// right.
+fn popover_bottom_buttons(ctx: &egui::Context) -> Vec<Rect> {
+    let mut r: Vec<Rect> = ctx.viewport(|vp| {
+        vp.prev_pass
+            .widgets
+            .layers()
+            .filter(|(l, _)| l.order != egui::Order::Background)
+            .flat_map(|(_, w)| w.iter())
+            .filter(|w| w.rect.size() == vec2(24.0, 24.0))
+            .map(|w| w.rect)
+            .collect()
+    });
+    let bottom = r.iter().map(|r| r.top()).fold(f32::MIN, f32::max);
+    r.retain(|w| (w.top() - bottom).abs() < 1.0);
+    r.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    r
+}
+
+/// A menu row's text (menu labels leave room for a check mark before them).
+fn menu_item_rect(shapes: &[Shape], s: &str) -> Option<Rect> {
+    shapes.iter().find_map(|sh| match sh {
+        Shape::Text(t) if t.galley.text().trim() == s => Some(t.visual_bounding_rect()),
+        Shape::Vec(v) => menu_item_rect(v, s),
+        _ => None,
+    })
+}
+
+/// #536: the Swatch Libraries Menu button at the foot of a Fill chip's popover opens the
+/// libraries menu (it used to close the popover and show nothing), and a library chosen there
+/// opens in the library panel.
+#[test]
+fn the_popover_swatch_libraries_button_opens_the_libraries_menu() {
+    let mut app = app();
+    app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
+    let ctx = context();
+    frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar);
+    let (fill, _) = chips(&ctx);
+    click(&mut app, &ctx, fill.center(), Modifiers::NONE, control_bar);
+    let libraries = *popover_bottom_buttons(&ctx).first().expect("the popover has a bottom bar");
+    click(&mut app, &ctx, libraries.center(), Modifiers::NONE, control_bar);
+    let shapes = frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar);
+    assert!(text_rect(&shapes, "Swatch Tiles").is_some(), "the popover stays open");
+    let defaults = menu_item_rect(&shapes, "Default Swatches").expect("the libraries menu is open");
+    assert!(menu_item_rect(&shapes, "Other Library…").is_some());
+    let earth = menu_item_rect(&shapes, "Earth Tones").expect("the menu lists the built-in libraries");
+    assert!(earth.top() > defaults.top());
+    click(&mut app, &ctx, earth.center(), Modifiers::NONE, control_bar);
+    let open = app.ui.library_panel.as_ref().map(|o| (o.kind.clone(), o.id.clone()));
+    assert_eq!(open, Some(("swatches".into(), "earth-tones".into())));
 }

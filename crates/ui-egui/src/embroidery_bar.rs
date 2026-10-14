@@ -46,7 +46,9 @@ pub enum Context {
     Group,
     /// Several objects.
     Multi,
-    /// Something that doesn't sew (an image, a guide).
+    /// A placed image: Image Trace turns it into stitches.
+    Image,
+    /// Something that doesn't sew (a guide…).
     Other,
 }
 
@@ -86,6 +88,7 @@ fn single(app: &VectorcraftApp, info: &Value, id: NodeId) -> Context {
     match &n.kind {
         NodeKind::Group { .. } => return Context::Group,
         NodeKind::Text(_) => return Context::Text,
+        NodeKind::Image(_) => return Context::Image,
         _ => {}
     }
     let Some(row) = row else { return Context::Other };
@@ -401,6 +404,7 @@ fn left_side(app: &mut VectorcraftApp, ui: &mut Ui) {
         Context::Manual => tl!("Stitches").to_string(),
         Context::Group => tl!("Group").to_string(),
         Context::Multi => crate::i18n::fmt(tl!("{n} objects"), &[("n", &n.to_string())]),
+        Context::Image => tl!("Image").to_string(),
         Context::Other => tl!("Not stitched").to_string(),
     };
     ui.label(egui::RichText::new(title).font(theme::semibold(12.5)).color(t.text));
@@ -415,6 +419,7 @@ fn left_side(app: &mut VectorcraftApp, ui: &mut Ui) {
         Context::Manual => manual(app, ui, &objects),
         Context::Group => group(app, ui, &objects),
         Context::Multi => multi(app, ui, &info, &objects),
+        Context::Image => image(app, ui),
         Context::Other => {
             widgets::dim_label(ui, tl!("Nothing selected sews: paths, compound paths and text do."));
         }
@@ -511,6 +516,35 @@ fn design(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     if text_button(ui, Some("move"), tl!("Center in Hoop"), "").clicked() {
         run(app, "stitch.centerInHoop", json!({}));
+    }
+}
+
+/// A placed image: Image Trace turns it into paths sewn as tatami fills (`stitch.traceImage`). A
+/// click traces in 3 colours; the arrow offers the other presets.
+fn image(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let (main, arrow) = widgets::split_button(ui, tl!("Image Trace"), 120.0);
+    if main.on_hover_text(tl!("Trace the image in 3 colors, sewn as tatami fills")).clicked() {
+        trace_image(app, "3 Color");
+    }
+    let arrow = arrow.on_hover_text(tl!("Tracing Presets"));
+    egui::Popup::menu(&arrow).show(|ui| {
+        // VectorCraft's Default, 3 Colors, 6 Colors and Flat Logo presets.
+        for (name, label) in [("2 Color", tl!("2 Color")), ("3 Color", tl!("3 Color")), ("6 Color", tl!("6 Color")), ("Detailed", tl!("Detailed"))] {
+            if widgets::menu_item_name(ui, label, true, false) {
+                trace_image(app, name);
+            }
+        }
+    });
+    widgets::dim_label(ui, tl!("Images don't sew: trace them into stitches."));
+}
+
+fn trace_image(app: &mut VectorcraftApp, preset: &str) {
+    if let Some(r) = run(app, "stitch.traceImage", json!({ "preset": preset })) {
+        let (paths, colors) = (r["paths"].as_u64().unwrap_or(0), r["colors"].as_u64().unwrap_or(0));
+        app.status(crate::i18n::fmt(
+            tl!("Image traced into tatami fills (shapes: {paths}, colors: {colors})"),
+            &[("paths", &paths.to_string()), ("colors", &colors.to_string())],
+        ));
     }
 }
 
@@ -1053,6 +1087,34 @@ mod tests {
         select(&mut app, &[a, lt["id"].as_u64().unwrap()]);
         let info = app.session.execute("stitch.info", &json!({})).unwrap();
         assert!(pair_actions(&app, &info).is_empty());
+    }
+
+    #[test]
+    fn a_placed_image_offers_image_trace_which_sews_it_as_tatami() {
+        let mut app = app();
+        // A red square on white.
+        let img = image::RgbaImage::from_fn(40, 40, |x, y| {
+            if (10..30).contains(&x) && (10..30).contains(&y) { image::Rgba([220, 20, 30, 255]) } else { image::Rgba([255, 255, 255, 255]) }
+        });
+        let mut png = vec![];
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let dir = std::env::temp_dir().join(format!("roidery-bar-trace-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("square.png");
+        std::fs::write(&path, png).unwrap();
+        app.run("file.place", json!({ "path": path.to_string_lossy() })).unwrap();
+        assert_eq!(context_now(&mut app), Context::Image);
+        let text = painted(&mut app);
+        for want in ["Image", "Image Trace", "Images don't sew"] {
+            assert!(text.contains(want), "{want:?} in {text}");
+        }
+        trace_image(&mut app, "3 Color");
+        // The traced group is selected; its square sews as tatami.
+        assert_eq!(context_now(&mut app), Context::Group);
+        let info = app.session.execute("stitch.info", &json!({})).unwrap();
+        assert_eq!(info["objects"][0]["type"], "tatami", "{info}");
+        assert!(app.ui.status.contains("shapes: 1"), "{}", app.ui.status);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

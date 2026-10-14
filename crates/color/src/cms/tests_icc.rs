@@ -60,3 +60,77 @@ fn a_loaded_profile_is_embedded_as_loaded() {
     register_icc(&bytes, Some("Embedded As Loaded RGB".into())).unwrap();
     assert_eq!(&*icc_bytes("Embedded As Loaded RGB").unwrap(), &bytes[..]);
 }
+
+/// Settings with an ICC CMYK profile (Generic CMYK's, loaded as a file is) and Wide Gamut RGB.
+fn icc_cmyk(bpc: bool) -> Cms {
+    let name = register_icc(&icc_bytes(GENERIC_CMYK).unwrap(), Some("Test ICC CMYK".into())).unwrap().name;
+    Cms::new(&ColorSettings { rgb: WIDE_GAMUT_RGB.into(), cmyk: name, bpc, ..ColorSettings::default() }).unwrap()
+}
+
+#[test]
+fn icc_cmyk_converts_into_a_wide_rgb_space_directly_without_clipping_to_srgb() {
+    let wide = icc_cmyk(true);
+    let cyan = [1.0, 0.0, 0.0, 0.0];
+    let direct = wide.cmyk_to_rgb(cyan, Intent::RelativeColorimetric);
+    // Through sRGB, cyan clips to sRGB's gamut first: in the wider space that reads as a red
+    // channel well above zero.
+    let hub = wide.srgb_to_rgb(wide.cmyk_to_srgb(cyan, false));
+    assert!(direct[0] + 0.15 < hub[0], "direct {direct:?}, through sRGB {hub:?}");
+    // Same colour either way where sRGB holds it: a mid grey and paper white.
+    for inks in [[0.0, 0.0, 0.0, 0.5], [0.0; 4]] {
+        let (d, h) = (wide.cmyk_to_rgb(inks, Intent::RelativeColorimetric), wide.srgb_to_rgb(wide.cmyk_to_srgb(inks, false)));
+        assert!(d.iter().zip(h).all(|(a, b)| (a - b).abs() < 0.02), "{inks:?}: direct {d:?}, through sRGB {h:?}");
+    }
+    // Cms::convert takes the direct route for CMYK.
+    let Color::Rgb { r, .. } = wide.convert(&Color::Cmyk { c: 1.0, m: 0.0, y: 0.0, k: 0.0 }, Model::Rgb, Intent::RelativeColorimetric) else {
+        panic!("RGB")
+    };
+    assert!((r - direct[0]).abs() < 1e-6);
+}
+
+#[test]
+fn black_point_compensation_maps_the_darkest_ink_to_rgb_black() {
+    let rich = [0.75, 0.68, 0.67, 0.9];
+    let (on, off) = (icc_cmyk(true).cmyk_to_rgb(rich, Intent::RelativeColorimetric), icc_cmyk(false).cmyk_to_rgb(rich, Intent::RelativeColorimetric));
+    // Without compensation the profile's black is a dark grey; with it, rich black goes most of
+    // the way to RGB black (not all: it isn't quite the darkest ink the profile prints).
+    assert!(off.iter().all(|v| *v > 0.1), "without: {off:?}");
+    assert!(on.iter().zip(off).all(|(a, b)| *a < 0.08 && *a < b * 0.5), "with: {on:?}, without: {off:?}");
+    // The screen shows what an sRGB conversion writes, compensated alike.
+    let srgb = |bpc| {
+        let c = icc_cmyk(bpc);
+        Cms::new(&ColorSettings { rgb: SRGB.into(), ..c.settings().clone() }).unwrap()
+    };
+    for bpc in [true, false] {
+        let c = srgb(bpc);
+        assert_eq!(c.cmyk_to_srgb(rich, false), c.cmyk_to_rgb(rich, Intent::RelativeColorimetric), "bpc {bpc}");
+    }
+    // White is untouched, and absolute colorimetric never compensates.
+    let white = icc_cmyk(true).cmyk_to_rgb([0.0; 4], Intent::RelativeColorimetric);
+    assert!(white.iter().all(|v| *v > 0.99), "{white:?}");
+    let abs = |bpc| icc_cmyk(bpc).cmyk_to_rgb(rich, Intent::AbsoluteColorimetric);
+    assert_eq!(abs(true), abs(false));
+}
+
+/// #1584: the profiles written here (built-in RGB spaces) have every tag on a 4-byte boundary and
+/// a size that is a multiple of 4 (ICC.1 §7.1.2), and still read back as the same space.
+#[test]
+fn written_profiles_align_their_tags() {
+    for name in [super::SRGB, super::DISPLAY_P3, super::WIDE_GAMUT_RGB, super::PROPHOTO_RGB] {
+        let icc = super::icc_bytes(name).unwrap();
+        let be = |at: usize| u32::from_be_bytes([icc[at], icc[at + 1], icc[at + 2], icc[at + 3]]) as usize;
+        assert_eq!(be(0), icc.len(), "{name}: header size");
+        assert_eq!(icc.len() % 4, 0, "{name}: {} bytes", icc.len());
+        let n = be(128);
+        for i in 0..n {
+            let (off, size) = (be(132 + 12 * i + 4), be(132 + 12 * i + 8));
+            assert_eq!(off % 4, 0, "{name}: tag {i} at {off}");
+            assert!(off + size <= icc.len());
+        }
+        let back = moxcms::ColorProfile::new_from_slice(&icc).unwrap();
+        let orig = moxcms::ColorProfile::new_srgb();
+        if name == super::SRGB {
+            assert_eq!((back.red_colorant, back.green_colorant, back.blue_colorant), (orig.red_colorant, orig.green_colorant, orig.blue_colorant));
+        }
+    }
+}

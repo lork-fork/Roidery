@@ -56,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save Perspective Grid Preset",
             [],
             None,
-            "{name?: (default: a new \"Perspective Preset N\"), newName?: rename it, preset?: the preset to start from (default: the saved preset `name`, else the document's grid), …the perspective.grid.define fields (over it)} create or change a saved preset (Save Grid as Preset: just `name`); built-in ones are protected → {name, created, definition}",
+            "{name?: (default: a new \"Perspective Preset N\"), newName?: rename it, preset?: the preset to start from (default: the saved preset `name`, else the document's grid), …the fields of perspective.grid.define (over it)} create or change a saved preset (Save Grid as Preset: just `name`); built-in ones are protected → {name, created, definition}",
             always,
             presets_save
         ),

@@ -64,7 +64,7 @@ fn character_stroke_options_round_trip_through_live_text() {
 #[test]
 fn a_run_without_the_first_runs_stroke_resets_it() {
     let mut t = TextObject::point(Point::new(20.0, 100.0), "Ab", stroked());
-    t.runs.push(TextRun { text: "cd".into(), style: CharStyle { size: 40.0, ..Default::default() } });
+    t.runs.push(TextRun { text: "cd".into(), style: CharStyle { size: 40.0, ..Default::default() }, inline: None });
     let svg = export(&text_doc(t, vec![]), &ExportOptions::default());
     let second = svg.split("<tspan").nth(2).expect("a tspan per run");
     assert!(

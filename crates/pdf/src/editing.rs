@@ -2,10 +2,11 @@
 //! of the pages it was written with, so a PDF whose pages another app changed is noticed (and
 //! opens as its artwork instead of the stale native document).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use hayro_syntax::Pdf;
-use hayro_syntax::object::{Array, Dict, Object, Stream, String as PdfString};
+use hayro_syntax::object::{Array, Dict, Object, ObjectIdentifier, Stream, String as PdfString};
 use krilla::embed::{AssociationKind, EmbeddedFile, MimeType};
 use krilla::metadata::DateTime;
 
@@ -77,7 +78,7 @@ pub(crate) fn editing_in(pdf: &Pdf) -> Option<Editing> {
     let xref = pdf.xref();
     let catalog = xref.get::<Dict<'_>>(xref.root_id())?;
     let tree = catalog.get::<Dict<'_>>(b"Names")?.get::<Dict<'_>>(b"EmbeddedFiles")?;
-    let spec = editing_spec(&tree, 0)?;
+    let spec = editing_spec(&tree, 0, &mut HashSet::new())?;
     let files = spec.get::<Dict<'_>>(b"EF")?;
     let stream = files.get::<Stream<'_>>(b"F").or_else(|| files.get::<Stream<'_>>(b"UF"))?;
     let data = stream.decoded().map(|d| d.into_owned()).unwrap_or_default();
@@ -90,8 +91,9 @@ pub(crate) fn editing_in(pdf: &Pdf) -> Option<Editing> {
     Some(Editing { data, intact })
 }
 
-/// The file specification of the editing file in the name tree node `node`.
-fn editing_spec<'a>(node: &Dict<'a>, depth: usize) -> Option<Dict<'a>> {
+/// The file specification of the editing file in the name tree node `node`. `seen` holds the indirect
+/// nodes already searched, so a node shared by many `Kids` arrays is searched once, not once per path.
+fn editing_spec<'a>(node: &Dict<'a>, depth: usize, seen: &mut HashSet<ObjectIdentifier>) -> Option<Dict<'a>> {
     if let Some(names) = node.get::<Array<'a>>(b"Names") {
         let mut items = names.iter::<Object<'a>>();
         while let (Some(_), Some(spec)) = (items.next(), items.next()) {
@@ -105,7 +107,14 @@ fn editing_spec<'a>(node: &Dict<'a>, depth: usize) -> Option<Dict<'a>> {
     if depth >= MAX_DEPTH {
         return None;
     }
-    node.get::<Array<'a>>(b"Kids")?.iter::<Dict<'a>>().find_map(|kid| editing_spec(&kid, depth + 1))
+    let kids = node.get::<Array<'a>>(b"Kids")?;
+    // Only a referenced kid can be shared (a direct kid's `obj_id` is the object holding it).
+    kids.raw_iter().zip(kids.iter::<Dict<'a>>()).find_map(|(raw, kid)| {
+        if raw.as_obj_ref().is_some_and(|r| !seen.insert(r.into())) {
+            return None;
+        }
+        editing_spec(&kid, depth + 1, seen)
+    })
 }
 
 /// A file specification naming the editing file (current or legacy name).

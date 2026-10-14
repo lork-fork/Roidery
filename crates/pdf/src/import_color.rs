@@ -90,6 +90,8 @@ struct Ink {
 pub(crate) enum Space {
     Gray,
     Rgb,
+    /// An `ICCBased` RGB space whose numbers are taken as they are (see `Colors::uncalibrated_rgb`).
+    IccRgb,
     Cmyk,
     /// A Separation or DeviceN space (index into `Colors::spaces`).
     Inks(usize),
@@ -119,6 +121,10 @@ pub(crate) struct Colors<'p> {
     rgb: usize,
     /// A DeviceN colour mixed several inks (imported as RGB).
     pub mixed: bool,
+    /// RGB colours in an `ICCBased` space keep their numbers instead of going through the profile:
+    /// on for an editor's own document (`.ai`), so its art keeps the RGB numbers the file has; off
+    /// for PDFs, whose profiles stand.
+    pub uncalibrated_rgb: bool,
 }
 
 /// `v`'s `Debug` text, or `None` past [`DEBUG_LIMIT`] (formatting stops there).
@@ -152,7 +158,7 @@ pub(crate) fn split_color(t: &str) -> Option<(&str, Vec<f32>)> {
 
 impl<'p> Colors<'p> {
     pub fn new(pdf: &'p Pdf, taken: Vec<String>) -> Self {
-        Self { pdf, taken, scanned: false, spaces: vec![], inks: vec![], cmyk: 0, rgb: 0, mixed: false }
+        Self { pdf, taken, scanned: false, spaces: vec![], inks: vec![], cmyk: 0, rgb: 0, mixed: false, uncalibrated_rgb: false }
     }
 
     /// A solid colour in its own model; `None`: use its RGB.
@@ -178,7 +184,7 @@ impl<'p> Colors<'p> {
     fn count(&mut self, space: Space) {
         match space {
             Space::Cmyk => self.cmyk += 1,
-            Space::Rgb | Space::Other => self.rgb += 1,
+            Space::Rgb | Space::IccRgb | Space::Other => self.rgb += 1,
             Space::Gray | Space::Inks(_) => {}
         }
     }
@@ -200,6 +206,7 @@ impl<'p> Colors<'p> {
         match (kind, n) {
             ("DeviceGray" | "ICCBased", 1) => Space::Gray,
             ("DeviceRgb", 3) => Space::Rgb,
+            ("ICCBased", 3) if self.uncalibrated_rgb => Space::IccRgb,
             ("DeviceCmyk" | "ICCBased", 4) => Space::Cmyk,
             ("Separation", 1) | ("DeviceN", _) => {
                 self.scan();
@@ -223,6 +230,7 @@ impl<'p> Colors<'p> {
         match space {
             Space::Gray => Some(Native::plain(Color::gray(round3(1.0 - c(0))))),
             Space::Cmyk => Some(Native::plain(Color::cmyk(c(0), c(1), c(2), c(3)))),
+            Space::IccRgb => Some(Native::plain(Color::rgb(c(0), c(1), c(2)))),
             Space::Rgb | Space::Other => None,
             Space::Inks(i) => self.inks_color(i, comps),
         }
@@ -371,7 +379,7 @@ impl<'p> Colors<'p> {
 }
 
 /// An object written in place (references are visited as objects of their own).
-fn direct(m: MaybeRef<Object<'_>>) -> Option<Object<'_>> {
+pub(crate) fn direct(m: MaybeRef<Object<'_>>) -> Option<Object<'_>> {
     match m {
         MaybeRef::NotRef(o) => Some(o),
         MaybeRef::Ref(_) => None,
@@ -389,12 +397,16 @@ fn alt_model(o: &Object<'_>) -> Option<Alt> {
         Object::Array(a) => {
             let mut it = a.flex_iter();
             match it.next::<Name<'_>>()?.as_str() {
-                "ICCBased" => match it.next::<Stream<'_>>()?.dict().get::<u8>(b"N")? {
-                    1 => Some(Alt::Gray),
-                    3 => Some(Alt::Rgb),
-                    4 => Some(Alt::Cmyk),
-                    _ => None,
-                },
+                "ICCBased" => {
+                    let profile = it.next::<Stream<'_>>()?;
+                    match profile.dict().get::<u8>(b"N")? {
+                        1 => Some(Alt::Gray),
+                        3 if lab_profile(&profile) => Some(Alt::Lab),
+                        3 => Some(Alt::Rgb),
+                        4 => Some(Alt::Cmyk),
+                        _ => None,
+                    }
+                }
                 "Lab" => Some(Alt::Lab),
                 "CalRGB" => Some(Alt::Rgb),
                 "CalGray" => Some(Alt::Gray),
@@ -404,6 +416,27 @@ fn alt_model(o: &Object<'_>) -> Option<Alt> {
         }
         _ => None,
     }
+}
+
+/// Is the ICC profile of an `ICCBased` space a Lab one (its alternate space `Lab`, else its header's
+/// data colour space `Lab `)? Spot colours defined in Lab come with such a profile as their
+/// alternate space (#1032), and their tint transforms give Lab values.
+fn lab_profile(profile: &Stream<'_>) -> bool {
+    use std::io::Read;
+    if let Some(Object::Array(a)) = profile.dict().get::<Object<'_>>(b"Alternate") {
+        return a.flex_iter().next::<Name<'_>>().is_some_and(|n| n.as_str() == "Lab");
+    }
+    // The header's first 20 bytes, without decoding the rest of the profile.
+    let raw = profile.raw_data();
+    let mut head = vec![];
+    match profile.filters().as_slice() {
+        [] => head.extend(raw.iter().take(20)),
+        [hayro_syntax::Filter::FlateDecode] => {
+            let _ = flate2::read::ZlibDecoder::new(&*raw).take(20).read_to_end(&mut head); // a damaged profile reads as not Lab
+        }
+        _ => return false,
+    }
+    head.get(16..20) == Some(b"Lab ")
 }
 
 /// An alternate-space colour (the tint transform's output) as a VectorCraft colour.

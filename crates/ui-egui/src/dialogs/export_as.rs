@@ -17,8 +17,9 @@ use crate::{VectorcraftApp, io, widgets};
 pub(super) const SPEC: DialogSpec =
     DialogSpec { heading: |_| tl!("Export As").into(), body, confirm, ok: Some("Export…"), min_width: 380.0, ..DialogSpec::FORM };
 
-/// The formats Export As writes (the native format is Save's).
-static FORMATS: LazyLock<Vec<&'static Format>> = LazyLock::new(|| fileio::FORMATS.iter().filter(|f| f.write && f.id != "vectorcraft").collect());
+/// The formats Export As writes (the native format and `.ai` are Save As's).
+static FORMATS: LazyLock<Vec<&'static Format>> =
+    LazyLock::new(|| fileio::FORMATS.iter().filter(|f| f.write && !matches!(f.id, "vectorcraft" | "ai")).collect());
 /// Formats listed after them that can't be written (`fileio::unsupported` ids), greyed out.
 const UNAVAILABLE: [(&str, &str); 1] = [("dwg", "DWG (use DXF)")];
 static LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| FORMATS.iter().map(|f| f.label).chain(UNAVAILABLE.iter().map(|u| u.1)).collect());

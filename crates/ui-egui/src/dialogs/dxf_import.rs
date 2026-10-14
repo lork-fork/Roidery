@@ -112,7 +112,7 @@ fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
         crate::place::run(app, &p).map(|_| ())
     } else {
         let path = d.fields.get("path").and_then(Value::as_str).map(str::to_string);
-        io::open_document(app, &d.str("name"), &file.bytes, path, &json!({ "dxf": dxf }))
+        io::open_document(app, &d.str("name"), &file.bytes, path, &json!({ "dxf": dxf })).map(|_| ())
     };
     match r {
         Ok(()) => {

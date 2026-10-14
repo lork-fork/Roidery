@@ -49,3 +49,28 @@ fn profile_and_embedded_fonts_reach_the_writer() {
     assert!(s.execute("document.serialize", &json!({"format": "svg", "svg": {"profile": "svg2"}})).is_err(), "unknown profiles are refused");
     assert!(s.execute("document.serialize", &json!({"format": "svg", "encoding": "ebcdic"})).is_err(), "unknown encodings are refused");
 }
+
+/// #550: an SVG of chosen artboards holds the art over each, not every artboard's art; with no
+/// artboard named (as Save writes it) the whole document's art is there.
+#[test]
+fn a_chosen_artboard_s_svg_holds_only_its_own_art() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 100, "height": 100, "artboards": 3})).unwrap();
+    let x = |s: &Session, b: usize| s.doc().unwrap().doc.artboards[b].rect.x0;
+    let (first, third) = (x(&s, 0), x(&s, 2));
+    s.execute("shape.rectangle", &json!({"x": first + 10.0, "y": 10, "width": 30, "height": 30})).unwrap();
+    s.execute("shape.ellipse", &json!({"x": third + 10.0, "y": 10, "width": 30, "height": 30})).unwrap();
+    // A rectangle has straight sides only; the ellipse is curves.
+    let shapes = |svg: &str| (svg.matches("<path").count() + svg.matches("<rect").count(), svg.contains(" C") || svg.contains("<ellipse"));
+    let text = |v: &serde_json::Value| v["text"].as_str().unwrap().to_string();
+    let third_only = text(&s.execute("document.serialize", &json!({"format": "svg", "useArtboards": true, "range": "3"})).unwrap());
+    assert_eq!(shapes(&third_only), (1, true), "{third_only}");
+    let all = s.execute("document.serialize", &json!({"format": "svg", "useArtboards": true, "range": "all"})).unwrap();
+    let files: Vec<String> = all["files"].as_array().unwrap().iter().map(text).collect();
+    assert_eq!(files.iter().map(|f| shapes(f)).collect::<Vec<_>>(), [(1, false), (0, false), (1, true)]);
+    // Export for Screens names one artboard at a time the same way.
+    let screen = text(&s.execute("document.serialize", &json!({"format": "svg", "artboard": 0})).unwrap());
+    assert_eq!(shapes(&screen), (1, false));
+    let whole = text(&s.execute("document.serialize", &json!({"format": "svg"})).unwrap());
+    assert_eq!(shapes(&whole).0, 2, "nothing named: the whole document's art");
+}

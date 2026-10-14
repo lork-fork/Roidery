@@ -353,3 +353,33 @@ fn a_group_from_a_mesh_holds_its_point_colours() {
     let names = r["swatches"].as_array().unwrap();
     assert!(names.contains(&json!("R=255 G=0 B=0")) && names.contains(&json!("R=255 G=255 B=255")), "{r}");
 }
+
+/// #1735: a global swatch edit reaches opacity-mask art: the mask's colour (and with it what the
+/// mask shows) follows the swatch, and a swatch used only in a mask isn't "unused".
+#[test]
+fn global_swatch_edits_reach_opacity_mask_art() {
+    let mut s = session();
+    run(&mut s, "swatch.new", json!({"name": "MaskTone", "color": "#ffffff", "global": true}));
+    let obj = rect(&mut s);
+    run(&mut s, "paint.setFill", json!({"color": "#ff0000", "ids": [obj.0]}));
+    let m = rect(&mut s);
+    run(&mut s, "paint.setFill", json!({"swatch": "MaskTone", "ids": [m.0]}));
+    run(&mut s, "select.set", json!({"ids": [obj.0, m.0]}));
+    run(&mut s, "transparency.makeOpacityMask", json!({"clip": true, "invert": false}));
+    let mask_fill = |s: &Session| {
+        let n = doc(s).node(obj).unwrap();
+        n.extras().mask.as_deref().unwrap().art.appearance.fill_paint()
+    };
+    assert_eq!(mask_fill(&s).color(), Some(Color::rgb(1.0, 1.0, 1.0)));
+    assert!(!run(&mut s, "swatch.unused", json!({}))["names"].as_array().unwrap().iter().any(|n| n == "MaskTone"), "used by the mask");
+
+    let r = run(&mut s, "swatch.edit", json!({"name": "MaskTone", "color": "#000000"}));
+    assert_eq!(r["relinked"], 1, "{r}");
+    let fill = mask_fill(&s);
+    assert_eq!(fill.color(), Some(Color::rgb(0.0, 0.0, 0.0)));
+    assert!(matches!(&fill, Paint::Solid { swatch: Some(n), .. } if n == "MaskTone"), "{fill:?}");
+
+    // Undo brings the mask's colour back with the swatch.
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(mask_fill(&s).color(), Some(Color::rgb(1.0, 1.0, 1.0)));
+}

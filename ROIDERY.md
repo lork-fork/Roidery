@@ -58,7 +58,10 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   a line (stitch, width or length, Reverse), Satin Blocks (density, pull compensation, underlay
   passes, Edit Rungs, Swap Sides, a warning over 10 mm), lettering (text, font, height amber
   outside the font's range, spacing, Put on Path with a path selected), computer-font text (font,
-  size, Use an Embroidery Font…), groups and several objects (stitch type for all, Use as Fill
+  size, Use an Embroidery Font…), a placed image (Image Trace: `stitch.traceImage` traces it with
+  VectorCraft's Image Trace, white left out, and sews the paths as tatami; a click traces in 3
+  Color, the arrow offers 2 Color, 6 Color and Detailed, which are VectorCraft's Default, 3 Colors,
+  6 Colors and Flat Logo presets), groups and several objects (stitch type for all, Use as Fill
   Guide, Unite, Group, align, Sew Earlier / Later). Its right side is always there: Vector,
   Stitch and Realistic views; snapping (one button, a chevron for what it snaps to), grid,
   guides, rulers, outline; the stitch overlays; the hoop and how the design fits it (a popover
@@ -94,8 +97,10 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   `stitch.info` reports and Stitch Settings shows.
 - `crates/ui-egui/src/panels/stitch_settings.rs`: Window › Stitch Settings, the selection's stitch
   type, settings and underlay (or the design's totals with nothing selected), first in the dock's
-  icon column, and the Embroidery section at the top of the Properties panel. Basic and Advanced
-  tabs (`stitch.settingsMode`, remembered in `UiState::stitch_advanced`).
+  icon column, and the Embroidery section at the top of the Properties panel. Both are the
+  Embroidery workspace's: the others show the icon last and keep VectorCraft's Properties
+  (`embroidery_workspace::icon_groups`). Basic and Advanced tabs (`stitch.settingsMode`,
+  remembered in `UiState::stitch_advanced`).
 - `crates/ui-egui/src/embroidery_workspace.rs`: the Embroidery workspace, Roidery's first-run
   default: its Basic toolbar, millimetres as the General unit, and what it trims (hidden, never
   removed: commands still run by id and every other workspace shows them all):
@@ -170,12 +175,6 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   Select Inside Unfilled Shapes, on by default): a click inside an unfilled closed shape, or
   between a Satin Blocks object's rails, picks it once no edge or fill is hit, and open paths take
   a click twice the tolerance away. Embroidery outlines are often stroke only.
-- `crates/ui-egui/src/canvas.rs`: scrubby zoom. With the Zoom tool or Ctrl/Cmd+Space, a drag
-  right zooms in and left zooms out about the point pressed (twice as close every 150 points), a
-  click zooms one step and Alt-click one step out; Preferences › Performance › Animated Zoom off
-  brings back the zoom box.
-- `apps/vectorcraft/src/main.rs`: Windows renders with Direct3D 12 when the PC has a DX12 adapter
-  (some Intel Vulkan drivers crash when the window opens); `WGPU_BACKEND` still wins.
 - `crates/pathops/src/offset.rs`: a bug fix, which Roidery should offer upstream. Offset Path
   dropped an inset of a shape with a hole as "spurious" when the deep point it tested landed in
   the hole; the test now uses each contour's face with its holes. Test:
@@ -316,10 +315,36 @@ Code: `crates/emb-update` (the feed, versions, picking the download, SHA-256, th
 
 ## Keeping up with VectorCraft
 
-`upstream` is `https://github.com/storytold/vectorcraft`. Merge it into `roidery` regularly
-(`git fetch upstream && git merge upstream/main`), then run `cargo xtask ci`. VectorCraft's
-features that don't matter for embroidery stay in the code and are hidden by the Embroidery
-workspace rather than deleted, so merges don't conflict.
+`upstream` is `https://github.com/storytold/vectorcraft`. Merge it into `roidery` regularly, then
+run `cargo xtask ci`:
+
+```sh
+git remote add upstream https://github.com/storytold/vectorcraft.git   # once
+git fetch upstream main
+git merge upstream/main
+```
+
+VectorCraft's features that don't matter for embroidery stay in the code and are hidden by the
+Embroidery workspace rather than deleted, so merges don't conflict. What a merge needs to know:
+
+- The translation catalogs (`crates/ui-egui/src/i18n/*.tsv`) and `ASSETS.md` merge with git's
+  `union` driver (`.gitattributes`): both sides' new lines are kept, so they rarely conflict. A
+  string both sides translated appears twice; keep VectorCraft's line.
+- Roidery's own files win where VectorCraft changed its copy of them: `README.md`,
+  `docs/releasing.md` and the packaging (`packaging/`, `.github/workflows/packaging-lint.yml`),
+  which are Roidery's names and installers. `packaging/windows/vectorcraft.wxs` stays deleted
+  (Roidery's is `roidery.wxs`).
+- `Cargo.lock`: take VectorCraft's and let the next build add Roidery's crates back.
+- The rest are small hooks into VectorCraft's code, listed above. Where VectorCraft rewrote the
+  code around one, it is put back into the new code; where VectorCraft now does the same thing
+  itself (its scrubby zoom, its Direct3D 12 choice on Windows), Roidery's version is dropped.
+
+The merge of 2026-10-14 brought in 1,874 commits of VectorCraft (from `e2a41733` to `b076025a`):
+its own scrubby zoom (which replaced Roidery's), Image Trace's Flat Logo mode, floating panel
+groups, Edit Toolbar, Affinity files and many fixes.
+
+Roidery's history keeps VectorCraft's: build from a clone of the Roidery repository and `git pull`
+to update, rather than applying patches, so merges from VectorCraft arrive as they are.
 
 ## Licences
 

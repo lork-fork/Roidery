@@ -36,3 +36,30 @@ fn postscript_names_resolve_to_the_available_family() {
     });
     assert_eq!(styles, [("MyFaceYaHei 3".to_string(), "Bold".to_string())]);
 }
+
+#[test]
+fn reencoded_copies_of_a_font_name_the_font() {
+    // A program that re-encodes a font sets the copy under `<subset>+<name>*<n>`.
+    assert_eq!(crate::family_style("KBKNNM+RollerBabyBV*1"), ("Roller Baby BV".to_string(), "Regular".to_string()));
+    assert_eq!(crate::family_style("ABCDEF+Helvetica-Bold*12"), ("Helvetica".to_string(), "Bold".to_string()));
+    // Only `*` and digits at the end go; other names are as they were.
+    assert_eq!(crate::family_style("Odd*Name").0, "Odd*Name");
+    assert_eq!(crate::family_style("*1").0, "*1");
+}
+
+#[test]
+fn abbreviated_styles_in_postscript_names_are_spelled_out() {
+    // A style word PostScript names shorten is the style the installed font names in full.
+    assert_eq!(crate::family_style("AkzidenzGroteskPro-Md"), ("Akzidenz Grotesk Pro".to_string(), "Medium".to_string()));
+    assert_eq!(crate::family_style("AkzidenzGroteskPro-XBdCnIt").1, "Extra Bold Condensed Italic");
+    assert_eq!(crate::family_style("AkzidenzGroteskPro-LightCn").1, "Light Condensed");
+    // Whole words stay as they were.
+    assert_eq!(crate::family_style("Helvetica-BoldOblique").1, "Bold Oblique");
+}
+
+/// A face of that exact PostScript name gives its own family and style, however the name splits
+/// (a family can hold hyphens, as Rounded-X M+ 1c's `rounded-x-mplus-1c-black` does).
+#[test]
+fn an_installed_face_of_the_postscript_name_names_the_font() {
+    assert_eq!(crate::family_style("ABCDEF+SourceSans3-Semibold"), ("Source Sans 3".to_string(), "Semibold".to_string()));
+}

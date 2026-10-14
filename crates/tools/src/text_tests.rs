@@ -211,7 +211,7 @@ fn select_all_and_styled_paste() {
     let c = cx(&d, &sel, &p);
     tool.key(&c, ToolKey::Right, SHIFT);
     assert_eq!(tool.sel(), (0, 3));
-    let big = TextRun { text: "XY".into(), style: CharStyle { size: 40.0, ..Default::default() } };
+    let big = TextRun { text: "XY".into(), style: CharStyle { size: 40.0, ..Default::default() }, inline: None };
     tool.set_option("copy", &serde_json::to_value(vec![big.clone()]).unwrap());
     let acts = tool.text_input(&c, "XY");
     let Action::Preview(_, params) = acts.last().unwrap() else { panic!() };
@@ -221,10 +221,13 @@ fn select_all_and_styled_paste() {
 
 #[test]
 fn common_affixes_are_char_safe() {
-    assert_eq!(common_affixes("hello", "help"), (3, 0));
-    assert_eq!(common_affixes("aXb", "ab"), (1, 1));
-    assert_eq!(common_affixes("aaa", "aaaa"), (3, 0));
-    assert_eq!(common_affixes("é1", "è1"), (0, 1));
+    assert_eq!(common_affixes("hello", "help", usize::MAX), (3, 0));
+    assert_eq!(common_affixes("aXb", "ab", usize::MAX), (1, 1));
+    assert_eq!(common_affixes("aaa", "aaaa", usize::MAX), (3, 0));
+    assert_eq!(common_affixes("é1", "è1", usize::MAX), (0, 1));
+    // Return at the end of a paragraph: the span starts where the edit did (before the old break).
+    assert_eq!(common_affixes("abc\ndef", "abc\n\ndef", 3), (3, 4));
+    assert_eq!(common_affixes("abc\ndef", "abc\n\ndef", 4), (4, 3));
 }
 
 #[test]
@@ -334,4 +337,37 @@ fn hebrew_typing_and_visual_arrows_keep_logical_text() {
     assert_eq!(tool.caret, 8);
     let NodeKind::Text(t) = &d.node(id).unwrap().kind else { panic!() };
     assert_eq!(t.plain_text(), "שלום");
+}
+
+/// Where new type goes snaps to Smart Guides (#506): a click beside a rect lines up with its
+/// centre, and hovering shows it first; an area's corners land on its anchors.
+#[test]
+fn new_type_snaps_to_smart_guides() {
+    let (d, _) = crate::testutil::doc_with_rect();
+    let (sel, p) = (Selection::default(), paint());
+    let c = cx(&d, &sel, &p);
+    let mut tool = TypeTool::new("type");
+    tool.pointer(&c, &PointerEvent::new(PointerKind::Move, 151.0, 330.0));
+    assert!(tool.overlays(&c).iter().any(|o| matches!(o, Overlay::Label { text, p, .. } if text == "align" && *p == Point::new(150.0, 330.0))));
+    tool.pointer(&c, &PointerEvent::new(PointerKind::Down, 151.0, 330.0));
+    let acts = tool.pointer(&c, &PointerEvent::new(PointerKind::Up, 151.0, 330.0));
+    assert!(acts.iter().any(|a| matches!(a, Action::Exec(cmd, v) if cmd == "text.create" && v["x"] == 150.0 && v["y"] == 330.0)), "{acts:?}");
+    let mut tool = TypeTool::new("type");
+    tool.pointer(&c, &PointerEvent::new(PointerKind::Down, 102.0, 98.0));
+    tool.pointer(&c, &PointerEvent::new(PointerKind::Drag, 199.0, 202.0));
+    let acts = tool.pointer(&c, &PointerEvent::new(PointerKind::Up, 199.0, 202.0));
+    let area = json!({"width": 100.0, "height": 100.0});
+    assert!(acts.iter().any(|a| matches!(a, Action::Exec(cmd, v) if cmd == "text.create" && v["x"] == 100.0 && v["area"] == area)), "{acts:?}");
+}
+
+#[test]
+fn layout_cache_follows_fonts_added_later() {
+    // The web build adds fonts after startup: a caret layout cached before one arrived is stale.
+    let (d, id, tool) = editing("abc");
+    let NodeKind::Text(t) = &d.node(id).unwrap().kind else { panic!("not text") };
+    let before = tool.layout(t);
+    assert!(Arc::ptr_eq(&before, &tool.layout(t)), "cached while the fonts don't change");
+    let font = vectorcraft_text::test_fonts::variable_font().unwrap();
+    assert!(FontDb::global().add_font(font) > 0, "the test font is new to this process");
+    assert!(!Arc::ptr_eq(&before, &tool.layout(t)), "a font added after the layout must refresh it");
 }

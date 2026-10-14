@@ -6,9 +6,10 @@
 //! picking a mode from the menu makes it a process colour.
 //!
 //! The mode follows the colour's own model (the last mode picked comes back for colours in its
-//! model). Alt-clicking the spectrum or a chip paints the inactive proxy; Shift-clicking the
-//! spectrum cycles the modes; Shift-dragging a slider moves the others in tandem; RGB and HSB show
-//! the out-of-gamut warning; Hide Options leaves just the proxy and the spectrum.
+//! model and shows the defaults for new art; the app keeps it between sessions). Alt-clicking the
+//! spectrum or a chip paints the inactive proxy; Shift-clicking the spectrum cycles the modes;
+//! Shift-dragging a slider moves the others in tandem; RGB and HSB show the out-of-gamut warning;
+//! Hide Options leaves just the proxy and the spectrum.
 
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, Ui, vec2};
 use serde_json::json;
@@ -19,7 +20,8 @@ use crate::theme::Tokens;
 use crate::widgets::{self, Live, menu_item};
 use crate::{VectorcraftApp, icons};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Mode {
     Grayscale,
     #[default]
@@ -246,6 +248,23 @@ pub(crate) fn gamut_fix(app: &mut VectorcraftApp, ctx: &egui::Context, key: &str
     }
 }
 
+/// Serde reader for the saved panel mode ([`crate::UiState::color_mode`]): a menu mode, else none,
+/// so an unknown value doesn't lose the rest of the preferences.
+pub fn deserialize_mode<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Mode>, D::Error> {
+    let v = <serde_json::Value as serde::Deserialize>::deserialize(d)?;
+    Ok(Mode::ALL.into_iter().find(|m| serde_json::to_value(m).is_ok_and(|id| id == v)))
+}
+
+/// The mode the panel shows `color` in: with nothing selected (the defaults for new art) the mode
+/// picked last, which the app keeps between sessions, else [`display_mode`].
+fn shown_mode(app: &VectorcraftApp, color: Option<&Color>) -> Mode {
+    let defaults = app.session.active().is_none_or(|st| st.selection.subjects().is_empty());
+    match app.ui.color_mode {
+        Some(m) if defaults => m,
+        stored => display_mode(stored, color),
+    }
+}
+
 /// The panel mode for `color`: the one picked last (`stored`) when it shows the colour's own
 /// model (HSB and Web Safe RGB show RGB), else the colour's model.
 pub fn display_mode(stored: Option<Mode>, color: Option<&Color>) -> Mode {
@@ -410,8 +429,8 @@ fn apply_tint(app: &mut VectorcraftApp, tgt: &Target, tint: &Tint, t: f32, phase
 
 /// Switch the panel to `mode`, converting the colour to its model (a tint becomes a process
 /// colour).
-fn set_mode(app: &mut VectorcraftApp, ctx: &egui::Context, tgt: &Target, mode: Mode) {
-    set_pstate(ctx, "color-mode", Some(mode));
+fn set_mode(app: &mut VectorcraftApp, tgt: &Target, mode: Mode) {
+    app.ui.color_mode = Some(mode);
     if let Some(c) = tgt.color() {
         let conv = convert_to(mode, &c);
         if conv != c || tgt.tint().is_some() {
@@ -472,7 +491,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let tgt = target(app, ui);
     let color = tgt.color();
-    let mode = display_mode(pstate(ui.ctx(), "color-mode"), color.as_ref());
+    let mode = shown_mode(app, color.as_ref());
     let alt = super::alt_held(ui);
     // Hide Options: just the proxy and the spectrum.
     if pstate::<bool>(ui.ctx(), "color-hide-options") {
@@ -484,7 +503,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             .inner;
         match hit {
             Some(SpectrumHit::Pick(c, phase)) => apply(app, &tgt, c, phase, alt),
-            Some(SpectrumHit::Cycle) => set_mode(app, ui.ctx(), &tgt, mode.next()),
+            Some(SpectrumHit::Cycle) => set_mode(app, &tgt, mode.next()),
             None => {}
         }
         return;
@@ -496,27 +515,39 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         (Some(c), _) => components(mode, &c),
         (None, _) => vec![0.0; mode.labels().len()],
     };
-    super::recent_colors_row(app, ui);
+    let recent = super::recent_colors_row(app, ui);
     widgets::divider(ui);
     // An edit of the active colour with its displayed components (`new`), or a colour clicked with
     // Alt held for the inactive proxy (`behind`).
     let mut new: Option<(Color, Live, Vec<f32>)> = None;
     let mut behind: Option<(Color, Live)> = None;
     let mut tinted: Option<(f32, Live)> = None;
-    let gamut = color.filter(|_| matches!(mode, Mode::Rgb | Mode::Hsb)).and_then(|c| gamut_fix(app, ui.ctx(), "color-gamut", &c));
+    // The warnings the mode shows: out of gamut in RGB and HSB, out of web colours but in Web Safe
+    // RGB and Grayscale.
+    let (shows_gamut, shows_web) = (matches!(mode, Mode::Rgb | Mode::Hsb), !matches!(mode, Mode::WebSafe | Mode::Grayscale));
+    let gamut = color.filter(|_| shows_gamut).and_then(|c| gamut_fix(app, ui.ctx(), "color-gamut", &c));
     ui.horizontal(|ui| {
         // Left column: proxy, out-of-gamut and out-of-web warnings.
         ui.vertical(|ui| {
             ui.set_width(44.0);
             super::proxy(app, ui, 40.0);
-            let web = color.filter(|c| !matches!(mode, Mode::WebSafe | Mode::Grayscale) && !is_web_safe(c)).map(|c| web_safe(&c));
-            for (warning, fix) in [(GAMUT_WARNING, gamut), (WEB_WARNING, web)] {
-                if let Some(fix) = fix {
-                    ui.add_space(6.0);
-                    if warning_chip(ui, warning, &fix) {
-                        new = Some((fix, Live::Released, components(mode, &fix)));
-                    }
+            let web = color.filter(|c| shows_web && !is_web_safe(c)).map(|c| web_safe(&c));
+            let warnings: Vec<_> = [(GAMUT_WARNING, gamut), (WEB_WARNING, web)].into_iter().filter_map(|(w, fix)| Some((w, fix?))).collect();
+            for (warning, fix) in &warnings {
+                ui.add_space(6.0);
+                if warning_chip(ui, *warning, fix) {
+                    new = Some((*fix, Live::Released, components(mode, fix)));
                 }
+            }
+            // Room for the mode's other warnings: the panel keeps its height as the colour changes,
+            // else the spectrum below moves under a dragging pointer and the colour flips every
+            // frame, e.g. between a pale colour out of gamut and white above the spectrum (#578).
+            for _ in warnings.len()..usize::from(shows_gamut) + usize::from(shows_web) {
+                ui.add_space(6.0);
+                ui.scope(|ui| {
+                    ui.set_invisible();
+                    warning_chip(ui, WEB_WARNING, &Color::WHITE)
+                });
             }
         });
         // Sliders (Shift-drag moves them in tandem).
@@ -573,6 +604,10 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             *new = Some((c, phase, components(mode, &c)));
         }
     };
+    // A recent colour, like the chips, recolours the selected gradient stop (or point).
+    if let Some(c) = recent {
+        pick(c, Live::Released, &mut new);
+    }
     // None / Black / White chips and the hex field.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -598,7 +633,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.add_space(4.0);
     match spectrum(ui, mode, vec2(ui.available_width(), 46.0)) {
         Some(SpectrumHit::Pick(c, phase)) => pick(c, phase, &mut new),
-        Some(SpectrumHit::Cycle) => set_mode(app, ui.ctx(), &tgt, mode.next()),
+        Some(SpectrumHit::Cycle) => set_mode(app, &tgt, mode.next()),
         None => {}
     }
     if let Some((c, phase)) = behind {
@@ -623,10 +658,10 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
     let tgt = target(app, ui);
     let color = tgt.color();
     // Tint mode checks no colour mode: picking one makes the tint a process colour.
-    let cur = display_mode(pstate(ui.ctx(), "color-mode"), color.as_ref());
+    let cur = shown_mode(app, color.as_ref());
     for m in Mode::ALL {
         if menu_item(ui, tl!(m.label()), true, m == cur && tgt.tint().is_none()) {
-            set_mode(app, ui.ctx(), &tgt, m);
+            set_mode(app, &tgt, m);
         }
     }
     ui.separator();
@@ -679,12 +714,23 @@ mod tests {
     /// Run the panel for one frame with `events` and `modifiers`; returns the spectrum's rect (when
     /// the options are shown) and the panel's height.
     fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>, modifiers: egui::Modifiers) -> (Option<Rect>, f32) {
+        frame_with(app, ctx, events, modifiers, "color-spectrum")
+    }
+
+    /// [`frame`] returning the rect of the panel's widget `id` instead of the spectrum's.
+    fn frame_with(
+        app: &mut VectorcraftApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+        id: impl std::hash::Hash + std::fmt::Debug,
+    ) -> (Option<Rect>, f32) {
         let mut out = (None, 0.0);
         let events = std::iter::once(egui::Event::ModifiersChanged(modifiers)).chain(events).collect();
         let input = egui::RawInput { events, ..Default::default() };
         let mut full = ctx.run_ui(input, |ui| {
             show(app, ui);
-            out = (ctx.read_response(ui.id().with("color-spectrum")).map(|r| r.rect), ui.min_rect().height());
+            out = (ctx.read_response(ui.id().with(&id)).map(|r| r.rect), ui.min_rect().height());
         });
         full.textures_delta.clear();
         out
@@ -700,9 +746,64 @@ mod tests {
         frame(app, ctx, vec![], egui::Modifiers::NONE);
     }
 
+    #[test]
+    fn a_recent_colour_recolours_the_selected_gradient_stop() {
+        // #835: it replaced the whole gradient with the colour.
+        let mut app = app();
+        app.run("paint.setFill", json!({"color": "#ff0000"})).unwrap();
+        let stops = json!([{"offset": 0, "color": "#ffffff"}, {"offset": 1, "color": "#000000"}]);
+        app.run("paint.setFill", json!({"gradient": {"stops": stops, "start": [10, 35], "end": [60, 35]}})).unwrap();
+        app.select_tool("gradient");
+        app.run("gradient.selectStop", json!({"index": 1})).unwrap();
+        let red = app.session.recent_colors.iter().position(|c| c.to_hex() == "#ff0000").expect("red is a recent colour");
+        let ctx = egui::Context::default();
+        let none = egui::Modifiers::NONE;
+        let chip = frame_with(&mut app, &ctx, vec![], none, ("recent", red)).0.expect("the chip is drawn").center();
+        let button = |pressed| egui::Event::PointerButton { pos: chip, button: egui::PointerButton::Primary, pressed, modifiers: none };
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(chip), button(true)], none);
+        frame(&mut app, &ctx, vec![button(false)], none);
+        let Paint::Gradient(g) = crate::panels::current_paints(&app).0 else { panic!("still a gradient") };
+        let hex: Vec<String> = g.gradient.stops.iter().map(|s| s.color.to_hex()).collect();
+        assert_eq!(hex, ["#ffffff", "#ff0000"]);
+    }
+
     fn paints_hex(app: &VectorcraftApp) -> (String, String) {
         let (f, s) = crate::panels::current_paints(app);
         (f.color().map(|c| c.to_hex()).unwrap_or_default(), s.color().map(|c| c.to_hex()).unwrap_or_default())
+    }
+
+    #[test]
+    fn a_drag_on_the_spectrum_holds_still_near_white() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let none = egui::Modifiers::NONE;
+        // White needs no warning, #fefefe the web one, a pale violet both: one panel height.
+        let heights: Vec<f32> = ["#ffffff", "#fefefe", "#ded3ff"]
+            .iter()
+            .map(|c| {
+                app.run("paint.setFill", json!({"color": c})).unwrap();
+                frame(&mut app, &ctx, vec![], none);
+                frame(&mut app, &ctx, vec![], none).1
+            })
+            .collect();
+        assert!(heights.windows(2).all(|w| w[0] == w[1]), "{heights:?}");
+        // Drag along the spectrum's top edge (pale colours, some out of gamut), stopping at each
+        // point: the colour holds while the pointer does.
+        let r = frame(&mut app, &ctx, vec![], none).0.expect("the spectrum is drawn");
+        let at = |x: f32| egui::pos2(r.left() + x * r.width(), r.top() + 2.0);
+        let button = |pressed| egui::Event::PointerButton { pos: at(0.02), button: egui::PointerButton::Primary, pressed, modifiers: none };
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at(0.02)), button(true)], none);
+        for i in 1..20 {
+            frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at(i as f32 * 0.05))], none);
+            let fills: Vec<String> = (0..3)
+                .map(|_| {
+                    frame(&mut app, &ctx, vec![], none);
+                    paints_hex(&app).0
+                })
+                .collect();
+            assert!(fills.windows(2).all(|w| w[0] == w[1]), "at {}: {fills:?}", i as f32 * 0.05);
+        }
+        frame(&mut app, &ctx, vec![button(false)], none);
     }
 
     #[test]
@@ -736,13 +837,65 @@ mod tests {
         // In the panel: an RGB pick, then a CMYK object shows its 4 sliders.
         let mut app = app();
         let ctx = egui::Context::default();
-        set_pstate(&ctx, "color-mode", Some(Mode::Rgb));
+        app.ui.color_mode = Some(Mode::Rgb);
         app.run("paint.setFill", json!({"color": {"c": 0.1, "m": 0.2, "y": 0.3, "k": 0.4}})).unwrap();
         frame(&mut app, &ctx, vec![], egui::Modifiers::NONE);
         let _ = ctx.run_ui(Default::default(), |ui| {
-            let mode = display_mode(pstate(ui.ctx(), "color-mode"), target(&app, ui).color().as_ref());
+            let mode = shown_mode(&app, target(&app, ui).color().as_ref());
             assert_eq!(mode.labels(), ["C", "M", "Y", "K"]);
         });
+    }
+
+    /// The slider labels one frame of the panel draws.
+    fn slider_labels(app: &mut VectorcraftApp, ctx: &egui::Context) -> Vec<String> {
+        fn texts(s: &egui::Shape, out: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut full = ctx.run_ui(Default::default(), |ui| show(app, ui));
+        full.textures_delta.clear();
+        let mut out = vec![];
+        full.shapes.iter().for_each(|s| texts(&s.shape, &mut out));
+        out.retain(|t| ["K", "R", "G", "B", "H", "S", "C", "M", "Y"].contains(&t.as_str()));
+        out
+    }
+
+    /// #1675: the mode picked last is kept with the UI state, which the app saves with its
+    /// preferences, so after a restart the panel shows the defaults for new art in it. A selected
+    /// colour still shows in its own model.
+    #[test]
+    fn the_picked_mode_comes_back_after_a_restart() {
+        let mut app = app();
+        app.run("file.documentColorMode", json!({"mode": "cmyk"})).unwrap();
+        app.run("select.none", json!({})).unwrap();
+        let ctx = egui::Context::default();
+        assert_eq!(slider_labels(&mut app, &ctx), ["R", "G", "B"], "the white default is RGB");
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let tgt = target(&app, ui);
+            set_mode(&mut app, &tgt, Mode::Cmyk);
+        });
+        assert_eq!(slider_labels(&mut app, &ctx), ["C", "M", "Y", "K"]);
+        // Quit and start again: the saved UI state comes back, the session and the panel are new.
+        let saved: crate::UiState = serde_json::from_value(serde_json::to_value(&app.ui).unwrap()).unwrap();
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.ui = saved.sanitized();
+        app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
+        app.run("file.documentColorMode", json!({"mode": "cmyk"})).unwrap();
+        assert!(matches!(crate::panels::current_paints(&app).0.color(), Some(Color::Rgb { .. })), "the defaults start as RGB white");
+        let ctx = egui::Context::default();
+        assert_eq!(slider_labels(&mut app, &ctx), ["C", "M", "Y", "K"]);
+        app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
+        app.run("paint.setFill", json!({"color": "#336699", "keepModel": true})).unwrap();
+        assert_eq!(slider_labels(&mut app, &ctx), ["R", "G", "B"], "an RGB object shows RGB");
+        // A saved value that isn't a menu mode reads as none, and the rest of the state still loads.
+        for v in [json!("lab"), json!("CMYK"), json!(3), serde_json::Value::Null] {
+            let ui: crate::UiState = serde_json::from_value(json!({"color_mode": v, "place_link": false})).unwrap();
+            assert_eq!((ui.color_mode, ui.place_link), (None, false), "{v}");
+        }
+        assert_eq!(serde_json::from_value::<crate::UiState>(json!({"color_mode": "websafe"})).unwrap().color_mode, Some(Mode::WebSafe));
     }
 
     #[test]
@@ -765,7 +918,7 @@ mod tests {
         app.run("paint.setFill", json!({"color": {"l": 50, "a": -20, "b": 30}})).unwrap();
         frame(&mut app, &ctx, vec![], egui::Modifiers::NONE);
         let _ = ctx.run_ui(Default::default(), |ui| {
-            let mode = display_mode(pstate(ui.ctx(), "color-mode"), target(&app, ui).color().as_ref());
+            let mode = shown_mode(&app, target(&app, ui).color().as_ref());
             assert_eq!(mode.labels(), ["L", "a", "b"]);
         });
     }
@@ -805,10 +958,10 @@ mod tests {
         let ctx = egui::Context::default();
         app.run("paint.setFill", json!({"color": "#336699"})).unwrap();
         click_spectrum(&mut app, &ctx, (0.5, 0.5), egui::Modifiers::SHIFT);
-        assert_eq!(pstate::<Option<Mode>>(&ctx, "color-mode"), Some(Mode::Hsb));
+        assert_eq!(app.ui.color_mode, Some(Mode::Hsb));
         assert_eq!(paints_hex(&app).0, "#336699", "HSB keeps the RGB colour");
         click_spectrum(&mut app, &ctx, (0.5, 0.5), egui::Modifiers::SHIFT);
-        assert_eq!(pstate::<Option<Mode>>(&ctx, "color-mode"), Some(Mode::Cmyk));
+        assert_eq!(app.ui.color_mode, Some(Mode::Cmyk));
         assert!(matches!(crate::panels::current_paints(&app).0.color(), Some(Color::Cmyk { .. })), "CMYK converts the colour");
     }
 
@@ -883,7 +1036,7 @@ mod tests {
         // Picking a mode makes it a process colour.
         let _ = ctx.run_ui(Default::default(), |ui| {
             let tgt = target(&app, ui);
-            set_mode(&mut app, ui.ctx(), &tgt, Mode::Cmyk);
+            set_mode(&mut app, &tgt, Mode::Cmyk);
         });
         assert!(matches!(crate::panels::current_paints(&app).0, Paint::Solid { swatch: None, .. }));
     }

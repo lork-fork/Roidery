@@ -17,17 +17,17 @@ pub fn specs() -> Vec<CommandSpec> {
             "CSS Properties",
             [],
             None,
-            "{ids?: [id…] (default: the selection), units?: px|pt|mm|cm|in (default px; 1 px = 1 pt, as in SVG export), position?: false (position: absolute, left and top from the artboard's top-left), dimensions?: true (width, height), unnamed?: true (unnamed objects too, classes named after their kind; false: named objects only), rasterize?: false (art CSS can't describe as background-image: url(<class>.png), its picture, which css.export writes)} the CSS web pages style the objects with, one rule per object back to front (layers and plain groups stand for what they hold): a rectangle's or ellipse's fill as background-color or linear-/radial-gradient(), stroke as border, corners as border-radius; type's font, color, spacing and alignment; opacity, mix-blend-mode, shadows and glows (box-shadow, text-shadow), blur (filter) → {css, rules: [{id, selector, css, unsupported?: why CSS can't describe the art exactly (without rasterize it is written as its box), image?: the PNG it refers to}], skipped: n unnamed objects left out, warnings}",
+            "{ids?|id?: [id…] (default: the selection), units?: px|pt|mm|cm|in (default px; 1 px = 1 pt, as in SVG export), position?: false (position: absolute, left and top from the artboard's top-left), dimensions?: true (width, height), unnamed?: true (unnamed objects too, classes named after their kind; false: named objects only), rasterize?: false (art CSS can't describe as background-image: url(<class>.png), its picture, which css.export writes)} the CSS web pages style the objects with, one rule per object back to front (layers and plain groups stand for what they hold): a rectangle's or ellipse's fill as background-color or linear-/radial-gradient(), stroke as border, corners as border-radius; type's font, color, spacing and alignment; opacity, mix-blend-mode, shadows and glows (box-shadow, text-shadow), blur (filter) → {css, rules: [{id, selector, css, unsupported?: why CSS can't describe the art exactly (without rasterize it is written as its box), image?: the PNG it refers to}], skipped: n unnamed objects left out, warnings}",
             has_doc,
             selection
         ),
-        cmd!(query "css.generate", "Generate CSS", [], None, "{…css.selection options} css.selection of every object in the document", has_doc, generate),
+        cmd!(query "css.generate", "Generate CSS", [], None, "{…options as css.selection} css.selection of every object in the document", has_doc, generate),
         cmd!(
             "css.export",
             "Export CSS",
             [],
             None,
-            "{path?, scope?: selection|all (default selection; ids? picks the objects), …css.selection options} write the CSS (css.selection, or css.generate for all) to path and, with rasterize, each picture its rules refer to next to it (PNG of the object's visual bounds, 1 px per point) → {path, bytes, rules: n, images: [path…], warnings}; no path → {data: the CSS, name: <document>.css, rules, images: [{name, dataBase64}], warnings}",
+            "{path?, scope?: selection|all (default selection; ids? picks the objects), …options as css.selection, id?: object id (default: the selection)} write the CSS (css.selection, or css.generate for all) to path and, with rasterize, each picture its rules refer to next to it (PNG of the object's visual bounds, 1 px per point) → {path, bytes, rules: n, images: [path…], warnings}; no path → {data: the CSS, name: <document>.css, rules, images: [{name, dataBase64}], warnings}",
             has_doc,
             export
         ),

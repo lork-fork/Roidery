@@ -32,6 +32,7 @@ mod overlaps;
 pub(crate) mod parts;
 mod satin_edit;
 mod sequence;
+pub mod trace;
 mod worksheet;
 use design::DesignSettings;
 use parts::{Part, Slot};
@@ -194,7 +195,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Lettering",
             [],
             None,
-            "{text?, height?, spacing?, lineSpacing?, font?, ids?} change the lettering objects in ids or the selection (a letter stands for its lettering; every one when nothing is selected) and lay them out again where they are; a new font sets its own line spacing unless lineSpacing is given, and switching between a built-in and a digitized font replaces the object (same id); a column width that followed the height follows the new one; one undo step → {changed, missing}",
+            "{text?, height?, spacing?, lineSpacing?, font?, path?: the id of a path to set the lettering along (null straightens it), ids?} change the lettering objects in ids or the selection (a letter stands for its lettering; every one when nothing is selected) and lay them out again where they are; a new font sets its own line spacing unless lineSpacing is given, and switching between a built-in and a digitized font replaces the object (same id); a column width that followed the height follows the new one; one undo step → {changed, missing}",
             has_doc,
             lettering::set
         ),
@@ -221,7 +222,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Rung",
             [],
             None,
-            "{id: a Satin Blocks object, index: the rung to insert after, t?: 0 to 1 along the way to the next rung, by length (default 0.5)} add a rung between two others, on both rails (a curved rail keeps its shape); one undo step → {changed, index: the new rung}",
+            "{id: a Satin Blocks object, index: the rung to insert after, t?: 0 to 1 along the way to the next rung by length (default 0.5)} add a rung between two others, on both rails (a curved rail keeps its shape); one undo step → {changed, index: the new rung}",
             has_doc,
             satin_edit::insert_rung
         ),
@@ -233,6 +234,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id: a Satin Blocks object, index: rung} remove one rung from both rails (two always stay); one undo step → {changed}",
             has_doc,
             satin_edit::delete_rung
+        ),
+        cmd!(
+            "stitch.traceImage",
+            "Image Trace",
+            [],
+            None,
+            "{preset?: \"2 Color\"|\"3 Color\"|\"6 Color\"|\"Detailed\" (default 3 Color: VectorCraft's Default, 3 Colors, 6 Colors and Flat Logo presets), id?, ids?: the images (default: the selection)} trace each image with the preset, white left out so the fabric shows (3 and 6 Color then trace one colour more, so they sew that many threads), expand it into paths and set them to sew as tatami fills; one undo step → {id: the traced paths' group, paths, colors, preset}",
+            has_doc,
+            trace::trace_image
         ),
         cmd!(
             "stitch.convertToSatin",
@@ -293,7 +303,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Remove Overlaps",
             [],
             None,
-            "{ids?, overlap?: mm, 0-20 (default 1)} cut the fills in ids or the selection (every fill when nothing is selected) where fills sewn after them cover them, keeping `overlap` mm under the covering shapes' edges so no fabric shows; changes the paths, one undo step → {changed}",
+            "{ids?, overlap?: mm from 0 to 20 (default 1)} cut the fills in ids or the selection (every fill when nothing is selected) where fills sewn after them cover them, keeping `overlap` mm under the covering shapes' edges so no fabric shows; changes the paths, one undo step → {changed}",
             has_doc,
             overlaps::remove
         ),

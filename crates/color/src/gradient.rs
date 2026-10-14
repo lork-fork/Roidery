@@ -131,10 +131,18 @@ impl Gradient {
             std::iter::once((s.offset, s.color, s.opacity, None)).chain(mid)
         })
     }
+    /// The same ramp the other way round: the stops in reverse order at mirrored offsets, each
+    /// segment's midpoint mirrored with it.
     pub fn reverse(&mut self) {
         self.stops.reverse();
-        for s in &mut self.stops {
-            s.offset = 1.0 - s.offset;
+        for i in 0..self.stops.len() {
+            // A midpoint belongs to the segment after its stop: reversed, stop i's segment is the
+            // one the next stop (not yet mirrored) had, measured from the other end.
+            let mid = self.stops.get(i + 1).map_or(0.5, |n| 1.0 - n.midpoint);
+            if let Some(s) = self.stops.get_mut(i) {
+                s.offset = 1.0 - s.offset;
+                s.midpoint = mid;
+            }
         }
     }
     pub fn sort(&mut self) {
@@ -567,6 +575,32 @@ mod tests {
         g.reverse();
         assert_eq!(g.stops[0].color.to_hex(), "#000000");
         assert_eq!(g.stops[0].offset, 0.0);
+    }
+
+    /// #1007: reversing mirrors off-centre midpoints with their segments, so the ramp is the same
+    /// the other way round.
+    #[test]
+    fn reverse_mirrors_midpoints() {
+        let stop = |offset, hex, midpoint| GradientStop { midpoint, ..GradientStop::new(offset, Color::from_hex(hex).unwrap()) };
+        let two = Gradient { kind: GradientKind::Linear, stops: vec![stop(0.0, "#ff0000", 0.2), stop(1.0, "#0000ff", 0.5)] };
+        let three =
+            Gradient { kind: GradientKind::Linear, stops: vec![stop(0.0, "#ff0000", 0.2), stop(0.3, "#00ff00", 0.8), stop(1.0, "#0000ff", 0.5)] };
+        for g in [two, three] {
+            let mut r = g.clone();
+            r.reverse();
+            let mids: Vec<f32> = r.stops.iter().map(|s| s.midpoint).collect();
+            let want: Vec<f32> = g.stops.iter().rev().skip(1).map(|s| 1.0 - s.midpoint).chain([0.5]).collect();
+            assert!(mids.iter().zip(&want).all(|(a, b)| (a - b).abs() < 1e-6), "{mids:?} {want:?}");
+            for i in 0..=20 {
+                let t = i as f32 / 20.0;
+                let ((a, ao), (b, bo)) = (g.sample(t), r.sample(1.0 - t));
+                let same = a.to_rgba8(1.0).iter().zip(b.to_rgba8(1.0)).all(|(x, y)| x.abs_diff(y) <= 1);
+                assert!(same && (ao - bo).abs() < 1e-6, "t {t}: {a:?} vs {b:?}");
+            }
+            r.reverse();
+            let back = r.stops.iter().zip(&g.stops).all(|(a, b)| (a.offset - b.offset).abs() < 1e-6 && (a.midpoint - b.midpoint).abs() < 1e-6);
+            assert!(back, "reversed twice, it is as it was: {:?}", r.stops);
+        }
     }
 
     fn close(a: Point, b: Point) -> bool {

@@ -23,10 +23,11 @@ image = { workspace = true }
 # CMYK JPEGs (the image crate writes RGB and grey ones only).
 jpeg-encoder = { workspace = true }
 krilla = { workspace = true }
-hayro-syntax = "0.7.2"
-hayro-interpret = { version = "0.7.0", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
+hayro-syntax = "0.8.0"
+hayro-interpret = { version = "0.8.0", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
 log = { workspace = true }
 smallvec = "1"
+weezl = "0.1"
 serde = { workspace = true }
 # PDF security (encrypt.rs): pure Rust, MIT OR Apache-2.0, builds for wasm.
 aes = "0.8"
@@ -38,3 +39,5 @@ vectorcraft-testkit = { workspace = true }
 # A variable font built in code (no font file is committed).
 vectorcraft-text = { workspace = true, features = ["test-fonts"] }
 serde_json = { workspace = true }
+# `draw_text`, to write test files with live text as other writers do.
+krilla = { workspace = true, features = ["simple-text"] }

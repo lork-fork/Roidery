@@ -15,15 +15,18 @@ wgpu = ["dep:egui-wgpu"]
 roidery-update = { workspace = true }
 # The realistic view's thread lighting, shared with mockups (the CPU painter's colours).
 roidery-mockup = { workspace = true }
+craft-ui = { workspace = true }
 vectorcraft-geom = { workspace = true }
 vectorcraft-color = { workspace = true }
 vectorcraft-doc = { workspace = true }
+vectorcraft-brush = { workspace = true }
 vectorcraft-render = { workspace = true }
 vectorcraft-text = { workspace = true }
 vectorcraft-tools = { workspace = true }
 vectorcraft-engine = { workspace = true }
 vectorcraft-svg = { workspace = true }
 vectorcraft-effects = { workspace = true }
+vectorcraft-three-d = { workspace = true }
 vectorcraft-plugins = { workspace = true }
 vectorcraft-pdf = { workspace = true }
 vectorcraft-cad = { workspace = true }
@@ -38,7 +41,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `now_ms` (src/lib.rs) reads the page's `performance.now()` with this crate in the web build. It is
+# MIT OR Apache-2.0 and already in the build through eframe.
+web-time = "1"
+
 [dev-dependencies]
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 vectorcraft-testkit = { workspace = true }
 roidery-fonts = { workspace = true }
 wat = { workspace = true }

@@ -26,7 +26,7 @@ fn group(children: Vec<Node>) -> Node {
 fn compound(paths: Vec<PathData>, c: Color) -> Node {
     let children = paths.into_iter().map(|p| Arc::new(Node::path(NodeId(0), p, Appearance::default()))).collect();
     let mut n = Node::new(NodeId(0), NodeKind::Compound { children, rule: FillRule::EvenOdd });
-    n.appearance = fill(c);
+    n.appearance = fill(c).into();
     n
 }
 
@@ -121,7 +121,7 @@ pub(crate) fn stitch_tile() -> Node {
     let dash = path(shapes::rounded_rectangle(Rect::new(1.5, -0.75, 8.5, 0.75), 0.75), Color::BLACK);
     // Invisible spacer that fixes the tile width.
     let mut spacer = path(shapes::rectangle(Rect::new(0.0, -0.75, 10.0, 0.75)), Color::BLACK);
-    spacer.appearance = Appearance::default();
+    spacer.appearance = Appearance::default().into();
     group(vec![spacer, dash])
 }
 
@@ -132,7 +132,7 @@ fn diamond_tile() -> Node {
 }
 
 fn calli(name: &str, angle: f64, roundness: f64, size: f64) -> Brush {
-    Brush { name: name.into(), kind: BrushKind::Calligraphic(Calligraphic { angle, roundness, size, variation: [0.0; 3] }) }
+    Brush { name: name.into(), kind: BrushKind::Calligraphic(Calligraphic { angle, roundness, size, ..Default::default() }) }
 }
 
 /// The default library.
@@ -172,6 +172,7 @@ pub fn defaults() -> &'static [Brush] {
                     rotation: (-180.0, 180.0),
                     rotation_relative_to_path: false,
                     colorization: Colorization::Tints,
+                    modes: None,
                 }),
             },
             Brush {
@@ -184,6 +185,7 @@ pub fn defaults() -> &'static [Brush] {
                     rotation: (-35.0, 35.0),
                     rotation_relative_to_path: true,
                     colorization: Colorization::None,
+                    modes: None,
                 }),
             },
             Brush {

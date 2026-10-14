@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Width Point",
             [],
             None,
-            "{id, t: 0..1 (fraction of the path length), left, right: side widths in pt, index?: width point to edit or move, adjustAdjoining?: bool (with index: the nearest points either side change their widths in proportion)} → {index}. Without index a point already at t is replaced; a point moved onto another one's t joins it as a discontinuous point (on the side it came from), so the width steps there. Creates a uniform profile first if needed",
+            "{id, t: 0..1 (fraction of the path length), left, right: side widths in pt, index?: width point to edit or move, adjustAdjoining?: bool (the nearest points either side change their widths in proportion, using the sampled widths for a new point)} → {index}. Without index a point already at t is replaced; a point moved onto another one's t joins it as a discontinuous point (on the side it came from), so the width steps there. Creates a uniform profile first if needed",
             has_doc,
             width_point_set
         ),
@@ -60,7 +60,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Liquify",
             [],
             None,
-            "{tool: warp|twirl|pucker|bloat|scallop|crystallize|wrinkle, points: [[x,y,pressure?]…] (the brush stroke; pen pressure 0..1, default 1), diameter?|width?, height? (pt, default 100), angle?, intensity? (0..1 or %), usePressure? (each point's pressure is the intensity there), detail? (1..10), simplify? (0..100) and simplifyOn? (default true; warp, twirl, pucker, bloat), rate? (twirl °), complexity? (0..15), horizontal?, vertical? (wrinkle, 0..1 or %), affectAnchors?, affectIn?, affectOut? (scallop, crystallize, wrinkle; default true), ids? (default: selection, else every path the brush touches)}",
+            "{tool: warp|twirl|pucker|bloat|scallop|crystallize|wrinkle, points: [[x,y,pressure?]…] (the brush stroke; pen pressure 0..1, default 1), diameter?|width?, height? (pt, default 100), angle?, intensity? (0..1 or %), usePressure? (each point's pressure is the intensity there), detail? (1..10), simplify?: 0..100, simplifyOn?: bool (default true; both for warp, twirl, pucker, bloat), rate? (twirl °), complexity? (0..15), horizontal?, vertical? (wrinkle, 0..1 or %), affectAnchors?, affectIn?, affectOut? (scallop, crystallize, wrinkle; default true), ids?|id? (default: selection, else every path the brush touches)}",
             has_doc,
             liquify
         ),
@@ -69,7 +69,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Puppet Warp",
             [],
             None,
-            "{id?|ids? (default: selection), pins: [[x,y]…] (current pin positions), moved: [[x,y]…] (targets, same length), angles?: [deg|null…] (same length: the turn the art takes around each pin, as Alt-dragging around a pin does; null leaves it free), expand?: pt, rest?: bool} as-rigid-as-possible mesh warp of anchors and handles. rest: true = the Puppet Warp tool's pins: `pins` are points on the shape the pins started from (object.puppetWarp.pins), each must be on its mesh, the warp replaces the previous one instead of adding to it, and the pins are kept with the document for Undo (an empty list removes them all, leaving the art as it is)",
+            "{id?|ids? (default: selection), pins: [[x,y]…] (current pin positions), moved: [[x,y]…] (targets, same length), angles?: [deg|null…] (same length: the turn the art takes around each pin, as Alt-dragging around a pin does; null leaves it free), expand?: pt, rest?: bool, auto?: bool (as object.puppetWarp.pins reports; ignored)} as-rigid-as-possible mesh warp of anchors and handles. rest: true = the Puppet Warp tool's pins: `pins` are points on the shape the pins started from (object.puppetWarp.pins), each must be on its mesh, the warp replaces the previous one instead of adding to it, and the pins are kept with the document for Undo (an empty list removes them all, leaving the art as it is)",
             has_doc,
             puppet_warp
         ),
@@ -87,7 +87,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Define Perspective Grid",
             [],
             None,
-            "{kind?: 1|2|3, origin?: [x,y], horizon?, vpLeft?, vpRight?, vpVertical?: [x,y], distance?, cell?, extent?, height?, visible?, plane?, leftOffset?, rightOffset?, groundOffset?: pt (planes moved along their normals), reproject?: bool} merge into the document's grid. Objects in perspective stay where they are, as in the reference app; with reproject they move with the grid (each keeps its place on its plane)",
+            "{kind?: 1|2|3, origin?: [x,y], horizon?, vpLeft?, vpRight?, vpVertical?: [x,y], distance?, cell?, extent?, height?, visible?, plane?, leftOffset?, rightOffset?, groundOffset?: pt (planes moved along their normals), reproject?: bool, …the other fields of the grid as its reply lists them} merge into the document's grid. Objects in perspective stay where they are, as in the reference app; with reproject they move with the grid (each keeps its place on its plane)",
             has_doc,
             grid_set
         ),
@@ -123,17 +123,17 @@ pub fn specs() -> Vec<CommandSpec> {
             "Attach to Active Plane",
             [],
             None,
-            "{ids?, plane?: left|right|ground (default: the active plane)} project the objects onto the plane",
+            "{ids?|id?, plane?: left|right|ground (default: the active plane)} project the objects onto the plane",
             has_doc,
             attach
         ),
-        cmd!("perspective.release", "Release with Perspective", [], None, "{ids?} detach from the grid (geometry unchanged)", has_doc, release),
+        cmd!("perspective.release", "Release with Perspective", [], None, "{ids?|id?} detach from the grid (geometry unchanged)", has_doc, release),
         cmd!(
             "perspective.move",
             "Move in Perspective",
             [],
             None,
-            "{ids?, from: [x,y], to: [x,y], plane?, copy?: bool (move copies, as Alt-dragging does), perpendicular?: bool (move along the plane's normal instead, as pressing 5 while dragging does), snap?: bool (default: View › Perspective Grid › Snap to Grid)} slide objects within their plane (unattached objects attach to `plane`/the active plane first); snapping lands the nearer edge of the objects' joint bounds on a gridline within a quarter cell; Transform Again repeats it",
+            "{ids?|id?, from: [x,y], to: [x,y], plane?, copy?: bool (move copies, as Alt-dragging does), perpendicular?: bool (move along the plane's normal instead, as pressing 5 while dragging does), snap?: bool (default: View › Perspective Grid › Snap to Grid)} slide objects within their plane (unattached objects attach to `plane`/the active plane first); snapping lands the nearer edge of the objects' joint bounds on a gridline within a quarter cell; Transform Again repeats it",
             has_doc,
             persp_move
         ),
@@ -142,7 +142,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Draw in Perspective",
             [],
             None,
-            "{command: shape.* id, params, plane?, snap?: bool (default: Snap to Grid)} run a shape command and attach the result to the plane (snapping its corners to gridlines within a quarter cell)",
+            "{command: shape.* id, params, plane?, snap?: bool (default: Snap to Grid), at?: [x, y] (a point of the plane the shape lies on, as the tool gives it)} run a shape command and attach the result to the plane (snapping its corners to gridlines within a quarter cell)",
             has_doc,
             persp_draw
         ),
@@ -151,7 +151,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Transform in Perspective",
             [],
             None,
-            "{ids?, matrix: [a,b,c,d,e,f] (affine map in plane coordinates, points: u along the plane, v up or away), depth?: pt to move along the plane's normal (default 0), copy?: bool, plane?} transform objects within their own planes (Perspective Selection tool handles; unattached objects attach to `plane`/the active plane first); Transform Again repeats it → {ids}",
+            "{ids?|id?, matrix: [a,b,c,d,e,f] (affine map in plane coordinates, points: u along the plane, v up or away), depth?: pt to move along the plane's normal (default 0), copy?: bool, plane?} transform objects within their own planes (Perspective Selection tool handles; unattached objects attach to `plane`/the active plane first); Transform Again repeats it → {ids}",
             has_doc,
             persp_transform
         ),
@@ -219,11 +219,13 @@ fn weighted_stroke(d: &mut Document, id: NodeId) -> Result<&mut vectorcraft_doc:
     Ok(st)
 }
 
-/// The `index` param, checked against the points of `prof`.
+/// The `index` param (none when absent or null), checked against the points of `prof`: a malformed
+/// one is refused like one out of range, never wrapped round or taken as missing.
 fn point_index(p: &Value, prof: &WidthProfile, cmd: &str) -> Result<Option<usize>> {
-    match p.get("index").and_then(Value::as_u64).map(|v| v as usize) {
-        Some(i) if i >= prof.points.len() => Err(bad(cmd, "no such width point")),
-        i => Ok(i),
+    let Some(v) = p.get("index").filter(|v| !v.is_null()) else { return Ok(None) };
+    match point_indices(&json!([v])).and_then(|i| i.first().copied()) {
+        Some(i) if i < prof.points.len() => Ok(Some(i)),
+        _ => Err(bad(cmd, "no such width point")),
     }
 }
 
@@ -264,6 +266,17 @@ fn adjust_adjoining(points: &mut [(f64, f64, f64)], i: usize, old: (f64, f64, f6
     }
 }
 
+/// Whether `a` and `b` hold the same width points, each place and width within a rounding error
+/// (1e-9).
+fn same_points(a: Option<&WidthProfile>, b: Option<&WidthProfile>) -> bool {
+    let near = |p: &(f64, f64, f64), q: &(f64, f64, f64)| (p.0 - q.0).abs() <= 1e-9 && (p.1 - q.1).abs() <= 1e-9 && (p.2 - q.2).abs() <= 1e-9;
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.points.len() == b.points.len() && a.points.iter().zip(&b.points).all(|(p, q)| near(p, q)),
+        _ => false,
+    }
+}
+
 fn width_point_set(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "stroke.widthPoint.set";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
@@ -273,12 +286,16 @@ fn width_point_set(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, "left/right must be non-negative widths"));
     }
     let adjust = bool_or(p, "adjustAdjoining", false);
-    let pos = s.edit("Width Point", |d, _| {
+    // When the profile comes out as it was, within a rounding error (1e-9), the document and its undo
+    // history stay as they are.
+    let mut pos = 0;
+    super::overprint::edit_counted(s, "Width Point", |d| {
         let st = weighted_stroke(d, id)?;
+        let before = st.profile.clone();
         let half = st.width / 2.0;
         let mut prof = st.profile.take().unwrap_or_else(uniform);
         let pt = (t, left / half, right / half);
-        let pos = match point_index(p, &prof, C)? {
+        pos = match point_index(p, &prof, C)? {
             Some(i) => {
                 let old = prof.points[i];
                 if adjust {
@@ -294,12 +311,17 @@ fn width_point_set(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
             None => {
+                let old = adjust.then(|| prof.at(t));
                 prof.points.retain(|q| (q.0 - t).abs() > SAME_T);
-                place(&mut prof.points, pt, true)
+                let i = place(&mut prof.points, pt, true);
+                if let Some((left, right)) = old {
+                    adjust_adjoining(&mut prof.points, i, (t, left, right), pt);
+                }
+                i
             }
         };
         st.profile = Some(prof);
-        Ok(pos)
+        Ok(usize::from(!same_points(st.profile.as_ref(), before.as_ref())))
     })?;
     Ok(json!({ "index": pos }))
 }
@@ -308,14 +330,18 @@ fn width_point_copy(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "stroke.widthPoint.copy";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
     let t = f64_req(p, "t", C)?.clamp(0.0, 1.0);
-    let pos = s.edit("Copy Width Point", |d, _| {
+    // When the profile comes out as it was (the copy replaces a side of a discontinuous point that has
+    // its widths already), the document and its undo history stay as they are.
+    let mut pos = 0;
+    super::overprint::edit_counted(s, "Copy Width Point", |d| {
         let st = weighted_stroke(d, id)?;
+        let before = st.profile.clone();
         let mut prof = st.profile.take().unwrap_or_else(uniform);
         let i = point_index(p, &prof, C)?.ok_or_else(|| bad(C, "missing index"))?;
         let (from, l, r) = prof.points[i];
-        let pos = place(&mut prof.points, (t, l, r), from < t);
+        pos = place(&mut prof.points, (t, l, r), from < t);
         st.profile = Some(prof);
-        Ok(pos)
+        Ok(usize::from(st.profile != before))
     })?;
     Ok(json!({ "index": pos }))
 }
@@ -323,11 +349,13 @@ fn width_point_copy(s: &mut Session, p: &Value) -> Result<Value> {
 fn width_point_remove(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "stroke.widthPoint.remove";
     let id = id_param(p, "id").ok_or_else(|| bad(C, "missing id"))?;
-    let mut indices: Vec<usize> = match (p.get("indices").and_then(Value::as_array), p.get("index").and_then(Value::as_u64)) {
-        (Some(a), _) => a.iter().filter_map(Value::as_u64).map(|i| i as usize).collect(),
-        (None, Some(i)) => vec![i as usize],
+    let indices = match (p.get("indices"), p.get("index")) {
+        (Some(a), _) => point_indices(a),
+        (None, Some(i)) => point_indices(&json!([i])),
         (None, None) => return Err(bad(C, "missing index")),
     };
+    // A malformed index fails the whole delete instead of being dropped while the others go.
+    let mut indices = indices.ok_or_else(|| bad(C, "no such width point"))?;
     indices.sort_unstable();
     indices.dedup();
     s.edit("Delete Width Point", |d, _| {
@@ -369,6 +397,11 @@ fn width_profile_set(s: &mut Session, p: &Value) -> Result<Value> {
     let mut ids: Vec<NodeId> = targets(s, p)?.into_iter().map(|id| stroke_owner(doc, id)).collect();
     ids.sort_unstable();
     ids.dedup();
+    // When every stroke has the profile already, or there is no stroke, the document and its undo
+    // history stay as they are.
+    if ids.iter().all(|id| doc.node(*id).is_some_and(|n| n.appearance.stroke().is_none_or(|st| st.profile == profile))) {
+        return ok();
+    }
     s.edit("Width Profile", |d, _| {
         for id in &ids {
             let n = d.node_mut(*id).ok_or(EngineError::NoNode(*id))?;
@@ -411,13 +444,14 @@ struct Targets {
 /// What `n` is when Liquify can't distort it (and doesn't look inside it).
 fn not_liquified(n: &Node) -> Option<&'static str> {
     Some(match &n.kind {
-        NodeKind::Group { .. } if n.graph.is_some() => "graphs",
+        NodeKind::Group { .. } if n.extras().graph.is_some() => "graphs",
         NodeKind::Text(_) => "type",
         NodeKind::SymbolInstance { .. } => "symbols",
         NodeKind::Image(_) => "images",
         NodeKind::Mesh(_) => "meshes",
         NodeKind::Envelope { .. } => "envelopes",
         NodeKind::Repeat(_) => "repeats",
+        NodeKind::PlacedDocument(_) => "placed documents",
         NodeKind::Blend { .. } => "blends",
         _ => return None,
     })
@@ -597,18 +631,23 @@ fn liquify(s: &mut Session, p: &Value) -> Result<Value> {
     stroke.extend(pts.get(done..).unwrap_or_default());
     let results = stroke.results();
     let (skipped, warning) = stroke.skipped();
-    let changed = s.edit(&format!("{} Tool", prm.kind.label()), |d, _| {
-        let mut changed = vec![];
-        for (id, new) in results {
-            let Some(n) = d.node_mut(id) else { continue };
-            if let NodeKind::Path { path, live, .. } = &mut n.kind {
-                *path = new;
-                *live = None;
-                changed.push(id.0);
+    // When the stroke reshapes no path, the document and its undo history stay as they are.
+    let changed = if results.is_empty() {
+        vec![]
+    } else {
+        s.edit(&format!("{} Tool", prm.kind.label()), |d, _| {
+            let mut changed = vec![];
+            for (id, new) in results {
+                let Some(n) = d.node_mut(id) else { continue };
+                if let NodeKind::Path { path, live, .. } = &mut n.kind {
+                    *path = new;
+                    *live = None;
+                    changed.push(id.0);
+                }
             }
-        }
-        Ok(changed)
-    })?;
+            Ok(changed)
+        })?
+    };
     if s.in_interaction() {
         s.liquify_stroke = Some(stroke);
     }
@@ -654,10 +693,21 @@ fn puppet_warp(s: &mut Session, p: &Value) -> Result<Value> {
     let ids_json = json!({ "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>() });
     if rest {
         let pins: Vec<PuppetPin> = pins.iter().zip(&moved).zip(angles).map(|((r, a), angle)| PuppetPin { rest: *r, at: *a, angle }).collect();
-        s.edit("Puppet Warp", |d, _| warp_from_rest(d, &ids, pins, expand).map_err(|e| bad(C, e)))?;
+        // When the art and its pins come out as they were, the document and its undo history stay
+        // as they are.
+        let before = s.doc()?.doc.clone();
+        super::overprint::edit_counted(s, "Puppet Warp", |d| {
+            warp_from_rest(d, &ids, pins, expand).map_err(|e| bad(C, e))?;
+            Ok(usize::from(d.puppet != before.puppet || ids.iter().any(|id| d.node(*id) != before.node(*id))))
+        })?;
         return Ok(ids_json);
     }
     let mesh = mesh_for(&s.doc()?.doc, &ids, expand).ok_or_else(|| EngineError::Other("nothing to warp".into()))?;
+    // When every pin stays where it is and turns the art by 0° or is free, the document and its undo
+    // history stay as they are.
+    if pins == moved && angles.iter().all(|a| a.is_none_or(|a| a == 0.0)) {
+        return Ok(ids_json);
+    }
     let pins: Vec<arap::Pin> = pins.iter().zip(&moved).zip(angles).map(|((a, b), angle)| arap::Pin { angle, ..arap::Pin::new(*a, *b) }).collect();
     let deformed = arap::deform(&mesh, &pins);
     let f = |q: Point| mesh.map(&deformed, q);
@@ -702,6 +752,14 @@ pub(crate) fn store_grid(d: &mut Document, g: &PerspectiveGrid) {
     g.store(d);
 }
 
+/// Whether `d` holds `g` as [`store_grid`] writes it (with `attached` cleared): then storing `g`
+/// leaves `d` as it is.
+fn grid_kept(d: &Document, g: &PerspectiveGrid) -> bool {
+    let mut g = g.clone();
+    g.attached.clear();
+    serde_json::to_value(&g).is_ok_and(|v| d.unknown.get(persp::DOC_KEY) == Some(&v))
+}
+
 /// Change view state of the grid without an undo step.
 pub(crate) fn silent(s: &mut Session, f: impl FnOnce(&mut PerspectiveGrid)) -> Result<PerspectiveGrid> {
     let st = s.doc_mut()?;
@@ -719,6 +777,11 @@ fn grid_set(s: &mut Session, p: &Value) -> Result<Value> {
     let old = grid_of(&s.doc()?.doc);
     let g = old.merged(p).map_err(|e| bad("perspective.grid.set", e))?;
     let reproject = bool_or(p, "reproject", false);
+    // When the document holds this grid already, no object moves, and the document and its undo
+    // history stay as they are.
+    if grid_kept(&s.doc()?.doc, &g) {
+        return Ok(g.definition_json());
+    }
     s.edit("Define Perspective Grid", |d, _| {
         if reproject {
             old.adopt_stored_attachments(d);
@@ -795,6 +858,11 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = roots(s, p)?;
     let mut g = grid_of(&s.doc()?.doc);
     let plane = plane_param(&g, p, "perspective.attach")?;
+    // With no object to attach, when the document holds the grid already, the document and its undo
+    // history stay as they are.
+    if ids.is_empty() && grid_kept(&s.doc()?.doc, &g) {
+        return Ok(json!({ "ids": [], "plane": plane.id() }));
+    }
     s.edit("Attach to Active Plane", |d, _| {
         for id in &ids {
             attach_in(d, &mut g, *id, plane, false, None)?;
@@ -808,6 +876,19 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
 fn release(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = roots(s, p)?;
     let mut g = grid_of(&s.doc()?.doc);
+    // When releasing leaves every object as it is (none is in perspective) and the document holds
+    // the grid already, the document and its undo history stay as they are.
+    let d = &s.doc()?.doc;
+    let unchanged = |id: &NodeId| {
+        d.node(*id).is_none_or(|n| {
+            let mut released = n.clone();
+            persp::release(&mut released);
+            released == *n
+        })
+    };
+    if ids.iter().all(unchanged) && grid_kept(d, &g) {
+        return ok();
+    }
     s.edit("Release with Perspective", |d, _| {
         for id in &ids {
             g.attached.remove(&id.0.to_string());
@@ -870,6 +951,19 @@ fn persp_edit(
     })
 }
 
+/// Where the first of `ids` is in perspective (its plane and depth) when `ids` is not empty, every one
+/// of them is in perspective already, `still` holds for each one's plane and depth, and the document
+/// holds the grid already; None otherwise.
+fn unmoved(s: &Session, ids: &[NodeId], still: impl Fn(&PerspectiveGrid, Plane, f64) -> bool) -> Result<Option<Attached>> {
+    let d = &s.doc()?.doc;
+    let g = grid_of(d);
+    if ids.is_empty() || !grid_kept(d, &g) {
+        return Ok(None);
+    }
+    let at: Option<Vec<Attached>> = ids.iter().map(|id| g.attachment_of(d, *id).filter(|(pl, depth)| still(&g, *pl, *depth))).collect();
+    Ok(at.and_then(|at| at.first().copied()))
+}
+
 /// Remember `again` (`perspective.transform` params) for Object › Transform › Transform Again, once
 /// the drag that made it is committed.
 fn record_again(s: &mut Session, again: Value) -> Result<()> {
@@ -916,11 +1010,25 @@ fn persp_move(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let label = if copy { "Copy in Perspective" } else { "Move in Perspective" };
-    let (targets, first) = persp_edit(s, label, &ids, fallback, copy, &step)?;
-    // Transform Again repeats the first object's move.
+    // When no object moves more than 1e-9 pt along its plane's axes or its normal (Snap to Grid
+    // included) and there is no copy, the document and its undo history stay as they are.
+    let still = |g: &PerspectiveGrid, pl: Plane, depth: f64| {
+        if perp {
+            g.depth_at(pl, depth, from, to).is_some_and(|d| (d - depth).abs() <= 1e-9)
+        } else {
+            g.plane_delta(pl, depth, from, to).map(|dv| snapped(pl, depth, dv)).is_some_and(|dv| dv.x.abs() <= 1e-9 && dv.y.abs() <= 1e-9)
+        }
+    };
+    let first_still = if copy { None } else { unmoved(s, &ids, still)? };
+    let (targets, first) = match first_still {
+        Some(at) => (ids, Some(at)),
+        None => persp_edit(s, label, &ids, fallback, copy, &step)?,
+    };
+    // Transform Again repeats the first object's move, and the identity when no object moved.
     if let Some((pl, depth)) = first {
         let g = grid_of(&s.doc()?.doc);
         let again = match perp {
+            _ if first_still.is_some() => Some(json!({"matrix": matrix_json(Affine::IDENTITY), "copy": copy})),
             true => g.depth_at(pl, depth, from, to).map(|d| json!({"matrix": matrix_json(Affine::IDENTITY), "depth": d - depth, "copy": copy})),
             false => {
                 g.plane_delta(pl, depth, from, to).map(|dv| json!({"matrix": matrix_json(Affine::translate(snapped(pl, depth, dv))), "copy": copy}))
@@ -950,7 +1058,14 @@ fn persp_transform(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok((g.transform_map(pl, depth, m, dz).ok_or_else(beyond_horizon)?, to))
     };
-    let (targets, _) = persp_edit(s, if copy { "Copy in Perspective" } else { "Transform in Perspective" }, &ids, fallback, copy, &step)?;
+    // An identity without a copy moves no object that is in perspective already: then the document
+    // and its undo history stay as they are, and Transform Again repeats the identity.
+    let identity = !copy && m == Affine::IDENTITY && dz == 0.0;
+    let targets = if identity && unmoved(s, &ids, |g, pl, depth| g.transform_map(pl, depth, m, dz).is_some())?.is_some() {
+        ids
+    } else {
+        persp_edit(s, if copy { "Copy in Perspective" } else { "Transform in Perspective" }, &ids, fallback, copy, &step)?.0
+    };
     record_again(s, json!({"matrix": matrix_json(m), "depth": dz, "copy": copy}))?;
     Ok(ids_json(&targets))
 }
@@ -987,16 +1102,25 @@ fn plane_move(s: &mut Session, p: &Value) -> Result<Value> {
         "move" => "Move Plane and Objects",
         _ => "Move Plane",
     };
+    // The objects on the plane where it was (not those moved off it along its normal).
+    let on_plane = |d: &Document| -> Vec<NodeId> {
+        persp::attached_roots(d)
+            .into_iter()
+            .filter(|(id, pl, depth)| *pl == plane && (depth - from).abs() < 1e-6 && d.is_editable(*id))
+            .map(|(id, ..)| id)
+            .collect()
+    };
+    // A plane moved to where it is, with its objects or without them, moves nothing: when the
+    // document holds the grid already, the document and its undo history stay as they are.
+    if to == from && objects != "copy" && grid_kept(&s.doc()?.doc, &g) {
+        let ids = if objects == "move" { on_plane(&s.doc()?.doc) } else { vec![] };
+        return Ok(json!({ "plane": plane.id(), "offset": to, "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>() }));
+    }
     let ids = s.edit(label, |d, sel| {
         old.adopt_stored_attachments(d);
         let mut ids = vec![];
         if objects != "none" {
-            // The objects on the plane where it was (not those moved off it along its normal).
-            let on: Vec<NodeId> = persp::attached_roots(d)
-                .into_iter()
-                .filter(|(id, pl, depth)| *pl == plane && (depth - from).abs() < 1e-6 && d.is_editable(*id))
-                .map(|(id, ..)| id)
-                .collect();
+            let on = on_plane(d);
             ids = if objects == "copy" { duplicate_in(d, sel, &on, Affine::IDENTITY)? } else { on };
             let m = old.transform_map(plane, from, Affine::IDENTITY, to - from).ok_or_else(beyond_horizon)?;
             for id in &ids {
@@ -1020,6 +1144,11 @@ fn plane_match(s: &mut Session, p: &Value) -> Result<Value> {
     g.set_offset(plane, depth);
     g.plane = plane;
     g.validate().map_err(|e| bad("perspective.plane.matchObject", e))?;
+    // When the plane is at the object and active already, and the document holds that grid, the
+    // document and its undo history stay as they are.
+    if grid_kept(&st.doc, &g) {
+        return Ok(json!({ "plane": plane.id(), "offset": depth }));
+    }
     s.edit("Move Plane to Match Object", |d, _| {
         store_grid(d, &g);
         Ok(())
@@ -1074,6 +1203,7 @@ fn persp_draw(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(e) = st.history.undo.last_mut() {
             e.label = "Draw in Perspective".into();
         }
+        st.history.recost_last(&st.doc);
     }
     res?;
     Ok(json!({ "id": id.0, "plane": plane.id() }))
@@ -1127,7 +1257,7 @@ fn edit_text(s: &mut Session, p: &Value) -> Result<Value> {
         let (Some(flat), Some(drawn)) = (t.bounds(), t.bounds().and_then(|b| h.map_rect_bbox(b))) else { return Ok(()) };
         let shift = vectorcraft_geom::Affine::translate(drawn.center() - flat.center());
         t.transform(shift);
-        if let Some(rec) = n.perspective.as_deref_mut() {
+        if let Some(rec) = n.extras_if_any().and_then(|e| e.perspective.as_deref_mut()) {
             rec.projection = Some(h.then_after(&Homography::from_affine(shift.inverse())).to_array());
             rec.editing = true;
         }
@@ -1144,8 +1274,10 @@ fn edit_text(s: &mut Session, p: &Value) -> Result<Value> {
 /// in every undo state (the flat view is never an undo step of its own).
 pub(crate) fn finish_edit_text(st: &mut crate::DocState, id: NodeId) {
     let clear = |doc: &mut Arc<Document>| {
-        if doc.node(id).and_then(|n| n.perspective.as_deref()).is_some_and(|p| p.editing)
-            && let Some(p) = Arc::make_mut(doc).node_mut(id).and_then(|n| n.perspective.as_deref_mut())
+        // Undo steps keep no lookup cache: look without building one, and drop the one an edit
+        // builds (the document now keeps its own).
+        if doc.node_uncached(id).and_then(|n| n.extras().perspective.as_deref()).is_some_and(|p| p.editing)
+            && let Some(p) = Arc::make_mut(doc).node_mut(id).and_then(|n| n.extras_if_any().and_then(|e| e.perspective.as_deref_mut()))
         {
             p.editing = false;
         }
@@ -1157,6 +1289,7 @@ pub(crate) fn finish_edit_text(st: &mut crate::DocState, id: NodeId) {
     }
     for e in st.history.undo.iter_mut().chain(st.history.redo.iter_mut()) {
         clear(&mut e.doc);
+        e.doc.drop_lookup_cache();
     }
     if let Some(it) = &mut st.interaction {
         clear(&mut it.doc);

@@ -13,6 +13,92 @@ pub struct Catalog {
     ids: HashMap<String, String>,
     /// plural messages: `one|other` → forms
     plurals: HashMap<String, Vec<String>>,
+    /// status and error messages without placeholders (`@msg`): English → translation
+    messages: HashMap<String, String>,
+    /// status and error messages with `{name}` placeholders (`@msg`), most specific first
+    templates: Vec<Template>,
+}
+
+/// A piece of a message template: literal text or a `{name}` placeholder.
+#[derive(Debug)]
+enum Piece {
+    Text(String),
+    Hole(String),
+}
+
+/// A message template (`Couldn't open {name}: {e}`) and its translation.
+#[derive(Debug)]
+struct Template {
+    pieces: Vec<Piece>,
+    /// Bytes of literal text: a template with more of it is the more specific match.
+    literal: usize,
+    translation: String,
+}
+
+/// Messages longer than this are shown as they are (template matching backtracks).
+const MAX_MESSAGE_LEN: usize = 2000;
+
+impl Template {
+    /// `None` for a template that can't be matched reliably: no literal text, or two placeholders
+    /// in a row (where one ends and the next begins is unknowable).
+    fn parse(source: &str, translation: String) -> Option<Template> {
+        let mut pieces = Vec::new();
+        let mut rest = source;
+        while let Some(a) = rest.find('{') {
+            let after = rest.get(a + 1..)?;
+            let b = after.find('}')?;
+            if a > 0 {
+                pieces.push(Piece::Text(rest.get(..a)?.to_string()));
+            } else if matches!(pieces.last(), Some(Piece::Hole(_))) {
+                return None;
+            }
+            pieces.push(Piece::Hole(after.get(..b)?.to_string()));
+            rest = after.get(b + 1..)?;
+        }
+        if !rest.is_empty() {
+            pieces.push(Piece::Text(rest.to_string()));
+        }
+        let literal = pieces.iter().map(|p| if let Piece::Text(t) = p { t.len() } else { 0 }).sum();
+        (literal > 0).then_some(Template { pieces, literal, translation })
+    }
+
+    /// The placeholder values if `s` is an instance of this template.
+    fn captures<'a>(&self, s: &'a str) -> Option<Vec<(&str, &'a str)>> {
+        let mut out = Vec::new();
+        match_pieces(&self.pieces, s, &mut out).then_some(out)
+    }
+}
+
+/// Match `s` against `pieces`, a placeholder taking the shortest non-empty text that lets the
+/// rest match (the last one takes what remains).
+fn match_pieces<'p, 'a>(pieces: &'p [Piece], s: &'a str, out: &mut Vec<(&'p str, &'a str)>) -> bool {
+    let Some((first, rest)) = pieces.split_first() else { return s.is_empty() };
+    match first {
+        Piece::Text(t) => s.strip_prefix(t.as_str()).is_some_and(|tail| match_pieces(rest, tail, out)),
+        Piece::Hole(name) => {
+            let Some((next, after)) = rest.split_first() else {
+                if s.is_empty() {
+                    return false;
+                }
+                out.push((name.as_str(), s));
+                return true;
+            };
+            let Piece::Text(next) = next else { return false };
+            // Every place the next literal occurs, nearest first (the hole is never empty).
+            let mut from = s.chars().next().map_or(1, char::len_utf8);
+            while let Some(at) = s.get(from..).and_then(|tail| tail.find(next.as_str())).map(|i| i + from) {
+                let (Some(value), Some(tail)) = (s.get(..at), s.get(at + next.len()..)) else { return false };
+                let mark = out.len();
+                out.push((name.as_str(), value));
+                if match_pieces(after, tail, out) {
+                    return true;
+                }
+                out.truncate(mark);
+                from = at + next.chars().next().map_or(1, char::len_utf8);
+            }
+            false
+        }
+    }
 }
 
 /// A catalog entry as read from the file: (context, source, translation).
@@ -74,11 +160,20 @@ impl Catalog {
                 "@plural" => {
                     c.plurals.insert(src, tr.split('|').map(str::to_string).collect());
                 }
+                "@msg" => {
+                    if src.contains('{') {
+                        c.templates.extend(Template::parse(&src, tr));
+                    } else {
+                        c.messages.insert(src, tr);
+                    }
+                }
                 _ => {
                     c.contextual.insert(format!("{ctx}\u{1}{src}"), tr);
                 }
             }
         }
+        // Most literal text first, so `Couldn't open {name}: {e}` wins over `{path}: {e}`.
+        c.templates.sort_by_key(|t| std::cmp::Reverse(t.literal));
         c
     }
 
@@ -92,6 +187,19 @@ impl Catalog {
 
     pub fn id(&self, id: &str) -> Option<&str> {
         self.ids.get(id).map(String::as_str)
+    }
+
+    /// A status or error message: an exact `@msg` entry, else the first template it is an instance
+    /// of, with the placeholder values filled in. The values are returned for the caller to
+    /// translate (a reason after `…: {e}` is often a message of its own).
+    pub fn message<'a>(&self, s: &'a str) -> Option<(&str, Vec<(&str, &'a str)>)> {
+        if let Some(tr) = self.messages.get(s) {
+            return Some((tr.as_str(), Vec::new()));
+        }
+        if s.len() > MAX_MESSAGE_LEN {
+            return None;
+        }
+        self.templates.iter().find_map(|t| t.captures(s).map(|caps| (t.translation.as_str(), caps)))
     }
 
     /// The plural form `index` of the message whose English forms are `one|other`.

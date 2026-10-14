@@ -121,6 +121,44 @@ fn batch_is_one_undo_step_and_rolls_back_on_error() {
     assert_eq!(s.doc().unwrap().doc.node_count(), 1);
 }
 
+/// #1697: a failed batch brings back the whole document, not only its art: the file a Save As
+/// step named and the history an Undo step moved; and a batch leaves a drag in progress its own
+/// step.
+#[test]
+fn a_failed_batch_restores_the_file_the_history_and_a_drag_in_progress() {
+    let mut s = fixtures::session();
+    let rect = |x: i32| json!({"command": "shape.rectangle", "params": {"x": x, "y": 0, "width": 10, "height": 10}});
+    let fail = json!({"command": "no.such.command", "params": {}});
+    exec(&mut s, "shape.rectangle", json!({"x": 50, "y": 0, "width": 10, "height": 10}));
+    let before = (doc_json(&s.doc().unwrap().doc), s.doc().unwrap().history.undo.len(), s.doc().unwrap().history.redo.len());
+    let state = |s: &vectorcraft_engine::Session| {
+        let st = s.doc().unwrap();
+        (doc_json(&st.doc), st.history.undo.len(), st.history.redo.len())
+    };
+    // Save As, then a failing step: the document keeps no file and stays modified.
+    let path = vectorcraft_testkit::temp_dir("batch-rollback").join("named.vectorcraft").to_string_lossy().to_string();
+    let save = json!({"command": "file.saveAs", "params": {"path": path}});
+    assert!(s.execute("command.batch", &json!({"commands": [rect(0), save, fail]})).is_err());
+    assert_eq!(state(&s), before);
+    assert_eq!((s.doc().unwrap().path.as_deref(), s.doc().unwrap().is_dirty()), (None, true));
+    // Undo, then a failing step: the art and both history stacks are as before.
+    let undo = json!({"command": "edit.undo", "params": {}});
+    assert!(s.execute("command.batch", &json!({"commands": [undo, fail]})).is_err());
+    assert_eq!(state(&s), before);
+    // A batch during a drag: the drag is kept as a step, the batch is the next one.
+    exec(&mut s, "select.all", json!({}));
+    s.begin_interaction("Move").unwrap();
+    s.preview("object.move", &json!({"dx": 5, "dy": 0})).unwrap();
+    let moved = doc_json(&s.doc().unwrap().doc);
+    exec(&mut s, "command.batch", json!({"commands": [rect(100)]}));
+    assert!(!s.in_interaction());
+    assert_eq!(s.doc().unwrap().history.undo.len(), before.1 + 2);
+    exec(&mut s, "edit.undo", json!({}));
+    assert_eq!(doc_json(&s.doc().unwrap().doc), moved, "undoing the batch leaves the drag's move");
+    exec(&mut s, "edit.undo", json!({}));
+    assert_eq!(doc_json(&s.doc().unwrap().doc), before.0);
+}
+
 #[test]
 fn empty_batch_is_harmless() {
     let mut s = fixtures::session();

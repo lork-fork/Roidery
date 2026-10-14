@@ -151,6 +151,20 @@ fn page_fill(before: &str, after: &str, ai: bool) -> Document {
     import(&pdf_with_catalog(&[page], &[&objs[0], &objs[1]], &catalog, None)).unwrap()
 }
 
+/// A file with an editor's private data says that art off its artboards isn't in the part read
+/// (#472); a plain PDF has nothing to say.
+#[test]
+fn an_ai_file_notes_that_its_art_off_the_artboards_is_not_read() {
+    for ai in [false, true] {
+        let page = PdfPage {
+            entries: if ai { "/PieceInfo << /Illustrator << /Private << /AIPrivateData1 7 /NumBlock 1 >> >> >>".into() } else { String::new() },
+            ..PdfPage::new(100.0, 100.0, "1 0 0 rg 10 10 30 30 re f")
+        };
+        let r = import_with_report(&pdf_with_catalog(&[page], &[], "", None), &ImportOptions::default()).unwrap();
+        assert_eq!(r.warnings, if ai { vec![crate::import::OFF_ARTBOARD_NOTE.to_string()] } else { vec![] });
+    }
+}
+
 fn path_count(d: &Document) -> usize {
     let mut n = 0;
     d.walk(|c| n += usize::from(matches!(c.kind, NodeKind::Path { .. })));
@@ -273,7 +287,7 @@ fn a_sublayer_that_paints_first_brings_its_parent_layer() {
 #[test]
 fn hostile_layer_orders_stay_bounded() {
     // A group listed twice, under itself, and an order nested far deeper than layers go.
-    let deep = format!("{}{{2}}{}", "[".repeat(100), "]".repeat(100));
+    let deep = format!("{}{{2}}{}", "[".repeat(40), "]".repeat(40));
     let order = format!("[{{0}} [{{0}} {{1}}] {{1}} [{{0}}] {deep}]");
     let d = import(&three_groups([&ocg("A", ""), &ocg("B", ""), &ocg("C", "")], &[], &format!("/Order {order}"))).unwrap();
     assert_eq!(names(&d), ["A", "C"], "C, listed too deep, stays a top-level layer");
@@ -303,7 +317,8 @@ fn thousands_of_layers_hidden_ones_included_all_come_in() {
 /// Import `bytes` with the scan's operator limit lowered to `n`.
 fn import_with_max_ops(bytes: &[u8], n: usize) -> ImportReport {
     let old = crate::import_scan::TEST_MAX_OPS.replace(n);
-    let r = import_with_report(bytes, &ImportOptions::default());
+    // (On this thread: the limit is this thread's.)
+    let r = crate::import::read(bytes, &ImportOptions::default());
     crate::import_scan::TEST_MAX_OPS.set(old);
     r.unwrap()
 }
@@ -351,4 +366,62 @@ fn art_past_the_scan_limit_of_shown_layers_stays_shown() {
     assert!(d.layers[1].visible && printable(&d.layers[1]));
     assert_eq!(colors(&d.layers[1]), [Color::rgb(0.0, 0.0, 1.0), Color::rgb(0.0, 1.0, 0.0)]);
     assert!(r.warnings.iter().any(|w| w.contains("went to its page's layer")), "{:?}", r.warnings);
+}
+
+/// Art reaching past the page keeps a clip to it in a plain PDF (as viewers show it), but not in
+/// a PDF-compatible `.ai`, whose art crossing the artboard edge opens whole and editable (#646).
+#[test]
+fn art_past_the_page_is_clipped_in_a_pdf_but_not_in_an_ai_file() {
+    for ai in [false, true] {
+        let page = PdfPage {
+            entries: if ai { "/PieceInfo << /Illustrator << /Private << /AIPrivateData1 7 /NumBlock 1 >> >> >>".into() } else { String::new() },
+            ..PdfPage::new(100.0, 100.0, "0 0 100 100 re W n 1 0 0 rg 50 50 200 200 re f")
+        };
+        let r = import_with_report(&pdf_with_catalog(&[page], &[], "", None), &ImportOptions::default()).unwrap();
+        let mut clips = 0;
+        r.document.walk(|n| clips += usize::from(matches!(n.kind, NodeKind::Group { clip: true, .. })));
+        let past = r.warnings.iter().any(|w| w == crate::import::PAST_PAGE_NOTE);
+        assert_eq!((clips, past), if ai { (0, false) } else { (1, true) }, "ai: {ai}: {:?}", r.warnings);
+        let art = r.document.art_bounds().unwrap();
+        assert_eq!(art.x1 > 100.5, ai, "ai: {ai}: {art:?}");
+    }
+}
+
+/// The editor's private data of a `.ai` is its `AIPrivateData` streams, joined in order.
+#[test]
+fn an_ai_files_private_data_is_its_streams_joined() {
+    let (a, b) = (first_extra(1), first_extra(1) + 1);
+    let page = |ai: bool| PdfPage {
+        entries: if ai {
+            format!("/PieceInfo << /Illustrator << /Private << /AIPrivateData1 {a} 0 R /AIPrivateData2 {b} 0 R /NumBlock 2 >> >> >>")
+        } else {
+            String::new()
+        },
+        ..PdfPage::new(100.0, 100.0, "1 0 0 rg 10 10 30 30 re f")
+    };
+    let (one, two) = (stream("", "%AI24_ZStandard_Data first "), stream("", "second"));
+    let ai = pdf_with_catalog(&[page(true)], &[&one, &two], "", None);
+    assert_eq!(illustrator_data(&ai, None).unwrap(), b"%AI24_ZStandard_Data first second");
+    // A PDF without them has none; neither has bytes that aren't a PDF.
+    assert!(illustrator_data(&pdf_with_catalog(&[page(false)], &[&one, &two], "", None), None).is_none());
+    assert!(illustrator_data(b"not a pdf", None).is_none());
+    // Only a plain or a deflated stream is read: a chain of filters is refused, not run unbounded.
+    let chained = stream("/Filter [/ASCIIHexDecode /ASCIIHexDecode]", "61>");
+    assert!(illustrator_data(&pdf_with_catalog(&[page(true)], &[&chained, &two], "", None), None).is_none());
+}
+
+/// A PDF saved with the editing data has its streams under `AIPDFPrivateData` keys instead (#868);
+/// a file with both kinds is read from its `AIPrivateData` streams.
+#[test]
+fn a_pdfs_private_data_is_its_pdf_streams_joined() {
+    let (a, b, c) = (first_extra(1), first_extra(1) + 1, first_extra(1) + 2);
+    let page = |keys: String| PdfPage {
+        entries: format!("/PieceInfo << /Illustrator << /Private << {keys} /NumBlock 2 >> >> >>"),
+        ..PdfPage::new(100.0, 100.0, "1 0 0 rg 10 10 30 30 re f")
+    };
+    let (one, two, other) = (stream("", "%AI24_ZStandard_Data first "), stream("", "second"), stream("", "%AI24_ZStandard_Data other"));
+    let pdf = pdf_with_catalog(&[page(format!("/AIPDFPrivateData1 {a} 0 R /AIPDFPrivateData2 {b} 0 R"))], &[&one, &two], "", None);
+    assert_eq!(illustrator_data(&pdf, None).unwrap(), b"%AI24_ZStandard_Data first second");
+    let both = format!("/AIPDFPrivateData1 {a} 0 R /AIPDFPrivateData2 {b} 0 R /AIPrivateData1 {c} 0 R");
+    assert_eq!(illustrator_data(&pdf_with_catalog(&[page(both)], &[&one, &two, &other], "", None), None).unwrap(), b"%AI24_ZStandard_Data other");
 }

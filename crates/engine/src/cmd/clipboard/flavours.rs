@@ -1,5 +1,5 @@
 //! Clipboard flavours: what Copy offers other apps besides SVG (PNG, PDF and plain text) and what
-//! Paste takes from them (bitmaps, plain text, PDF and Windows metafiles).
+//! Paste takes from them (bitmaps, plain text, PDF, EPS and Windows metafiles).
 //!
 //! The UI owns the platform clipboard (`Services::system_clipboard` in the egui frontend): on Copy
 //! it publishes [`Session::clipboard_flavours`]; before a Paste it turns what another app put on
@@ -27,20 +27,57 @@ pub const BITMAP: &str = "image/*";
 /// An EMF (or WMF) picture: what Windows apps copy as vector art (the system clipboard reads it
 /// where the platform offers it).
 pub const EMF: &str = "image/emf";
+/// An EPS (or other PostScript) picture: what drawing and typesetting apps copy as vector art
+/// beside, or instead of, a PDF (#1499).
+pub const EPS: &str = "application/postscript";
 /// What Paste reads from other apps, best first: vector art before text, text before bitmaps
 /// (word processors offer a picture of copied text too).
-pub const PASTE_ORDER: [&str; 5] = [SVG, PDF, EMF, TEXT, BITMAP];
+pub const PASTE_ORDER: [&str; 6] = [SVG, PDF, EPS, EMF, TEXT, BITMAP];
+/// Is `text` only an address (a web page's, an image's, a file's)? A browser's Copy Image puts the
+/// image's address as text next to the picture: then the picture is what Paste takes (#597). An
+/// address alone pastes as text, and nothing is fetched.
+pub fn is_address(text: &str) -> bool {
+    const SCHEMES: [&str; 6] = ["http://", "https://", "file://", "ftp://", "data:", "blob:"];
+    let t = text.trim();
+    !t.chars().any(char::is_whitespace) && SCHEMES.iter().any(|s| t.get(..s.len()).is_some_and(|h| h.eq_ignore_ascii_case(s)) && t.len() > s.len())
+}
+
+/// Is `text` only a reference to a picture: an address ([`is_address`]), or markup that shows
+/// nothing but images (`<img …>`)? A browser's Copy Image puts one of them next to the picture
+/// (some put the image's HTML there as text, #1089): then the picture is what Paste takes.
+pub fn names_a_picture(text: &str) -> bool {
+    is_address(text) || only_images(text)
+}
+
+/// Is `html` markup whose only content is `<img>` elements: no text outside its tags (whitespace
+/// between them aside), and at least one image?
+fn only_images(html: &str) -> bool {
+    let mut images = 0;
+    let mut rest = html.trim();
+    while !rest.is_empty() {
+        let Some(tag) = rest.strip_prefix('<') else { return false };
+        let Some(end) = tag.find('>') else { return false };
+        let name = tag.get(..end).unwrap_or_default().split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or_default();
+        if name.eq_ignore_ascii_case("img") {
+            images += 1;
+        }
+        rest = tag.get(end + 1..).unwrap_or_default().trim_start();
+    }
+    images > 0
+}
+
 /// How much of a copied file [`file_flavour`] needs to tell what it is.
 pub const FILE_HEAD: usize = 4096;
 
 /// What a file copied in a file manager pastes as, if one of `mimes` (`image/*`: any bitmap):
-/// SVG, PDF, a Windows metafile or a bitmap (its own `image/…` type), told from its first
+/// SVG, PDF, EPS, a Windows metafile or a bitmap (its own `image/…` type), told from its first
 /// [`FILE_HEAD`] bytes and its name. The file's bytes are that flavour's data.
 pub fn file_flavour(name: &str, head: &[u8], mimes: &[&str]) -> Option<&'static str> {
     let f = fileio::detect(name, head)?;
     let (asked, mime) = match f.id {
         "svg" => (SVG, SVG),
         "pdf" => (PDF, PDF),
+        "eps" => (EPS, EPS),
         "emf" | "wmf" => (EMF, EMF),
         _ if f.raster => (BITMAP, f.mime),
         _ => return None,
@@ -133,6 +170,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{dataBase64 (EMF or WMF bytes), center?: [x, y]} replace the clipboard with the picture's objects (paths, clipping groups, images, point type; the images they use), centred on `center` (default: the first artboard) → {count, warnings}; records VectorCraft doesn't read are skipped with one warning; then run edit.paste",
             has_doc,
             import_emf
+        ),
+        cmd!(
+            query "clipboard.importEps",
+            "Load EPS into Clipboard",
+            [],
+            None,
+            "{dataBase64 (EPS or other PostScript bytes), center?: [x, y]} replace the clipboard with the picture's objects as document.open reads an EPS (editable paths, type and images, with the images, patterns and swatches they use), centred on `center` (default: the first artboard) → {count, warnings}; then run edit.paste",
+            has_doc,
+            import_eps
         ),
     ]
 }
@@ -282,7 +328,7 @@ fn import_image(s: &mut Session, p: &Value) -> Result<Value> {
     let (w, h) = (img.width, img.height);
     let image =
         ImageObject { key: img.key.clone(), width: w, height: h, xf: Affine::scale_non_uniform(sx, sy), link: None, placement: Default::default() };
-    let mut clip = Clipboard { nodes: vec![Node::new(NodeId(1), NodeKind::Image(image))], ..Default::default() };
+    let mut clip = Clipboard { nodes: vec![Node::new(NodeId(1), NodeKind::Image(Box::new(image)))], ..Default::default() };
     clip.images.insert(img.key, img.blob);
     let count = s.load_clipboard(clip, p)?;
     Ok(json!({ "count": count, "width": w as f64 * sx, "height": h as f64 * sy, "pixelWidth": w, "pixelHeight": h }))
@@ -300,7 +346,7 @@ fn import_text(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, "the text is empty"));
     }
     let mut t = TextObject::point(Point::ZERO, text, super::super::create::new_type_style(s, &Value::Null));
-    t.cached_bounds = Some(vectorcraft_text::layout(vectorcraft_text::FontDb::global(), &t).bounds);
+    crate::cmd::typecmd::refresh_bounds(&mut t);
     let n = Node::new(NodeId(1), NodeKind::Text(Box::new(t)));
     let count = s.load_clipboard(Clipboard { nodes: vec![n], ..Default::default() }, p)?;
     Ok(json!({ "count": count }))
@@ -312,10 +358,26 @@ fn import_emf(s: &mut Session, p: &Value) -> Result<Value> {
     if vectorcraft_metafile::sniff(&bytes).is_none() {
         return Err(bad(C, "the data isn't an EMF or WMF picture"));
     }
-    let loaded = fileio::load("Clipboard.emf", &bytes).map_err(|e| bad(C, e.to_string()))?;
+    import_picture(s, p, C, "Clipboard.emf", &bytes)
+}
+
+fn import_eps(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "clipboard.importEps";
+    let bytes = data_param(p, C)?;
+    if !vectorcraft_pdf::is_postscript(&bytes) {
+        return Err(bad(C, "the data isn't an EPS or PostScript picture"));
+    }
+    import_picture(s, p, C, "Clipboard.eps", &bytes)
+}
+
+/// Replace the clipboard with the objects of the picture `bytes`, read as the file `name` is
+/// opened (command `cmd`).
+fn import_picture(s: &mut Session, p: &Value, cmd: &str, name: &str, bytes: &[u8]) -> Result<Value> {
+    let mut loaded = fileio::load(name, bytes).map_err(|e| bad(cmd, e.to_string()))?;
+    loaded.doc.drop_edit_modes();
     let clip = Clipboard::from_document(&loaded.doc);
     if clip.is_empty() {
-        return Err(bad(C, "the picture has no objects"));
+        return Err(bad(cmd, "the picture has no objects"));
     }
     let count = s.load_clipboard(clip, p)?;
     Ok(json!({ "count": count, "warnings": loaded.warnings }))

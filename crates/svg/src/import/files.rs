@@ -203,12 +203,16 @@ impl Files {
         ImageHrefResolver {
             resolve_data: Box::new(move |mime, bytes, opts| {
                 if mime == "image/svg+xml" {
+                    if nested_too_deep(&bytes) {
+                        return None;
+                    }
                     self.note_text(&bytes);
                 }
                 data(mime, bytes, opts)
             }),
             resolve_string: Box::new(move |h, opts| match self.sources.get(h).or_else(|| self.sources.get(h.trim()))? {
                 Source::Raster(kind, bytes) => Some(kind(bytes.clone())),
+                Source::Svg(bytes) if nested_too_deep(bytes) => None,
                 Source::Svg(bytes) => {
                     self.note_text(bytes);
                     usvg::Tree::from_data_nested(bytes, opts).ok().map(ImageKind::SVG)
@@ -216,6 +220,12 @@ impl Files {
             }),
         }
     }
+}
+
+/// Is the SVG image `bytes` nested too deep for usvg to read (as the SVG holding it would be)?
+/// It is then left out, as an image usvg can't read.
+fn nested_too_deep(bytes: &[u8]) -> bool {
+    crate::text_of(bytes).is_ok_and(|text| super::xml_too_deep(&text))
 }
 
 #[cfg(test)]

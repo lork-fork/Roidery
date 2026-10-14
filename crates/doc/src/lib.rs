@@ -10,12 +10,20 @@ pub mod assets;
 pub mod blend;
 pub mod clipnest;
 pub mod cmyk;
+pub mod corners;
+pub mod depth;
 pub mod graph;
 pub mod hit;
+mod id_index;
 pub mod inks;
+mod inline;
+pub mod shared;
+pub use inline::{SYMBOL_HALF, SYMBOL_SIZES};
+pub use shared::Shared;
 pub mod links;
 pub mod live;
 pub mod marks;
+mod mem;
 pub mod metadata;
 pub mod node;
 pub mod orient;
@@ -23,6 +31,8 @@ pub mod overprint;
 pub mod pattern;
 pub mod perspective;
 mod pixels;
+pub use pixels::MAX_RASTER_ALLOC;
+pub mod placed_document;
 pub mod profiles;
 pub mod puppet;
 pub mod range;
@@ -31,10 +41,16 @@ mod reach;
 pub mod recolor;
 pub mod selection;
 pub mod setup;
+pub mod shaper;
 pub mod slices;
 pub mod style_libs;
 pub mod swatches;
+mod symbols;
+pub use symbols::SymbolBoxes;
 pub mod text;
+pub mod trace;
+pub mod variables;
+pub mod xml_id;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -50,43 +66,58 @@ pub(crate) mod skip {
     pub fn is_one(v: &f32) -> bool {
         *v == 1.0
     }
+    pub fn is_empty_vec<T>(v: &[T]) -> bool {
+        v.is_empty()
+    }
+    pub fn is_empty_map(v: &serde_json::Map<String, serde_json::Value>) -> bool {
+        v.is_empty()
+    }
 }
 
 pub use appearance::StrokeGradientMode;
 pub use appearance::{
-    Appearance, AppearanceItem, ArrowAlign, Arrowhead, Dash, Effect, FillLayer, LineCap, LineJoin, ProfilePreset, SavedProfile, StrokeAlign,
-    StrokeLayer, WidthProfile,
+    Appearance, AppearanceItem, ArrowAlign, Arrowhead, Dash, Effect, FillLayer, LineCap, LineJoin, PressureProfile, ProfilePreset, SavedProfile,
+    StrokeAlign, StrokeLayer, WidthProfile,
 };
 pub use assets::ExportAsset;
-pub use graph::{GraphKind, GraphSpec};
+pub use corners::LiveCorners;
+pub use depth::MAX_DEPTH;
+pub use graph::{
+    GraphDesign, GraphKind, GraphSpec, LabelStyles, MAX_GRAPH_CATEGORIES, MAX_GRAPH_SERIES, PiePosition, PieSort, SeriesPaint, TickLength,
+    ValueAxisSide,
+};
 pub use hit::{Hit, HitKind};
 pub use links::{LinkInfo, PlacementOptions};
 pub use live::{BlendOrientation, BlendSpacing, BlendSpec, EnvelopeKind, GradientMesh, MeshPoint};
 pub use metadata::{CopyrightStatus, DocMetadata};
 pub use node::Knockout;
 pub use node::Scaling;
+pub use node::{Extras, ExtrasMut, ImageObject, LAYER_COLORS, LayerColor, LiveShape, Node, NodeExtras, NodeId, NodeKind, OpacityMask};
 pub use node::{ImageMap, ObjectAttributes};
-pub use node::{ImageObject, LAYER_COLORS, LayerColor, LiveShape, Node, NodeId, NodeKind, OpacityMask};
 pub use orient::OrientedBox;
 pub use pattern::{Overlap, PatternDef, PatternEdit, RepeatKind, RepeatSpec, TileType};
 pub use perspective::PerspectiveAttachment;
+pub use placed_document::PlacedDocument;
 pub use profiles::ColorProfiles;
 pub use puppet::{PuppetPin, PuppetPins};
 pub use rastersettings::{RasterColorModel, RasterEffectsSettings};
-pub use selection::{AnchorRef, Selection};
+pub use selection::{AnchorRef, SegmentRef, Selection};
 pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
 pub use style_libs::StyleLibrary;
 pub use text::{
-    AreaOptions, CharAlign, CharPosition, CharStyle, FirstBaseline, Justify, LeadingModel, Mojikumi, ParaDirection, ParaStyle, PathAlign, PathEffect,
-    ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef, TextWrap, WrapShape,
+    AreaFit, AreaOptions, Burasagari, CharAlign, CharPosition, CharStyle, Composer, Digits, FirstBaseline, InlineArt, Justify, Kinsoku, LeadingModel,
+    Mojikumi, ParaDirection, ParaStyle, PathAlign, PathEffect, ScriptMetrics, TabAlign, TabStop, TextKind, TextObject, TextRun, TextStyleDef,
+    TextWrap, VerticalAlign, WrapShape,
 };
+pub use trace::TraceView;
+pub use variables::{DataSet, DataValue, Variable, VariableKind, Variables};
 pub use vectorcraft_color as color;
 pub use vectorcraft_geom as geom;
 
 use serde::{Deserialize, Serialize};
 use vectorcraft_color::{Swatch, SwatchGroup};
-use vectorcraft_geom::{Point, Rect};
+use vectorcraft_geom::{Affine, Point, Rect, Vec2};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DocError {
@@ -386,6 +417,27 @@ pub struct Guide {
     /// true = vertical guide at `pos` (x), false = horizontal at `pos` (y).
     pub vertical: bool,
     pub pos: f64,
+    /// An artboard guide: the [`Artboard::id`] it belongs to. It runs across that artboard only
+    /// and moves, is copied and is deleted with it. None: a canvas guide, across the whole canvas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artboard: Option<u32>,
+    /// The layer (or sublayer) it is on: it shows, hides and locks with that layer and is listed
+    /// in it in the Layers panel, and goes when the layer is deleted. None: on no layer (guides
+    /// from before guides had layers, and from files that don't say), always there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<NodeId>,
+}
+
+impl Guide {
+    /// A canvas guide.
+    pub fn new(vertical: bool, pos: f64) -> Self {
+        Self { vertical, pos, artboard: None, layer: None }
+    }
+
+    /// Moved by `d` (a vertical guide across, a horizontal one down).
+    pub fn moved(&self, d: Vec2) -> Self {
+        Self { pos: self.pos + if self.vertical { d.x } else { d.y }, ..self.clone() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -505,36 +557,48 @@ pub struct Document {
     pub template: bool,
     #[serde(default)]
     pub units: Unit,
+    /// The rulers' zero point in document coordinates. Moving it changes measurements, never art.
+    #[serde(default, skip_serializing_if = "skip::is_default")]
+    pub ruler_origin: Point,
     #[serde(default)]
     pub color_mode: ColorMode,
     pub artboards: Vec<Artboard>,
     /// Top-level layers, bottom first.
     pub layers: Vec<Arc<Node>>,
+    // The document-wide resources below are [`Shared`]: an edit copies the document (copy-on-write)
+    // and the undo history keeps every version, so what an edit doesn't change stays one copy.
+    // Reads, writes and the saved form are those of the value itself.
     #[serde(default)]
-    pub swatches: Vec<Swatch>,
+    pub swatches: Shared<Vec<Swatch>>,
     #[serde(default)]
-    pub swatch_groups: Vec<SwatchGroup>,
+    pub swatch_groups: Shared<Vec<SwatchGroup>>,
     #[serde(default)]
-    pub graphic_styles: Vec<GraphicStyle>,
+    pub graphic_styles: Shared<Vec<GraphicStyle>>,
     /// Character styles (besides the built-in [Normal Character Style], which may be redefined here).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub char_styles: Vec<TextStyleDef>,
+    #[serde(default, skip_serializing_if = "skip::is_empty_vec")]
+    pub char_styles: Shared<Vec<TextStyleDef>>,
     /// Paragraph styles (besides the built-in [Normal Paragraph Style]).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub para_styles: Vec<TextStyleDef>,
+    #[serde(default, skip_serializing_if = "skip::is_empty_vec")]
+    pub para_styles: Shared<Vec<TextStyleDef>>,
     /// Threaded text: area-type frames one story flows through, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_threads: Vec<Vec<NodeId>>,
     #[serde(default)]
     pub symbols: Vec<Symbol>,
+    /// Object › Graph › Design…: art graphs can draw as markers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graph_designs: Vec<GraphDesign>,
     #[serde(default)]
     pub guides: Vec<Guide>,
     /// View → New View… (up to 25, like Illustrator).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<SavedView>,
     /// Select → Save Selection… (at most [`SavedSelection::MAX`]); saved with the document.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub saved_selections: Vec<SavedSelection>,
+    #[serde(default, skip_serializing_if = "skip::is_empty_vec")]
+    pub saved_selections: Shared<Vec<SavedSelection>>,
+    /// Variables (data merge): named values bound to objects, applied per dataset.
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    pub variables: Shared<Variables>,
     #[serde(default)]
     pub grid: GridPrefs,
     #[serde(default = "ppi72")]
@@ -553,8 +617,8 @@ pub struct Document {
     pub mask_edit: Option<MaskEdit>,
     next_id: u64,
     /// Foreign data preserved on round-trip.
-    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
-    pub unknown: serde_json::Map<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "skip::is_empty_map")]
+    pub unknown: Shared<serde_json::Map<String, serde_json::Value>>,
     /// Transparency panel → Page Isolated Blending: the page is an isolated transparency group,
     /// so top-level blend modes don't blend with what lies under the page.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -586,6 +650,11 @@ pub struct Document {
     /// save time only, so changing the view never marks the document modified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_view: Option<SavedView>,
+    /// The layers, sublayers and groups open in the Layers panel when the document was saved; they
+    /// reopen that way. `None`: the default, only the top-level layers open. Written at save time
+    /// only, like [`Document::last_view`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layers_open: Option<Vec<NodeId>>,
     /// Edit → Assign Profile: the profiles the document is tagged with (files before format v3
     /// kept them in `unknown`, see [`Document::migrate_color_profiles`]).
     #[serde(default, skip_serializing_if = "ColorProfiles::is_empty")]
@@ -621,6 +690,9 @@ pub struct Document {
     /// state, never saved.
     #[serde(skip)]
     pub puppet: Option<Arc<PuppetPins>>,
+    /// Where each node is in the tree, for lookups by id ([`id_index`]): a cache, never saved.
+    #[serde(skip)]
+    index: id_index::IdIndex,
 }
 
 fn ppi72() -> f64 {
@@ -630,6 +702,10 @@ fn ppi72() -> f64 {
 fn yes() -> bool {
     true
 }
+
+/// Listed nodes by parent: the parent's index path (empty for the top-level layers), then the index
+/// of each listed child in it, in order, with the child's place in the list.
+type Places = BTreeMap<Vec<usize>, Vec<(usize, usize)>>;
 
 pub const FORMAT_VERSION: u32 = 1;
 
@@ -647,6 +723,7 @@ impl Document {
             title: "Untitled-1".into(),
             template: false,
             units: Unit::Points,
+            ruler_origin: Point::ZERO,
             color_mode: mode,
             artboards: vec![Artboard {
                 id: 1,
@@ -656,16 +733,18 @@ impl Document {
                 show_cross_hairs: false,
             }],
             layers: vec![],
-            swatches,
-            swatch_groups,
-            graphic_styles: default_graphic_styles(),
-            char_styles: vec![],
-            para_styles: vec![],
+            swatches: swatches.into(),
+            swatch_groups: swatch_groups.into(),
+            graphic_styles: default_graphic_styles().into(),
+            char_styles: Default::default(),
+            para_styles: Default::default(),
             text_threads: vec![],
             symbols: vec![],
+            graph_designs: vec![],
             guides: vec![],
             views: vec![],
-            saved_selections: vec![],
+            saved_selections: Default::default(),
+            variables: Default::default(),
             grid: GridPrefs::default(),
             raster_effects_ppi: 72.0,
             images: BTreeMap::new(),
@@ -682,6 +761,7 @@ impl Document {
             metadata: DocMetadata::default(),
             raster_effects: RasterEffectsSettings::default(),
             last_view: None,
+            layers_open: None,
             color_profiles: ColorProfiles::default(),
             export_settings: Default::default(),
             extra: Default::default(),
@@ -691,6 +771,7 @@ impl Document {
             assets: vec![],
             embroidery: None,
             puppet: None,
+            index: Default::default(),
         };
         let id = d.alloc_id();
         d.layers.push(Arc::new(Node::layer(id, "Layer 1", LayerColor::Preset(0))));
@@ -700,7 +781,9 @@ impl Document {
     /// Allocate a fresh node id.
     pub fn alloc_id(&mut self) -> NodeId {
         let id = NodeId(self.next_id);
-        self.next_id += 1;
+        // Never reached from a counter [`Self::fix_next_id`] has seen (it stays under
+        // [`MAX_NEXT_ID`]); saturating so that no counter can overflow.
+        self.next_id = self.next_id.saturating_add(1);
         id
     }
     pub fn peek_next_id(&self) -> u64 {
@@ -708,35 +791,71 @@ impl Document {
     }
     /// Ensure `next_id` is above every id in the tree (after deserializing foreign data).
     pub fn fix_next_id(&mut self) {
+        // Ids from [`MAX_NEXT_ID`] up (a damaged or hand-made file: #1718) are left out, as is a
+        // counter up there: new ids start under them and never reach them, where counting on from
+        // the largest would run out and hand out ids the document already uses.
         let mut max = 0;
+        let mut see = |id: u64| {
+            if id < MAX_NEXT_ID {
+                max = max.max(id);
+            }
+        };
         for l in &self.layers {
-            l.walk(&mut |n| max = max.max(n.id.0));
+            l.walk(&mut |n| see(n.id.0));
         }
-        max = self.slices.iter().fold(max, |m, s| m.max(s.id.0));
-        max = self.assets.iter().fold(max, |m, a| m.max(a.id));
-        self.next_id = self.next_id.max(max + 1);
+        self.slices.iter().for_each(|s| see(s.id.0));
+        self.assets.iter().for_each(|a| see(a.id));
+        let counter = Some(self.next_id).filter(|n| *n <= MAX_NEXT_ID).unwrap_or(0);
+        self.next_id = counter.max(max.saturating_add(1));
     }
 
     /// Find a node anywhere in the tree.
     pub fn node(&self, id: NodeId) -> Option<&Node> {
-        fn find(nodes: &[Arc<Node>], id: NodeId) -> Option<&Node> {
-            for n in nodes {
-                if n.id == id {
-                    return Some(n);
-                }
-                if let Some(ch) = n.children()
-                    && let Some(f) = find(ch, id)
-                {
-                    return Some(f);
-                }
-            }
-            None
-        }
-        find(&self.layers, id)
+        self.index_path(id).and_then(|p| self.node_at(&p))
     }
 
-    /// Index path from the top-level layer list to `id` (e.g. `[0, 3, 1]`).
+    /// [`Document::node`] without building the lookup cache when there is none: for a look at a
+    /// document kept in the undo history ([`Document::drop_lookup_cache`]).
+    pub fn node_uncached(&self, id: NodeId) -> Option<&Node> {
+        match self.index.is_built() {
+            true => self.node(id),
+            false => self.walk_index_path(id).and_then(|p| self.node_at(&p)),
+        }
+    }
+
+    /// Let go of the lookup cache ([`id_index`]), as a document kept in the undo history does: a
+    /// table per step would add up. Lookups still work; the first one builds the cache again.
+    pub fn drop_lookup_cache(&self) {
+        self.index.clear();
+    }
+
+    /// Whether the lookup cache ([`id_index`]) is built (see [`Document::drop_lookup_cache`]).
+    pub fn has_lookup_cache(&self) -> bool {
+        self.index.is_built()
+    }
+
+    /// Index path from the top-level layer list to `id` (e.g. `[0, 3, 1]`): the first place in
+    /// tree order where `id` appears.
     pub fn index_path(&self, id: NodeId) -> Option<Vec<usize>> {
+        // The cached path, while the node there still has the id ([`id_index`]).
+        let cached = self.index.get();
+        match cached.as_ref().and_then(|m| m.get(&id)) {
+            Some(Some(p)) if self.node_at(&p).is_some_and(|n| n.id == id) => return Some(p),
+            Some(None) => return self.walk_index_path(id),
+            _ => {}
+        }
+        // A stale path (the tree changed), an id the cache doesn't have (deleted or added since),
+        // or no cache yet: walk, and rebuild now and then.
+        let found = self.walk_index_path(id);
+        let stale = cached.as_ref().is_some_and(|m| m.contains_key(&id));
+        if cached.is_none() || ((stale || found.is_some()) && self.index.missed()) {
+            self.index.rebuild(&self.layers);
+        }
+        found
+    }
+
+    /// [`Document::index_path`] by walking the tree.
+    fn walk_index_path(&self, id: NodeId) -> Option<Vec<usize>> {
         fn find(nodes: &[Arc<Node>], id: NodeId, path: &mut Vec<usize>) -> bool {
             for (i, n) in nodes.iter().enumerate() {
                 path.push(i);
@@ -754,6 +873,85 @@ impl Document {
         }
         let mut p = vec![];
         find(&self.layers, id, &mut p).then_some(p)
+    }
+
+    /// [`Document::index_path`] of every id in `ids` that is in the tree, in one walk of it: an
+    /// edit of many objects looks them all up for the cost of one search instead of one each. Like
+    /// `index_path`, an id that appears twice maps to its first place in tree order.
+    pub fn index_paths(&self, ids: impl IntoIterator<Item = NodeId>) -> std::collections::HashMap<NodeId, Vec<usize>> {
+        use std::collections::{HashMap, HashSet};
+        fn walk(nodes: &[Arc<Node>], want: &HashSet<NodeId>, path: &mut Vec<usize>, out: &mut HashMap<NodeId, Vec<usize>>) -> bool {
+            for (i, n) in nodes.iter().enumerate() {
+                path.push(i);
+                if want.contains(&n.id) && !out.contains_key(&n.id) {
+                    out.insert(n.id, path.clone());
+                    if out.len() == want.len() {
+                        return true;
+                    }
+                }
+                if let Some(ch) = n.children()
+                    && walk(ch, want, path, out)
+                {
+                    return true;
+                }
+                path.pop();
+            }
+            false
+        }
+        let mut want: HashSet<NodeId> = ids.into_iter().collect();
+        let mut out = HashMap::with_capacity(want.len());
+        // Cached paths that still check out ([`id_index`]); the rest take one walk. For a good
+        // share of the document, one walk is quicker than checking each cached path.
+        if let Some(cache) = self.index.get().filter(|c| want.len().saturating_mul(8) < c.len()) {
+            want.retain(|id| match cache.get(id) {
+                Some(Some(p)) if self.node_at(&p).is_some_and(|n| n.id == *id) => {
+                    out.insert(*id, p);
+                    false
+                }
+                _ => true,
+            });
+        }
+        if !want.is_empty() {
+            let mut rest = HashMap::with_capacity(want.len());
+            walk(&self.layers, &want, &mut Vec::new(), &mut rest);
+            out.extend(rest);
+        }
+        out
+    }
+
+    /// The node at index path `path` (as [`Document::index_path`] gives it).
+    pub fn node_at(&self, path: &[usize]) -> Option<&Node> {
+        let (first, rest) = path.split_first()?;
+        let mut cur: &Node = self.layers.get(*first)?;
+        for &i in rest {
+            cur = cur.children()?.get(i)?;
+        }
+        Some(cur)
+    }
+
+    /// Mutable access to the node at index path `path`; clones the Arc path (copy-on-write), as
+    /// [`Document::node_mut`] does.
+    pub fn node_mut_at(&mut self, path: &[usize]) -> Option<&mut Node> {
+        let (first, rest) = path.split_first()?;
+        let mut cur: &mut Arc<Node> = self.layers.get_mut(*first)?;
+        for &i in rest {
+            cur = Arc::make_mut(cur).children_mut()?.get_mut(i)?;
+        }
+        Some(Arc::make_mut(cur))
+    }
+
+    /// [`Document::ancestry`] of the node at index path `path`.
+    pub fn ancestry_at(&self, path: &[usize]) -> Option<Vec<NodeId>> {
+        let mut out = Vec::with_capacity(path.len());
+        let mut nodes = &self.layers;
+        for &i in path {
+            let n = nodes.get(i)?;
+            out.push(n.id);
+            if let Some(ch) = n.children() {
+                nodes = ch;
+            }
+        }
+        Some(out)
     }
 
     /// Ids from the top-level layer down to `id` inclusive.
@@ -848,6 +1046,128 @@ impl Document {
         Some((parent, idx, n))
     }
 
+    /// Remove the nodes `ids` names and return them in the order of `ids`, in one pass over the
+    /// children of each parent. Each id is listed once and none lies inside another listed node, as
+    /// in a list of top-level objects. For an id that is not in the tree, is listed twice or lies
+    /// inside another listed node, it fails with `NoNode` and leaves the document as it was.
+    pub fn remove_many(&mut self, ids: &[NodeId]) -> Result<Vec<Arc<Node>>, DocError> {
+        let places = self.places(ids)?;
+        let removed = self.take(places, ids.len())?;
+        self.index.clear();
+        Ok(removed)
+    }
+
+    /// Remove the nodes `ids` names, as [`Document::remove_many`] does, and put the node that `make`
+    /// builds from them (in the order of `ids`) in the parent of the last of them, at that node's
+    /// index less the number of listed nodes below it there. Returns the new node's id.
+    pub fn wrap(&mut self, ids: &[NodeId], make: impl FnOnce(Vec<Arc<Node>>) -> Node) -> Result<NodeId, DocError> {
+        let places = self.places(ids)?;
+        let last = ids.len().checked_sub(1);
+        let found = places.iter().find_map(|(up, kids)| kids.iter().find(|(_, k)| Some(*k) == last).map(|(i, _)| (up.clone(), *i)));
+        let Some((up, i)) = found else { return Err(DocError::Invalid("nothing to wrap".into())) };
+        // The parent and each node it is in move down by the listed nodes before them.
+        let below = |parent: &[usize], index: usize| places.get(parent).map_or(0, |kids| kids.partition_point(|(j, _)| *j < index));
+        let to: Vec<usize> = up.iter().enumerate().map(|(l, &j)| j.saturating_sub(below(&up[..l], j))).collect();
+        let at = i.saturating_sub(below(&up, i));
+        let node = make(self.take(places, ids.len())?);
+        let id = node.id;
+        let children = self.children_at(&to).ok_or_else(|| DocError::Invalid("the container of the listed objects is gone".into()))?;
+        let at = at.min(children.len());
+        children.insert(at, Arc::new(node));
+        self.index.clear();
+        Ok(id)
+    }
+
+    /// Put each list of nodes in `items` directly above its anchor (`replace`: in its place), in
+    /// list order, in one pass over the children of each parent. Each anchor is listed once and none
+    /// lies inside another. For an anchor that is not in the tree, is listed twice or lies inside
+    /// another listed anchor, it fails with `NoNode` and leaves the document as it was.
+    pub fn insert_beside(&mut self, items: Vec<(NodeId, Vec<Node>)>, replace: bool) -> Result<(), DocError> {
+        let anchors: Vec<NodeId> = items.iter().map(|(id, _)| *id).collect();
+        let places = self.places(&anchors)?;
+        let mut lists: Vec<Vec<Node>> = items.into_iter().map(|(_, nodes)| nodes).collect();
+        self.edit_children(places, |k, anchor, children| {
+            if !replace {
+                children.push(anchor);
+            }
+            let nodes = lists.get_mut(k).map(std::mem::take).unwrap_or_default();
+            children.extend(nodes.into_iter().map(Arc::new));
+        })?;
+        self.index.clear();
+        Ok(())
+    }
+
+    /// Where each of `ids` is ([`Places`]). Fails with `NoNode` for an id that is not in the tree,
+    /// is listed twice or lies inside another listed node.
+    fn places(&self, ids: &[NodeId]) -> Result<Places, DocError> {
+        let paths = self.index_paths(ids.iter().copied());
+        let mut places = Places::new();
+        for (k, id) in ids.iter().enumerate() {
+            let (&i, up) = paths.get(id).and_then(|p| p.split_last()).ok_or(DocError::NoNode(*id))?;
+            match places.get_mut(up) {
+                Some(kids) => kids.push((i, k)),
+                None => {
+                    places.insert(up.to_vec(), vec![(i, k)]);
+                }
+            }
+        }
+        for kids in places.values_mut() {
+            kids.sort_unstable();
+        }
+        // An id listed twice has one path, so its parent lists the same child twice. A listed node
+        // lies inside another when its parent's path, or a part of it from the top, is the path of a
+        // listed node.
+        let twice = places.values().flat_map(|kids| kids.windows(2)).find(|w| w[0].0 == w[1].0).map(|w| w[1].1);
+        let listed = |path: &[usize]| {
+            path.split_last().is_some_and(|(i, up)| places.get(up).is_some_and(|kids| kids.binary_search_by_key(i, |(j, _)| *j).is_ok()))
+        };
+        let nested = places.iter().find(|(up, _)| (1..=up.len()).any(|l| listed(&up[..l])));
+        let inner = nested.and_then(|(_, kids)| kids.first()).map(|(_, k)| *k);
+        if let Some(id) = twice.or(inner).and_then(|k| ids.get(k)) {
+            return Err(DocError::NoNode(*id));
+        }
+        Ok(places)
+    }
+
+    /// Take the nodes `places` lists out of their parents and return them in the order of the list,
+    /// which is `len` long.
+    fn take(&mut self, places: Places, len: usize) -> Result<Vec<Arc<Node>>, DocError> {
+        let mut taken = vec![None; len];
+        self.edit_children(places, |k, node, _| {
+            if let Some(t) = taken.get_mut(k) {
+                *t = Some(node);
+            }
+        })?;
+        Ok(taken.into_iter().flatten().collect())
+    }
+
+    /// Rebuild the children of each parent in `places` once, the parents later in tree order
+    /// first. `each` gets each listed child, its place in the list and the parent's new children,
+    /// onto which it pushes what takes the child's place.
+    fn edit_children(&mut self, places: Places, mut each: impl FnMut(usize, Arc<Node>, &mut Vec<Arc<Node>>)) -> Result<(), DocError> {
+        for (up, kids) in places.into_iter().rev() {
+            let children = self.children_at(&up).ok_or_else(|| DocError::Invalid("a container of the listed objects is gone".into()))?;
+            let old = std::mem::take(children);
+            children.reserve(old.len());
+            let mut kids = kids.into_iter().peekable();
+            for (i, node) in old.into_iter().enumerate() {
+                match kids.next_if(|(j, _)| *j == i) {
+                    Some((_, k)) => each(k, node, children),
+                    None => children.push(node),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The children of the node at index path `path`, or the top-level layers for an empty path.
+    fn children_at(&mut self, path: &[usize]) -> Option<&mut Vec<Arc<Node>>> {
+        match path {
+            [] => Some(&mut self.layers),
+            _ => self.node_mut_at(path)?.children_mut(),
+        }
+    }
+
     /// Default target layer: the topmost visible, unlocked layer.
     pub fn default_layer(&self) -> Option<NodeId> {
         self.layers.iter().rev().find(|l| l.visible && !l.locked).or(self.layers.last()).map(|l| l.id)
@@ -908,45 +1228,171 @@ impl Document {
             _ => LAYER_COLORS[0].1,
         }
     }
-    /// Union of the geometric bounds of `ids`.
+    /// Union of the geometric bounds of `ids` (their visual bounds when `visual`), with symbol
+    /// instances measured by their art ([`Node::geometric_bounds_with`]).
     pub fn bounds_of(&self, ids: &[NodeId], visual: bool) -> Option<Rect> {
-        ids.iter()
-            .filter_map(|id| self.node(*id))
-            .fold(None, |acc, n| vectorcraft_geom::union_opt(acc, if visual { n.visual_bounds() } else { n.geometric_bounds() }))
+        let symbols = self.symbol_boxes();
+        ids.iter().filter_map(|id| self.node(*id)).fold(None, |acc, n| {
+            vectorcraft_geom::union_opt(acc, if visual { n.visual_bounds_with(&symbols) } else { n.geometric_bounds_with(&symbols) })
+        })
     }
-    /// Bounds of all art.
+    /// Visual bounds of all art, with symbol instances measured by their art.
     pub fn art_bounds(&self) -> Option<Rect> {
-        self.layers.iter().fold(None, |acc, l| vectorcraft_geom::union_opt(acc, l.visual_bounds()))
+        let symbols = self.symbol_boxes();
+        self.layers.iter().fold(None, |acc, l| vectorcraft_geom::union_opt(acc, l.visual_bounds_with(&symbols)))
     }
     /// Artboard index containing point `p` (topmost = last).
     pub fn artboard_at(&self, p: Point) -> Option<usize> {
         self.artboards.iter().rposition(|a| a.rect.contains(p))
     }
     /// The art that moves with an artboard at `rect`: top-level objects (children of layers and
-    /// sublayers) lying entirely inside it. Locked and hidden objects and layers stay put unless
-    /// `locked_and_hidden` (Selection & Anchor Display › Move Locked and Hidden Artwork with
-    /// Artboard).
+    /// sublayers) lying entirely inside it, with symbol instances measured by their art. Locked and
+    /// hidden objects and layers stay put unless `locked_and_hidden` (Selection & Anchor Display ›
+    /// Move Locked and Hidden Artwork with Artboard).
     pub fn art_on_artboard(&self, rect: Rect, locked_and_hidden: bool) -> Vec<NodeId> {
-        fn collect(n: &Node, rect: Rect, all: bool, out: &mut Vec<NodeId>) {
+        // Art drawn flush with the artboard can end up a rounding error outside it (a background
+        // 3e-14 pt past the top edge, #1295): a millionth of a point is far below anything visible.
+        let rect = rect.inflate(1e-6, 1e-6);
+        fn collect(n: &Node, s: &SymbolBoxes, rect: Rect, all: bool, out: &mut Vec<NodeId>) {
             for c in n.children().into_iter().flatten().filter(|c| c.rides_with_artboard(all)) {
                 if c.is_layer() {
-                    collect(c, rect, all, out);
-                } else if let Some(b) = c.geometric_bounds()
-                    && rect.contains(Point::new(b.x0, b.y0))
-                    && rect.contains(Point::new(b.x1, b.y1))
+                    collect(c, s, rect, all, out);
+                } else if let Some(b) = c.geometric_bounds_with(s)
+                    // Inside it, edges included: art flush with the right or bottom edge is on it too
+                    // (`Rect::contains` leaves those out, #890).
+                    && b.x0 >= rect.x0
+                    && b.y0 >= rect.y0
+                    && b.x1 <= rect.x1
+                    && b.y1 <= rect.y1
                 {
                     out.push(c.id);
                 }
             }
         }
+        let symbols = self.symbol_boxes();
         let mut art = vec![];
         for l in self.layers.iter().filter(|l| l.rides_with_artboard(locked_and_hidden)) {
-            collect(l, rect, locked_and_hidden, &mut art);
+            collect(l, &symbols, rect, locked_and_hidden, &mut art);
         }
         art
     }
+    /// Where ruler guide `g` runs along its line (the y range of a vertical guide): across its
+    /// artboard for an artboard guide, None (the whole canvas) for a canvas guide or one whose
+    /// artboard is gone.
+    pub fn guide_span(&self, g: &Guide) -> Option<(f64, f64)> {
+        let r = self.artboards.iter().find(|a| Some(a.id) == g.artboard)?.rect;
+        Some(if g.vertical { (r.y0, r.y1) } else { (r.x0, r.x1) })
+    }
+    /// The layer (or sublayer) ruler guide `g` is on, if it is on one this document has.
+    fn guide_layer(&self, g: &Guide) -> Option<NodeId> {
+        g.layer.filter(|l| self.node(*l).is_some_and(Node::is_layer))
+    }
+    /// Is ruler guide `g` shown: on no layer, or on a layer that (with the layers around it) is
+    /// visible? A guide whose layer is gone shows as one on no layer.
+    pub fn guide_shown(&self, g: &Guide) -> bool {
+        self.guide_layer(g).is_none_or(|l| self.is_visible(l))
+    }
+    /// Can ruler guide `g` be picked, moved and deleted: shown, and its layer unlocked?
+    pub fn guide_editable(&self, g: &Guide) -> bool {
+        self.guide_layer(g).is_none_or(|l| self.is_editable(l))
+    }
+    /// Put the ruler guides on no layer this document has (from files saved before guides had
+    /// layers, or of layers merged into `layer`) on layer `layer`. Returns how many.
+    pub fn rehome_guides(&mut self, layer: NodeId) -> usize {
+        let lost: Vec<bool> = self.guides.iter().map(|g| self.guide_layer(g).is_none()).collect();
+        let mut n = 0;
+        for (g, lost) in self.guides.iter_mut().zip(lost) {
+            if lost {
+                g.layer = Some(layer);
+                n += 1;
+            }
+        }
+        n
+    }
+    /// Put the ruler guides on no layer (from files saved before guides had layers), or on one that
+    /// is gone, on the top visible, unlocked layer ([`Self::default_layer`]). Returns how many.
+    pub fn adopt_guides(&mut self) -> usize {
+        self.default_layer().map_or(0, |home| self.rehome_guides(home))
+    }
+    /// Delete the ruler guides whose layer was deleted (they go with it), keeping `sel`'s guides in
+    /// step. Guides on no layer stay. Returns how many went.
+    pub fn drop_guides_of_deleted_layers(&mut self, sel: &mut Selection) -> usize {
+        let gone: Vec<bool> = self.guides.iter().map(|g| g.layer.is_some() && self.guide_layer(g).is_none()).collect();
+        self.retain_guides(sel, |i, _| !gone.get(i).copied().unwrap_or(false))
+    }
+    /// Copy the ruler guides of layer `from` and of its sublayers onto their copies in `copy` (made
+    /// from `from` by [`Self::reid`]: the same tree with fresh ids), as duplicating a layer copies
+    /// the objects on it. Returns how many.
+    pub fn copy_layer_guides(&mut self, from: &Node, copy: &Node) -> usize {
+        let layers = |n: &Node| {
+            let mut out = vec![];
+            n.walk(&mut |c| {
+                if c.is_layer() {
+                    out.push(c.id);
+                }
+            });
+            out
+        };
+        let pairs: Vec<(NodeId, NodeId)> = layers(from).into_iter().zip(layers(copy)).collect();
+        let copies: Vec<Guide> = self
+            .guides
+            .iter()
+            .filter_map(|g| {
+                let to = pairs.iter().find(|(a, _)| Some(*a) == g.layer)?.1;
+                Some(Guide { layer: Some(to), ..g.clone() })
+            })
+            .collect();
+        let n = copies.len();
+        self.guides.extend(copies);
+        n
+    }
+    /// The ruler guides on layer `layer` (not its sublayers'), by index.
+    pub fn guides_on(&self, layer: NodeId) -> impl Iterator<Item = (usize, &Guide)> + '_ {
+        self.guides.iter().enumerate().filter(move |(_, g)| g.layer == Some(layer))
+    }
+    /// Does ruler guide `g` run past `p` (up to `tol` beyond its ends)?
+    pub fn guide_passes(&self, g: &Guide, p: Point, tol: f64) -> bool {
+        let along = if g.vertical { p.y } else { p.x };
+        self.guide_span(g).is_none_or(|(a, b)| along >= a - tol && along <= b + tol)
+    }
+    /// Keep the ruler guides `keep` accepts (by index), the selected ones left keeping their
+    /// place among the rest (the selected art stays selected). Returns how many went.
+    pub fn retain_guides(&mut self, sel: &mut Selection, keep: impl Fn(usize, &Guide) -> bool) -> usize {
+        let kept: Vec<bool> = self.guides.iter().enumerate().map(|(i, g)| keep(i, g)).collect();
+        // Where each kept guide ends up.
+        let (mut to, mut n) = (Vec::with_capacity(kept.len()), 0);
+        for k in &kept {
+            to.push(k.then_some(n));
+            n += usize::from(*k);
+        }
+        sel.guides = sel.guides.iter().filter_map(|i| to.get(*i).copied().flatten()).collect();
+        let before = self.guides.len();
+        let mut flags = kept.into_iter();
+        self.guides.retain(|_| flags.next().unwrap_or(true));
+        before - self.guides.len()
+    }
+    /// Move the guides of artboard `id` by `d` (along with their artboard).
+    pub fn move_artboard_guides(&mut self, id: u32, d: Vec2) {
+        for g in self.guides.iter_mut().filter(|g| g.artboard == Some(id)) {
+            *g = g.moved(d);
+        }
+    }
+    /// Map the guides of artboard `id` through `xf`, an axis-aligned scale and move (Scale Artwork
+    /// with Artboard).
+    pub fn map_artboard_guides(&mut self, id: u32, xf: Affine) {
+        for g in self.guides.iter_mut().filter(|g| g.artboard == Some(id)) {
+            g.pos = if g.vertical { (xf * Point::new(g.pos, 0.0)).x } else { (xf * Point::new(0.0, g.pos)).y };
+        }
+    }
+    /// Copy the guides of artboard `from` onto artboard `to`, `d` away (with a copy of their
+    /// artboard).
+    pub fn copy_artboard_guides(&mut self, from: u32, to: u32, d: Vec2) {
+        let copies: Vec<Guide> =
+            self.guides.iter().filter(|g| g.artboard == Some(from)).map(|g| Guide { artboard: Some(to), ..g.moved(d) }).collect();
+        self.guides.extend(copies);
+    }
     pub fn next_artboard_id(&self) -> u32 {
-        self.artboards.iter().map(|a| a.id).max().unwrap_or(0) + 1
+        free_id(self.artboards.iter().map(|a| a.id))
     }
     pub fn pattern(&self, name: &str) -> Option<&PatternDef> {
         self.patterns.iter().find(|p| p.name == name)
@@ -991,7 +1437,7 @@ impl Document {
             let objects = s.objects.into_iter().filter(|id| ids.contains(id) && seen.insert(*id)).collect();
             kept.push(SavedSelection { name, objects });
         }
-        self.saved_selections = kept;
+        self.saved_selections = kept.into();
     }
 
     /// Leave opacity-mask editing: drop the temporary editing layer, a working copy of art the
@@ -1030,7 +1476,7 @@ impl Document {
     }
     /// An id no graphic style has.
     pub fn next_graphic_style_id(&self) -> u32 {
-        self.graphic_styles.iter().map(|g| g.id).max().unwrap_or(0) + 1
+        free_id(self.graphic_styles.iter().map(|g| g.id))
     }
     /// The id of graphic style `index`, assigning one if it has none yet.
     pub fn graphic_style_id(&mut self, index: usize) -> u32 {
@@ -1043,6 +1489,14 @@ impl Document {
     /// from the number of styles.
     pub fn new_graphic_style_name(&self) -> String {
         (self.graphic_styles.len() + 1..).map(|i| format!("Graphic Style {i}")).find(|n| self.graphic_style(n).is_none()).unwrap_or_default()
+    }
+    /// `base`, or the first free "`base` N" (N from 2) when a symbol already has that name.
+    pub fn unique_symbol_name(&self, base: &str) -> String {
+        let taken = |n: &str| self.symbols.iter().any(|s| s.name == n);
+        if !taken(base) {
+            return base.to_string();
+        }
+        (2..).map(|i| format!("{base} {i}")).find(|n| !taken(n)).unwrap_or_else(|| base.to_string())
     }
 }
 
@@ -1061,11 +1515,29 @@ fn default_graphic_styles() -> Vec<GraphicStyle> {
     .collect()
 }
 
+/// Node, slice and asset ids are handed out below this: no document gets near it by counting, so
+/// larger ids in a file are damage (or made by hand) and the counter never follows them (#1718).
+const MAX_NEXT_ID: u64 = 1 << 62;
+
+/// An id (never 0) none of `used` has: one past the largest, or, when that is the largest there
+/// is (a damaged file), the smallest one free.
+fn free_id(used: impl Iterator<Item = u32>) -> u32 {
+    let mut used: Vec<u32> = used.collect();
+    if let Some(next) = used.iter().max().copied().unwrap_or(0).checked_add(1) {
+        return next;
+    }
+    used.sort_unstable();
+    used.dedup();
+    // Ids 1, 2, 3… as far as they are all taken: the first that isn't follows them.
+    let taken = used.iter().filter(|&&id| id != 0).zip(1u32..).take_while(|&(&id, n)| id == n).count();
+    u32::try_from(taken).map_or(u32::MAX, |n| n.saturating_add(1))
+}
+
 impl Document {
     /// Make the next id allocated at least `next`: ids handed out outside the layer tree (such
     /// as an importer's opacity mask and pattern art), which [`Document::fix_next_id`] doesn't see.
     pub fn reserve_ids(&mut self, next: u64) {
-        self.next_id = self.next_id.max(next);
+        self.next_id = self.next_id.max(next.min(MAX_NEXT_ID));
     }
 }
 
@@ -1098,6 +1570,10 @@ mod tests {
         let wide = Rect::new(-1.0, -1.0, 40.0, 15.0);
         assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 15.0, 15.0), false), vec![a]);
         assert_eq!(d.art_on_artboard(Rect::new(-1.0, -1.0, 25.0, 15.0), false), vec![a], "b only half inside");
+        // Flush with the artboard's edges counts as inside: the right and bottom ones too (#890).
+        for board in [Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(-5.0, 0.0, 10.0, 15.0), Rect::new(0.0, -5.0, 15.0, 10.0)] {
+            assert_eq!(d.art_on_artboard(board, false), vec![a], "{board:?}");
+        }
         d.node_mut(a).unwrap().locked = true;
         assert_eq!(d.art_on_artboard(wide, false), vec![b]);
         // Move Locked and Hidden Artwork with Artboard (#394): hidden art stays too, unless on.
@@ -1107,6 +1583,37 @@ mod tests {
         Arc::make_mut(&mut d.layers[0]).locked = true;
         assert!(d.art_on_artboard(wide, false).is_empty());
         assert_eq!(d.art_on_artboard(wide, true), vec![a, b], "a locked layer's art too");
+    }
+
+    #[test]
+    fn art_on_artboard_tolerates_roundoff_at_each_edge() {
+        let (d, a, _) = doc_with_rects();
+        let roundoff = 1e-12;
+        for board in [
+            Rect::new(roundoff, 0.0, 10.0, 10.0),
+            Rect::new(0.0, roundoff, 10.0, 10.0),
+            Rect::new(0.0, 0.0, 10.0 - roundoff, 10.0),
+            Rect::new(0.0, 0.0, 10.0, 10.0 - roundoff),
+        ] {
+            assert_eq!(d.art_on_artboard(board, false), vec![a], "roundoff at {board:?}");
+        }
+        // A real overhang remains outside.
+        for board in
+            [Rect::new(0.001, 0.0, 10.0, 10.0), Rect::new(0.0, 0.001, 10.0, 10.0), Rect::new(0.0, 0.0, 9.999, 10.0), Rect::new(0.0, 0.0, 10.0, 9.999)]
+        {
+            assert!(d.art_on_artboard(board, false).is_empty(), "overhang at {board:?}");
+        }
+    }
+
+    #[test]
+    fn art_on_artboard_measures_a_symbol_instance_by_its_art() {
+        let mut d = Document::new(612.0, 792.0);
+        let art = Node::path(d.alloc_id(), shapes::rectangle(Rect::new(0.0, 0.0, 10.0, 10.0)), Appearance::default_art());
+        d.symbols.push(Symbol { name: "Box".into(), art: Arc::new(art) });
+        let (layer, id) = (d.layers[0].id, d.alloc_id());
+        d.insert(Some(layer), 0, Node::new(id, NodeKind::SymbolInstance { symbol: "Box".into(), xf: Affine::translate((2.0, 2.0)) })).unwrap();
+        // The art, (2, 2) to (12, 12), lies inside; the 20 × 20 square, (-8, -8) to (12, 12), doesn't.
+        assert_eq!(d.art_on_artboard(Rect::new(0.0, 0.0, 15.0, 15.0), false), vec![id]);
     }
 
     #[test]
@@ -1153,6 +1660,45 @@ mod tests {
         assert_eq!(d.node(l2).unwrap().display_name(), "Layer 2");
         assert_eq!(d.default_layer(), Some(l2));
         assert_eq!(d.layer_color(l2), LAYER_COLORS[1].1);
+    }
+
+    /// #1718: a file whose ids or counters are at their type's largest value still hands out ids
+    /// nothing in it uses (and never 0), instead of overflowing.
+    #[test]
+    fn exhausted_ids_in_a_file_dont_run_out() {
+        let (d, a, b) = doc_with_rects();
+        let mut v = serde_json::to_value(&d).unwrap();
+        v["next_id"] = serde_json::json!(u64::MAX);
+        // Object `a` gets the largest id there is.
+        fn renumber(v: &mut serde_json::Value, from: u64) {
+            match v {
+                serde_json::Value::Object(o) => {
+                    if o.get("id").and_then(serde_json::Value::as_u64) == Some(from) {
+                        o.insert("id".into(), serde_json::json!(u64::MAX));
+                    }
+                    o.values_mut().for_each(|c| renumber(c, from));
+                }
+                serde_json::Value::Array(a) => a.iter_mut().for_each(|c| renumber(c, from)),
+                _ => {}
+            }
+        }
+        renumber(&mut v["layers"], a.0);
+        let mut d: Document = serde_json::from_value(v).unwrap();
+        assert!(d.node(NodeId(u64::MAX)).is_some(), "the file's largest id is kept");
+        d.fix_next_id();
+        let fresh: Vec<NodeId> = (0..3).map(|_| d.alloc_id()).collect();
+        assert!(fresh.iter().all(|id| d.node(*id).is_none() && id.0 > b.0 && id.0 < MAX_NEXT_ID), "{fresh:?}");
+        assert!(fresh[0] != fresh[1] && fresh[1] != fresh[2]);
+        // A counter left at the end by other means stays there rather than wrapping to 0.
+        d.next_id = u64::MAX;
+        assert_eq!((d.alloc_id(), d.peek_next_id()), (NodeId(u64::MAX), u64::MAX));
+        d.reserve_ids(u64::MAX);
+        // Artboards and graphic styles: one past the largest, else the smallest id free.
+        assert_eq!(free_id([1, 2, 7].into_iter()), 8);
+        assert_eq!(free_id([u32::MAX, 0, 1, 2, 4].into_iter()), 3);
+        assert_eq!(free_id([u32::MAX].into_iter()), 1);
+        d.artboards[0].id = u32::MAX;
+        assert_eq!(d.next_artboard_id(), 1);
     }
 
     #[test]
@@ -1229,6 +1775,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod tests_lookups;
 #[cfg(test)]
 mod tests_slices;
 #[cfg(test)]

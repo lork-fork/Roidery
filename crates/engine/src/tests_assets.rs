@@ -265,3 +265,21 @@ fn assets_export_into_a_folder() {
     assert!(dir.join("2x/Logo@2x.png").is_file() && dir.join("PDF/Logo.pdf").is_file());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn collecting_explicit_assets_rejects_invalid_ids_without_adding_anything() {
+    let mut s = session();
+    let a = rect(&mut s, 10.0, 10.0, 20.0, 20.0);
+    let b = rect(&mut s, 50.0, 10.0, 20.0, 20.0);
+    let original_selection = s.doc().unwrap().selection.objects.clone();
+    let before = undo_len(&s);
+    for ids in [json!([a, "not an object"]), json!([a, 3.5]), json!([a, u64::MAX]), json!({"id": a})] {
+        assert!(s.execute("assets.add", &json!({"ids": ids})).is_err(), "invalid ids: {ids}");
+        assert!(assets(&mut s).is_empty(), "invalid ids must not collect only the valid subset");
+        assert_eq!(undo_len(&s), before);
+        assert_eq!(s.doc().unwrap().selection.objects, original_selection);
+    }
+    // Valid ids still collect art in document paint order.
+    assert_eq!(run(&mut s, "assets.add", json!({"ids": [b, a]}))["added"], 2);
+    assert_eq!(assets(&mut s).len(), 2);
+}

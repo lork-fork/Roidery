@@ -9,6 +9,7 @@
 
 pub mod arc;
 pub mod bez;
+pub mod corners;
 pub mod hit;
 pub mod path;
 pub mod projective;

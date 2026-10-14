@@ -188,7 +188,7 @@ proptest! {
         let gutter_w = g * (cols - 1) as f64;
         let gutter_h = g * (rows - 1) as f64;
         prop_assume!(r.width() > gutter_w + 1.0 && r.height() > gutter_h + 1.0);
-        let cells = split_into_grid(r, rows, cols, g);
+        let cells = split_into_grid(r, rows, cols, (g, g));
         prop_assert_eq!(cells.len(), rows * cols);
         let total: f64 = cells.iter().map(|c| area(c, NZ)).sum();
         let want = (r.width() - gutter_w) * (r.height() - gutter_h);

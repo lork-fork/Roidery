@@ -209,3 +209,26 @@ fn rotated_box_rect_matches_page_bounds_when_upright() {
     sel(&mut s, &[a]);
     assert_eq!(selection_box(&s), OrientedBox::aligned(Rect::new(10.0, 20.0, 40.0, 60.0)));
 }
+
+/// The Selection tool says when a drag moves, scales or rotates the selection (the canvas hides the
+/// bounding box meanwhile, #712), and not on a press that hasn't moved or a marquee.
+#[test]
+fn the_selection_tool_reports_a_transforming_drag() {
+    let mut s = session();
+    let id = id_of(&s.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": 100, "height": 50})).unwrap());
+    s.execute("select.set", &json!({"ids": [id.0]})).unwrap();
+    let v = ViewInfo::default();
+    s.select_tool("selection", v).unwrap();
+    let ev = |kind, x: f64, y: f64| PointerEvent::new(kind, x, y).with_mods(Mods::default());
+    s.pointer(&ev(PointerKind::Down, 150.0, 125.0), v).unwrap();
+    assert!(!s.tool_transforming(), "a press that hasn't moved");
+    s.pointer(&ev(PointerKind::Drag, 190.0, 160.0), v).unwrap();
+    assert!(s.tool_transforming(), "moving");
+    s.pointer(&ev(PointerKind::Up, 190.0, 160.0), v).unwrap();
+    assert!(!s.tool_transforming());
+    // A marquee on empty canvas isn't a transform.
+    s.pointer(&ev(PointerKind::Down, 500.0, 400.0), v).unwrap();
+    s.pointer(&ev(PointerKind::Drag, 550.0, 450.0), v).unwrap();
+    assert!(s.tool_busy() && !s.tool_transforming());
+    s.pointer(&ev(PointerKind::Up, 550.0, 450.0), v).unwrap();
+}

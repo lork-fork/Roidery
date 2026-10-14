@@ -50,7 +50,7 @@ fn plates_section(app: &mut VectorcraftApp, ui: &mut Ui) {
                     run(app, "view.separationsPreview", json!({"plates": plates.iter().map(|p| p.name.clone()).collect::<Vec<_>>()}));
                 }
             });
-            ui.label(egui::RichText::new("CMYK").size(12.0).color(if on { t.text } else { t.text_dim }));
+            ui.label(egui::RichText::new(tl!("CMYK")).size(12.0).color(if on { t.text } else { t.text_dim }));
         });
         for p in &plates {
             ui.horizontal(|ui| {
@@ -86,13 +86,13 @@ fn settings_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     let st = cms::active_settings();
     widgets::section_header(ui, tl!("Color Settings"));
     ui.horizontal(|ui| {
-        ui.label("RGB:");
+        ui.label(tl!("RGB:"));
         if let Some(n) = profile_dropdown(ui, "cms-rgb", &st.rgb, ProfileKind::Rgb, None) {
             run(app, "edit.colorSettings", json!({"rgb": n}));
         }
     });
     ui.horizontal(|ui| {
-        ui.label("CMYK:");
+        ui.label(tl!("CMYK:"));
         if let Some(n) = profile_dropdown(ui, "cms-cmyk", &st.cmyk, ProfileKind::Cmyk, None) {
             run(app, "edit.colorSettings", json!({"cmyk": n}));
         }
@@ -108,14 +108,14 @@ fn settings_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         run(app, "edit.colorSettings", json!({"bpc": !st.bpc}));
     }
     ui.horizontal(|ui| {
-        if widgets::flat_button(ui, tl!("Load Profile…"), 110.0).clicked()
-            && let Some(path) = app
-                .services
-                .pick_open
-                .as_mut()
-                .and_then(|f| f(&crate::FilePick { filters: vec![("ICC Profiles", &["icc", "icm"])], ..Default::default() }))
-        {
-            run(app, "color.loadProfile", json!({ "path": path }));
+        if widgets::flat_button(ui, tl!("Load Profile…"), 110.0).clicked() {
+            // Its file dialog, shown off the UI thread, loads the profile when it answers.
+            crate::picks::button(app, |app| {
+                let pick = crate::FilePick { filters: vec![("ICC Profiles", &["icc", "icm"])], ..Default::default() };
+                if let Some(path) = crate::picks::open(app, &pick) {
+                    run(app, "color.loadProfile", json!({ "path": path }));
+                }
+            });
         }
         if widgets::flat_button(ui, tl!("Gamut Check"), 100.0).clicked() {
             match app.run("color.gamutCheck", json!({})) {

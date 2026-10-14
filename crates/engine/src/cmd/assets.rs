@@ -80,12 +80,13 @@ fn clean_name(name: &str) -> Option<String> {
 
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "assets.add";
-    let ids = match ids_param(p, "ids") {
-        Some(ids) => {
-            let d = &s.doc()?.doc;
-            roots_of(d, d.paint_order(ids))
-        }
-        None => selected_roots(s)?,
+    let ids = if p.get("ids").is_some_and(|v| !v.is_null()) {
+        // An explicit list is authoritative: never silently drop malformed or stale ids.
+        let ids = checked_ids_param(s, p, "ids", C)?;
+        let d = &s.doc()?.doc;
+        roots_of(d, d.paint_order(ids))
+    } else {
+        selected_roots(s)?
     };
     if ids.is_empty() {
         return Err(bad(C, "select the art to collect (or give its ids)"));

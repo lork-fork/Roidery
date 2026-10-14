@@ -40,6 +40,33 @@ fn weights_and_dashes_show_in_the_stroke_unit_everywhere() {
     assert!(shows(&texts(&ctx, &mut app, crate::chrome::control_bar), &mm), "Control bar");
 }
 
+/// The Properties panel's Stroke row is the Control bar's: the Stroke link opens the Stroke panel
+/// as a popover and the weight spinner lists the presets (Discord feedback).
+#[test]
+fn the_properties_stroke_link_and_weight_presets() {
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let mut app = app_with_rect();
+    let t = texts(&ctx, &mut app, properties::show);
+    assert!(!shows(&t, "Cap:"), "closed: {t:?}");
+    click(&ctx, &mut app, text_rect(&t, "Stroke").center(), properties::show);
+    let t = texts(&ctx, &mut app, properties::show);
+    assert!(shows(&t, "Cap:") && shows(&t, "Align Stroke:"), "the Stroke panel's popover: {t:?}");
+    click(&ctx, &mut app, text_rect(&t, "Stroke").center(), properties::show);
+    // The weight's dropdown: the 20 pt chevron cell right of the field showing "1 pt".
+    let field = text_rect(&texts(&ctx, &mut app, properties::show), "1 pt");
+    let chevron = ctx.viewport(|vp| {
+        let w = vp.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).map(|w| w.rect);
+        w.filter(|r| r.width() == 20.0 && r.left() > field.right() && r.y_range().contains(field.center().y))
+            .min_by(|a, b| a.left().total_cmp(&b.left()))
+    });
+    click(&ctx, &mut app, chevron.expect("the weight's preset chevron").center(), properties::show);
+    let t = texts(&ctx, &mut app, properties::show);
+    assert!(!shows(&t, "Cap:") && shows(&t, "0.25 pt") && shows(&t, "100 pt"), "the presets: {t:?}");
+    click(&ctx, &mut app, text_rect(&t, "3 pt").center(), properties::show);
+    assert_eq!(app.session.shown_stroke().unwrap().width, 3.0);
+}
+
 #[test]
 fn mixed_weights_show_blank() {
     let ctx = egui::Context::default();
@@ -111,4 +138,38 @@ fn weight_presets_display_cleanly_in_their_native_unit() {
     assert!([1.0, 12.0, 60.0].iter().all(|w| pc.contains(w)), "{pc:?}");
     // Units no stroke is measured in keep the pt ladder, in points.
     assert_eq!(stroke::weight_presets(Unit::Meters), stroke::weight_presets(Unit::Points));
+}
+
+/// #991: the spinner left of the Stroke Weight field steps ten with Shift on both arrows and a
+/// tenth with Ctrl/Cmd, as ↑/↓ do in the focused field, while a plain click steps one point.
+#[test]
+fn stroke_weight_stepper_uses_ten_point_shift_steps() {
+    use super::tests_appearance::frame_raw;
+
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let mut app = app_with_rect();
+    run(&mut app, "stroke.set", json!({"weight": 14}));
+    let t = texts(&ctx, &mut app, stroke::show);
+    // The 16 px spinner sits just left of the field's text.
+    let r = text_rect(&t, "14 pt");
+    let x = r.left() - 14.0;
+    let click_step = |app: &mut VectorcraftApp, y: f32, modifiers: egui::Modifiers| {
+        let pos = egui::pos2(x, y);
+        let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers };
+        for event in [egui::Event::PointerMoved(pos), button(true), button(false)] {
+            let events = vec![egui::Event::ModifiersChanged(modifiers), event];
+            frame_raw(&ctx, app, egui::RawInput { events, ..Default::default() }, stroke::show);
+        }
+    };
+
+    click_step(&mut app, r.center().y - 5.0, egui::Modifiers::SHIFT);
+    assert_eq!(app.session.shown_stroke().unwrap().width, 24.0);
+    click_step(&mut app, r.center().y + 5.0, egui::Modifiers::NONE);
+    assert_eq!(app.session.shown_stroke().unwrap().width, 23.0);
+    click_step(&mut app, r.center().y + 5.0, egui::Modifiers::SHIFT);
+    assert_eq!(app.session.shown_stroke().unwrap().width, 13.0);
+    // Ctrl/Cmd steps a tenth, as ↑/↓ and the wheel do in the field.
+    click_step(&mut app, r.center().y + 5.0, egui::Modifiers::COMMAND);
+    assert!((app.session.shown_stroke().unwrap().width - 12.9).abs() < 1e-6);
 }

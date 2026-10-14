@@ -23,15 +23,20 @@ mod embroidery;
 pub mod expand;
 pub(crate) mod fileinfo;
 pub mod fileio;
+pub mod findfiles;
 pub mod flatten;
+pub mod fontfiles;
 mod fonts;
 pub(crate) mod freeform;
 pub(crate) mod gradient;
 pub(crate) mod graph;
 mod halftone;
 pub mod help;
+pub(crate) mod inline;
 mod layer;
 mod layerpanel;
+pub mod library;
+pub mod linkfiles;
 pub mod links;
 mod live;
 pub(crate) mod maskedit;
@@ -44,12 +49,13 @@ mod overprint;
 mod package;
 mod paint;
 mod panelcmds;
+pub mod params;
 mod path;
 mod pathops;
 mod patterncmds;
 pub mod pdfcmds;
 pub mod perspgrid;
-mod place;
+pub(crate) mod place;
 pub mod plugin;
 pub mod prefscmds;
 pub mod print;
@@ -59,7 +65,9 @@ pub mod printtiling;
 pub mod rasterfx;
 mod recolor;
 pub mod recovery;
+pub mod scripts;
 mod select;
+pub(crate) mod shaper;
 pub(crate) mod slices;
 mod stroke;
 mod style;
@@ -73,6 +81,7 @@ pub(crate) mod textwrap;
 pub(crate) mod threads;
 pub(crate) mod typecmd;
 mod typemenu;
+mod variablecmds;
 pub(crate) mod views;
 pub mod wand;
 pub mod webexport;
@@ -145,6 +154,10 @@ pub fn has_selection(s: &Session) -> std::result::Result<(), String> {
     let st = s.active().ok_or("no document open")?;
     if st.selection.is_empty() { Err("nothing selected".into()) } else { Ok(()) }
 }
+/// Objects are selected, or the Artboard tool is chosen (Copy and Cut take its artboard).
+pub fn has_selection_or_artboard_tool(s: &Session) -> std::result::Result<(), String> {
+    if s.tool_id() == "artboard" { has_doc(s) } else { has_selection(s) }
+}
 /// Objects or ruler guides are selected (what Delete and the arrow keys act on).
 pub fn has_selection_or_guides(s: &Session) -> std::result::Result<(), String> {
     let st = s.active().ok_or("no document open")?;
@@ -214,8 +227,10 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(colormgmt::specs());
         v.extend(typemenu::specs());
         v.extend(textedit::specs());
+        v.extend(inline::specs());
         v.extend(textstyles::specs());
         v.extend(fonts::specs());
+        v.extend(fontfiles::specs());
         v.extend(help::specs());
         v.extend(threads::specs());
         v.extend(textwrap::specs());
@@ -225,9 +240,11 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(maskedit::specs());
         v.extend(tabs::specs());
         v.extend(docmenu::specs());
+        v.extend(variablecmds::specs());
         v.extend(docinfo::specs());
         v.extend(panelcmds::specs());
         v.extend(buildcmds::specs());
+        v.extend(shaper::specs());
         v.extend(brushsym::specs());
         v.extend(patterncmds::specs());
         v.extend(prefscmds::specs());
@@ -238,6 +255,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(freeform::specs());
         v.extend(flatten::specs());
         v.extend(stylelib::specs());
+        v.extend(library::specs());
         v.extend(expand::specs());
         v.extend(attributes::specs());
         v.extend(embroidery::specs());
@@ -248,6 +266,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(newdoc::specs());
         v.extend(place::specs());
         v.extend(links::specs());
+        v.extend(linkfiles::specs());
         v.extend(pdfcmds::specs());
         v.extend(fileio::dxf::specs());
         v.extend(fileio::eps::specs());
@@ -262,6 +281,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(printpresets::specs());
         v.extend(printtiling::specs());
         v.extend(plugin::specs());
+        v.extend(scripts::specs());
         v.extend(cut::specs());
         v.extend(halftone::specs());
         v.extend(perspgrid::specs());
@@ -296,6 +316,43 @@ pub(crate) fn id_param(p: &Value, key: &str) -> Option<NodeId> {
 pub(crate) fn ids_param(p: &Value, key: &str) -> Option<Vec<NodeId>> {
     p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(NodeId).collect())
 }
+/// Validate all explicit targets before a command changes the document or selection.
+pub(crate) fn checked_ids_param(s: &Session, p: &Value, key: &str, command: &str) -> Result<Vec<NodeId>> {
+    let values =
+        p.get(key).and_then(Value::as_array).ok_or_else(|| bad(command, format!("{key} must be an array of non-negative integer object ids")))?;
+    values.iter().map(|value| checked_id(s, value, command)).collect()
+}
+
+/// The objects a command acts on: `ids` when given (every one checked), else the selected objects.
+pub(crate) fn checked_ids_or_selection(s: &Session, p: &Value, command: &str) -> Result<Vec<NodeId>> {
+    if p.get("ids").is_some() { checked_ids_param(s, p, "ids", command) } else { edit::selected_roots(s) }
+}
+
+pub(crate) fn checked_id(s: &Session, value: &Value, command: &str) -> Result<NodeId> {
+    let id = value.as_u64().map(NodeId).ok_or_else(|| bad(command, format!("invalid object id {value}: expected a non-negative integer")))?;
+    if s.doc()?.doc.node(id).is_none() {
+        return Err(bad(command, format!("no such object id {value}")));
+    }
+    Ok(id)
+}
+
+/// `v` as exactly `N` finite numbers (`[x, y]`, `[x, y, width, height]`…): `None` when it isn't an
+/// array of that length or an entry isn't a number, so nothing malformed is left out or padded.
+pub(crate) fn finite_numbers<const N: usize>(v: &Value) -> Option<[f64; N]> {
+    let a = v.as_array().filter(|a| a.len() == N)?;
+    let mut out = [0.0; N];
+    for (o, n) in out.iter_mut().zip(a) {
+        *o = n.as_f64().filter(|n| n.is_finite())?;
+    }
+    Some(out)
+}
+
+/// `v` as a list of point indices: `None` unless it is an array of non-negative integers, so no
+/// malformed index is dropped or wrapped round.
+pub(crate) fn point_indices(v: &Value) -> Option<Vec<usize>> {
+    v.as_array()?.iter().map(|i| usize::try_from(i.as_u64()?).ok()).collect()
+}
+
 pub(crate) fn point_param(p: &Value, key: &str) -> Option<Point> {
     let a = p.get(key)?.as_array()?;
     Some(Point::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?))
@@ -313,7 +370,7 @@ pub fn matrix_param(p: &Value, key: &str) -> Option<Affine> {
     Some(Affine::new(c))
 }
 /// A colour from `"#rrggbb"`, a colour key (`"cmyk 0 100 100 0"`, `"lab 55 60 40"`), `[r,g,b]` (0..1),
-/// `{"c":..,"m":..,"y":..,"k":..}`, `{"gray":..}` or `{"l":..,"a":..,"b":..}` (CIE Lab: L 0..100, a and b about
+/// `{"c":..,"m":..,"y":..,"k":..}` (percent when any component is above 1, else 0..1), `{"gray":..}` or `{"l":..,"a":..,"b":..}` (CIE Lab: L 0..100, a and b about
 /// −128..127).
 pub fn color_value(v: &Value) -> Option<Color> {
     match v {
@@ -322,8 +379,12 @@ pub fn color_value(v: &Value) -> Option<Color> {
         Value::Array(a) if a.len() >= 3 => Some(Color::rgb(a[0].as_f64()? as f32, a[1].as_f64()? as f32, a[2].as_f64()? as f32)),
         Value::Object(o) => {
             if let (Some(c), Some(m), Some(y), Some(k)) = (o.get("c"), o.get("m"), o.get("y"), o.get("k")) {
-                let f = |v: &Value| v.as_f64().map(|x| if x > 1.0 { x / 100.0 } else { x } as f32);
-                return Some(Color::cmyk(f(c)?, f(m)?, f(y)?, f(k)?));
+                // One scale for the whole colour: percent when any component is above 1, else 0..1.
+                // Deciding per component read {c: 18, k: 0.79} as K 79 %.
+                let v = [c.as_f64()?, m.as_f64()?, y.as_f64()?, k.as_f64()?];
+                let scale = if v.iter().any(|x| *x > 1.0) { 100.0 } else { 1.0 };
+                let f = |x: f64| (x / scale) as f32;
+                return Some(Color::cmyk(f(v[0]), f(v[1]), f(v[2]), f(v[3])));
             }
             if let Some(g) = o.get("gray") {
                 let g = g.as_f64()?;
@@ -340,13 +401,23 @@ pub fn color_value(v: &Value) -> Option<Color> {
 
 /// Objects a command targets: explicit `ids` param or the selection.
 pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<NodeId>> {
-    if let Some(ids) = ids_param(p, "ids") {
-        return Ok(ids);
+    // Objects given are used as given: a value that isn't an object id fails rather than the
+    // command acting on the selection instead (#785).
+    let object_id = |v: &Value| v.as_u64().map(NodeId).ok_or_else(|| EngineError::Other(format!("object ids are non-negative integers, not {v}")));
+    match p.get("ids").filter(|v| !v.is_null()) {
+        Some(Value::Array(a)) => return a.iter().map(object_id).collect(),
+        Some(v) => return Err(EngineError::Other(format!("`ids` must be an array of object ids, not {v}"))),
+        None => {}
     }
-    if let Some(id) = id_param(p, "id") {
-        return Ok(vec![id]);
+    match p.get("id").filter(|v| !v.is_null()) {
+        Some(v @ Value::Number(_)) => Ok(vec![object_id(v)?]),
+        // A step reference a batch couldn't resolve (other strings are other ids, such as an
+        // effect's).
+        Some(Value::String(r)) if r.starts_with('$') => {
+            Err(EngineError::Other(format!("`id` is the step reference {r:?}, which only `run` and `command_batch` resolve")))
+        }
+        _ => Ok(s.doc()?.selection.objects.clone()),
     }
-    Ok(s.doc()?.selection.objects.clone())
 }
 
 pub(crate) fn ok() -> Result<Value> {
@@ -388,6 +459,7 @@ pub(crate) fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
     (2..).map(|i| format!("{base} {i}")).find(|n| !taken(n)).unwrap_or_else(|| base.to_string())
 }
 
+pub(crate) use edit::{settle_interaction, typing_in_progress};
 pub(crate) use vectorcraft_doc::range::parse_range;
 
 /// A date param in Unix seconds that defaults to the clock: `None` when absent (now, see
@@ -424,6 +496,9 @@ pub use flatten::FlattenOptions;
 
 /// A built-in or saved flattener preset ([`crate::Prefs::flattener_presets`]).
 pub use flatten::FlattenerPreset;
+
+/// The shapes a group selected alone gives the Pathfinder panel.
+pub use pathops::shape_count;
 
 /// Command ids kept only so older scripts keep working: `(alias, the command it duplicates)`.
 /// They run as before but the command palette leaves them out (it lists the command once).

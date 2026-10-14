@@ -240,3 +240,29 @@ fn pdf_artboards_continue_in_the_save_pdf_dialog() {
     let pdf = vectorcraft_pdf::import(&written.borrow()[0].1).unwrap();
     assert_eq!(pdf.artboards.len(), 2, "one page per artboard in the range");
 }
+
+/// #546, #550: Export As with Use Artboards and a range writes the chosen artboard alone in every
+/// format, each file holding that artboard's art (the ellipse is on artboard 1).
+#[test]
+fn export_as_writes_only_the_chosen_artboard_in_every_format() {
+    for (format, ellipse) in [("svg", "<path"), ("dxf", "HATCH"), ("pdf", ""), ("png", "")] {
+        for (range, on) in [("1", true), ("3", false)] {
+            let (mut app, written) = app(3);
+            app.run("file.exportAs", json!({"format": format})).unwrap();
+            set(&mut app, "useArtboards", json!(true));
+            set(&mut app, "all", json!(false));
+            set(&mut app, "range", json!(range));
+            confirm(&mut app).unwrap();
+            // The format's own options, then the file.
+            while app.ui.dialog.is_some() {
+                frame(&mut app);
+                confirm(&mut app).unwrap();
+            }
+            assert_eq!(names(&written), [format!("/out/Untitled-1.{format}")], "{format} {range}");
+            if !ellipse.is_empty() {
+                let text = String::from_utf8_lossy(&written.borrow()[0].1).into_owned();
+                assert_eq!(text.contains(ellipse), on, "{format} {range}: {text}");
+            }
+        }
+    }
+}

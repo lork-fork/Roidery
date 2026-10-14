@@ -226,3 +226,92 @@ fn rearrange_keeps_its_grid() {
     s.execute("artboard.rearrange", &json!({"columns": 2, "spacing": 5})).unwrap();
     assert_eq!(boards(&s).iter().map(|r| (r.x0, r.y0)).collect::<Vec<_>>(), [(0.0, 0.0), (105.0, 0.0), (0.0, 55.0)]);
 }
+
+/// #681: every layout and order of Rearrange All Artboards, five 100 × 50 artboards 10 pt apart
+/// with Columns (the rows of a grid by column) 2: each artboard lands in its (row, column) cell, the
+/// art on it rides along, and it all undoes in one step.
+#[test]
+fn rearrange_lays_out_by_layout_and_order() {
+    type Cells = [(u32, u32); 5];
+    let cells: [(&str, &str, Cells); 8] = [
+        ("gridByRow", "leftToRight", [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]),
+        ("gridByRow", "rightToLeft", [(0, 1), (0, 0), (1, 1), (1, 0), (2, 1)]),
+        ("gridByColumn", "leftToRight", [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2)]),
+        ("gridByColumn", "rightToLeft", [(0, 2), (1, 2), (0, 1), (1, 1), (0, 0)]),
+        ("row", "leftToRight", [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]),
+        ("row", "rightToLeft", [(0, 4), (0, 3), (0, 2), (0, 1), (0, 0)]),
+        ("column", "leftToRight", [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]),
+        ("column", "rightToLeft", [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]),
+    ];
+    for (layout, order, want) in cells {
+        // One row, 20 pt apart; a 10 pt square 10 pt into each artboard.
+        let mut s = new_doc(json!({"width": 100, "height": 50, "artboards": 5}));
+        let art: Vec<u64> = boards(&s)
+            .iter()
+            .map(|r| {
+                s.execute("shape.rectangle", &json!({"x": r.x0 + 10.0, "y": r.y0 + 10.0, "width": 10, "height": 10})).unwrap()["id"].as_u64().unwrap()
+            })
+            .collect();
+        let before = boards(&s);
+        let undo = s.doc().unwrap().history.undo.len();
+        let p = json!({"layout": layout, "order": order, "columns": 2, "spacing": 10});
+        let r = s.execute("artboard.rearrange", &p).unwrap();
+        let (rows, cols) = want.iter().fold((0, 0), |(r, c), (wr, wc)| (r.max(wr + 1), c.max(wc + 1)));
+        assert_eq!(r, json!({"artboards": 5, "rows": rows, "columns": cols}), "{layout} {order}");
+        let got: Vec<(f64, f64)> = boards(&s).iter().map(|r| (r.x0, r.y0)).collect();
+        let cells: Vec<(f64, f64)> = want.iter().map(|&(r, c)| (f64::from(c) * 110.0, f64::from(r) * 60.0)).collect();
+        assert_eq!(got, cells, "{layout} {order}");
+        assert!(boards(&s).iter().all(|r| r.width() == 100.0 && r.height() == 50.0));
+        for (id, (x, y)) in art.iter().zip(&got) {
+            let b = s.doc().unwrap().doc.node(NodeId(*id)).unwrap().geometric_bounds().unwrap();
+            assert_eq!((b.x0, b.y0), (x + 10.0, y + 10.0), "{layout} {order}: the art moves with its artboard");
+        }
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo + 1, "one undo step");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(boards(&s), before);
+    }
+}
+
+/// `byColumn: true` is Grid by Column; without `moveArtwork` the art stays; bad values are errors.
+#[test]
+fn rearrange_aliases_and_rejects_bad_values() {
+    let mut s = new_doc(json!({"width": 100, "height": 50, "artboards": 3}));
+    let id = s.execute("shape.rectangle", &json!({"x": 130, "y": 10, "width": 10, "height": 10})).unwrap()["id"].as_u64().unwrap();
+    s.execute("artboard.rearrange", &json!({"byColumn": true, "columns": 2, "spacing": 0, "moveArtwork": false})).unwrap();
+    assert_eq!(boards(&s).iter().map(|r| (r.x0, r.y0)).collect::<Vec<_>>(), [(0.0, 0.0), (0.0, 50.0), (100.0, 0.0)]);
+    assert_eq!(s.doc().unwrap().doc.node(NodeId(id)).unwrap().geometric_bounds().unwrap().x0, 130.0, "the art stays");
+    let before = boards(&s);
+    for p in [json!({"layout": "diagonal"}), json!({"order": "upward"}), json!({"layout": 3}), json!({"order": true})] {
+        assert!(s.execute("artboard.rearrange", &p).is_err(), "{p}");
+    }
+    assert_eq!(boards(&s), before, "nothing moved");
+}
+
+/// Rearrange All Artboards with the artboards already where it puts them, or with no artboard,
+/// records no undo step: the step to redo stays, the document stays unmodified, and the reply is the
+/// same.
+#[test]
+fn rearrange_that_moves_no_artboard_records_no_undo_step() {
+    let mut s = new_doc(json!({"width": 100, "height": 50, "artboards": 3}));
+    let p = json!({"columns": 2, "spacing": 5});
+    let reply = s.execute("artboard.rearrange", &p).unwrap();
+    let placed = boards(&s);
+    // A rectangle drawn and undone leaves a step to redo, and the document is marked saved.
+    s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 10, "height": 10})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.doc_mut().unwrap().mark_saved();
+    let history = |s: &Session| {
+        let st = s.doc().unwrap();
+        (st.history.undo.len(), st.history.redo.len(), st.is_dirty())
+    };
+    let before = history(&s);
+    assert_eq!((before.1, before.2), (1, false));
+    assert_eq!(s.execute("artboard.rearrange", &p).unwrap(), reply);
+    assert_eq!((history(&s), boards(&s)), (before, placed));
+    // A file can hold no artboard.
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).artboards.clear();
+    s.doc_mut().unwrap().mark_saved();
+    let before = history(&s);
+    assert_eq!(s.execute("artboard.rearrange", &p).unwrap(), json!({"artboards": 0, "rows": 1, "columns": 1}));
+    assert_eq!(history(&s), before);
+}

@@ -165,3 +165,35 @@ fn placing_a_pdf_page_asks_for_the_page_and_crop_box() {
     assert!(app.ui.dialog.is_none());
     assert_eq!(placed(&app).1.width(), 80.0);
 }
+
+/// A saved `.ai` with several artboards carries its VectorCraft document: opening it restores that
+/// document (artboards, layers) instead of asking which pages to import.
+#[test]
+fn opening_a_saved_ai_with_several_artboards_restores_it_without_asking() {
+    let mut app = app();
+    app.run("artboard.new", json!({"width": 200, "height": 100, "name": "Second"})).unwrap();
+    app.run("layer.new", json!({"name": "Front"})).unwrap();
+    app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 40})).unwrap();
+    let saved = app.run("document.save", json!({"format": "ai"})).unwrap();
+    let bytes = vectorcraft_format::base64_decode(saved["dataBase64"].as_str().unwrap()).unwrap();
+    assert!(vectorcraft_pdf::info(&bytes, None).unwrap().pages.len() > 1, "a page per artboard");
+
+    io::open_bytes(&mut app, "two.ai", &bytes, Some("/tmp/two.ai".into())).unwrap();
+    assert!(app.ui.dialog.is_none(), "no Import PDF dialog");
+    assert_eq!(app.session.documents().len(), 2);
+    let doc = &app.session.active().unwrap().doc;
+    assert_eq!(doc.artboards.len(), 2);
+    assert_eq!(doc.artboards[1].name, "Second");
+    assert!(doc.layers.iter().any(|l| l.name.as_deref() == Some("Front")), "layers come back");
+}
+
+/// A PDF without a VectorCraft document still asks, and placing a saved `.ai` still asks for the page.
+#[test]
+fn placing_a_saved_ai_still_asks_for_the_page() {
+    let mut app = app();
+    app.run("artboard.new", json!({"width": 200, "height": 100})).unwrap();
+    let saved = app.run("document.save", json!({"format": "ai"})).unwrap();
+    let bytes = vectorcraft_format::base64_decode(saved["dataBase64"].as_str().unwrap()).unwrap();
+    assert!(import_pdf::offer(&mut app, "two.ai", &bytes, None, Some(&json!({}))));
+    assert_eq!(app.ui.dialog.as_ref().unwrap().str("mode"), "place");
+}

@@ -14,7 +14,7 @@ use vectorcraft_pathops::BoolOp;
 
 use super::draw2::{components, erase_outline, ids_json, replace_with_pieces};
 use super::edit::selected_roots;
-use super::pathops::node_path;
+use super::pathops::{Beside, node_path};
 use super::*;
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -163,10 +163,12 @@ fn apply(s: &mut Session, label: &str, plan: Plan) -> Result<Value> {
     }
     let (ids, removed) = s.edit(label, |d: &mut Document, sel| {
         let (mut all, mut removed) = (vec![], 0);
+        let mut cut = Beside::replacing(d, &plan.iter().map(|(id, _)| *id).collect::<Vec<_>>());
         for (id, pieces) in plan {
             removed += pieces.is_empty() as usize;
-            all.extend(replace_with_pieces(d, id, pieces)?);
+            all.extend(replace_with_pieces(d, &mut cut, id, pieces)?);
         }
+        cut.finish(d)?;
         sel.set(all.iter().copied());
         Ok((all, removed))
     })?;
@@ -221,8 +223,8 @@ fn rect_cut(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "path.rectCut";
     let rect = match p.get("rect") {
         Some(v) => {
-            let a: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
-            let [x, y, w, h] = a[..] else { return Err(bad(C, "rect must be [x, y, width, height]")) };
+            // All four or nothing: a malformed entry dropped would cut a different region.
+            let [x, y, w, h] = finite_numbers(v).ok_or_else(|| bad(C, "rect must be [x, y, width, height]"))?;
             Rect::new(x, y, x + w, y + h).abs()
         }
         None => Rect::from_points(point_req(p, "from", C)?, point_req(p, "to", C)?),

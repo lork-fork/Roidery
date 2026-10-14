@@ -34,7 +34,7 @@ pub fn export(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
             if io::is_web(app) {
                 pick.name
             } else {
-                let picked = app.services.pick_save.as_mut().and_then(|f| f(&pick)).ok_or("cancelled")?;
+                let picked = crate::picks::save(app, &pick).ok_or("cancelled")?;
                 if format_of(&picked).is_some() { picked } else { format!("{picked}.png") }
             }
         }

@@ -1,0 +1,4 @@
+# Roidery: lines both VectorCraft and Roidery add to these files are kept on a merge
+# (ROIDERY.md › Keeping up with VectorCraft).
+crates/ui-egui/src/i18n/*.tsv merge=union
+ASSETS.md merge=union

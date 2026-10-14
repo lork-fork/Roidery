@@ -86,14 +86,16 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!(s.menu.wand))
 }
 
-fn fill_of(n: &Node) -> Paint {
+/// The fill an object shows: type's comes from its characters (the first run speaks for all).
+pub(crate) fn fill_of(n: &Node) -> Paint {
     match &n.kind {
         NodeKind::Text(t) => t.runs.first().map(|r| r.style.fill.clone()).unwrap_or_default(),
         _ => n.appearance.fill_paint(),
     }
 }
 
-fn stroke_of(n: &Node) -> (Paint, f64) {
+/// The stroke paint and weight an object shows, type's from its first run as [`fill_of`].
+pub(crate) fn stroke_of(n: &Node) -> (Paint, f64) {
     match &n.kind {
         NodeKind::Text(t) => t.runs.first().map(|r| (r.style.stroke.clone(), r.style.stroke_width)).unwrap_or_default(),
         _ => (n.appearance.stroke_paint(), n.appearance.stroke_width()),

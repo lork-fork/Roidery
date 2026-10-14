@@ -10,7 +10,7 @@
 //!   text in embedded subset fonts (Advanced). Colours are converted, tagged with ICC profiles and
 //!   given an output intent as the Output settings say. Hidden objects,
 //!   guides and template layers are skipped, and so are non-printing layers unless asked for.
-//!   Top-level layers can be PDF layers (optional content groups with their visibility, print
+//!   Layers and sublayers can be PDF layers (optional content groups with their visibility, print
 //!   state and lock), and overprinting fills and strokes overprint (Advanced).
 //!   Each page is its artboard (the trim box) grown by the bleed (the bleed box) and by the
 //!   printer's marks around it (the media box), drawn in Registration. [`PdfSettings`] is the Save PDF
@@ -48,6 +48,7 @@ mod images;
 mod import;
 mod import_color;
 mod import_image;
+mod import_lines;
 mod import_mask;
 mod import_scan;
 mod import_shading;
@@ -63,13 +64,14 @@ mod post;
 mod presets;
 mod print;
 mod settings;
+mod streams;
 mod syntax;
 
 pub use editing::{EDITING_FILE, Editing, LEGACY_EDITING_FILE, editing, editing_with};
 pub use encrypt::Encryption;
 pub use export::{export, export_with_report, page_areas};
-pub use import::{import, import_with_report};
-pub use pages::{PageInfo, PdfInfo, info, is_postscript};
+pub use import::{OFF_ARTBOARD_NOTE, PAST_PAGE_NOTE, import, import_with_report};
+pub use pages::{PageInfo, PdfInfo, has_illustrator_data, illustrator_data, info, is_postscript};
 pub use post::{THUMBNAIL_SIZE, Thumbnail};
 pub use presets::*;
 pub use print::*;
@@ -121,11 +123,23 @@ pub struct ImportOptions {
     /// Optional content groups become layers (else each page is one layer, without the art
     /// that is off).
     pub layers: bool,
+    /// The file is an editor's own document (`.ai`): RGB in its `ICCBased` spaces keeps its numbers
+    /// (see `Colors::uncalibrated_rgb`). Off for PDFs, whose profiles stand.
+    pub uncalibrated_rgb: bool,
 }
 
 impl Default for ImportOptions {
     fn default() -> Self {
-        Self { max_pages: None, artboard_gap: 36.0, pages: None, crop: CropTo::default(), password: None, text_as: TextAs::default(), layers: true }
+        Self {
+            max_pages: None,
+            artboard_gap: 36.0,
+            pages: None,
+            crop: CropTo::default(),
+            password: None,
+            text_as: TextAs::default(),
+            layers: true,
+            uncalibrated_rgb: false,
+        }
     }
 }
 
@@ -147,6 +161,7 @@ settings::choice! {
         Art = "art", "Art";
         /// The visible page area (what viewers show).
         Crop = "crop", "Crop";
+        /// The finished page: an import takes the bleed box round it as the document's bleed.
         Trim = "trim", "Trim";
         Bleed = "bleed", "Bleed";
         /// The whole sheet.
@@ -161,6 +176,9 @@ pub struct ImportReport {
     pub warnings: Vec<String>,
     /// The native document the PDF carries (written with Preserve Editing), if any.
     pub native: Option<Editing>,
+    /// Every page shows only text, over an editor's private data: that data, where it reads,
+    /// is the file's art (a file saved without its PDF part shows a notice there instead).
+    pub only_text: bool,
 }
 
 /// Result of an export with non-fatal warnings (features approximated or dropped).
@@ -231,7 +249,11 @@ mod tests_import_fidelity;
 #[cfg(test)]
 mod tests_import_layers;
 #[cfg(test)]
+mod tests_import_lines;
+#[cfg(test)]
 mod tests_import_options;
+#[cfg(test)]
+mod tests_import_overprint;
 #[cfg(test)]
 mod tests_layers;
 #[cfg(test)]

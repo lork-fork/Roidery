@@ -110,6 +110,7 @@ fn install(_: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn load_path(path: &str) -> Result<Plugin> {
+    crate::file_access::check_read(path).map_err(EngineError::Other)?;
     registry::load_file(std::path::Path::new(path), vectorcraft_plugins::Limits::default()).map_err(err)
 }
 
@@ -137,7 +138,11 @@ pub(crate) fn sync_prefs(s: &Session) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn load_folder(folder: &str) -> Value {
-    match registry::load_folder(std::path::Path::new(folder)) {
+    if let Err(e) = crate::file_access::check_read(folder) {
+        return json!({"folder": folder, "error": e});
+    }
+    // A file in it may be a link to one elsewhere.
+    match registry::load_folder_where(std::path::Path::new(folder), |f| crate::file_access::check_read(&f.to_string_lossy())) {
         Ok(r) => {
             json!({"folder": folder, "loaded": r.loaded, "failed": r.failed.iter().map(|(f, e)| json!({"file": f, "error": e})).collect::<Vec<_>>()})
         }
@@ -211,7 +216,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Run Plug-in",
             [],
             None,
-            "{id, params?: {…} (the plug-in's parameters; or give them as top-level keys; missing ones take their defaults, see plugin.info), ids?: [..] (default: the selection)} run an object filter on the selected paths and compound paths (inside selected groups and layers too; hidden, locked, guide and clipping paths are left out): it may change, delete or add objects, as one undo step; the result is selected. With nothing selected it gets no objects (generators add theirs to the current layer) → {plugin, ids}",
+            "{id, params?: {…} (the plug-in's parameters; or give them as top-level keys; missing ones take their defaults, see plugin.info), ids?: [..] (default: the selection), …the plug-in's parameters as top-level keys} run an object filter on the selected paths and compound paths (inside selected groups and layers too; hidden, locked, guide and clipping paths are left out): it may change, delete or add objects, as one undo step; the result is selected. With nothing selected it gets no objects (generators add theirs to the current layer) → {plugin, ids}",
             has_doc,
             run
         ),
@@ -220,7 +225,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Install Plug-in",
             [],
             None,
-            "{path: a .wasm file (desktop) | dataBase64: the module (+ name?: shown as its source), replace?: bool (true: a plug-in with the same id is replaced)} validate and install a WebAssembly plug-in for this session → its plugin.list entry",
+            "{path: a .wasm file (desktop) | dataBase64: the module (+ name?: shown as its source), replace?: bool (true: a plug-in with the same id is replaced), name?: file name (with dataBase64)} validate and install a WebAssembly plug-in for this session → its plugin.list entry",
             always,
             install
         ),

@@ -161,11 +161,12 @@ pub(crate) fn decode(bmi: &[u8], bits: &[u8], alpha: Alpha) -> Result<Rgba, Stri
         return Err(bad());
     };
     if compression == BI_JPEG || compression == BI_PNG {
-        let img = image::load_from_memory(bits).map_err(|_| bad())?.to_rgba8();
-        let (w, h) = img.dimensions();
+        // The size comes from the image header, so an over-limit bitmap is refused before any pixels are decoded.
+        let (w, h) = image::ImageReader::new(Cursor::new(bits)).with_guessed_format().map_err(|_| bad())?.into_dimensions().map_err(|_| bad())?;
         if w > MAX_READ_SIDE || h > MAX_READ_SIDE || u64::from(w) * u64::from(h) > MAX_READ_PIXELS {
             return Err("a bitmap is too large to read".into());
         }
+        let img = image::load_from_memory(bits).map_err(|_| bad())?.to_rgba8();
         return Ok(Rgba { width: w, height: h, pixels: img.into_raw() });
     }
     if compression != BI_RGB && compression != BI_BITFIELDS {
@@ -285,6 +286,34 @@ mod tests {
         // 3 × 2: red, green, blue / half-transparent black, transparent, white.
         let pixels = vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 128, 0, 0, 0, 0, 255, 255, 255, 255];
         Rgba { width: 3, height: 2, pixels }
+    }
+
+    /// CRC-32 of a PNG chunk.
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &b in data {
+            crc ^= u32::from(b);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+            }
+        }
+        !crc
+    }
+
+    #[test]
+    fn oversized_png_is_refused_from_its_header() {
+        let mut png = vec![];
+        image::GrayImage::new(1, 1).write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        // Claim a width over the limit in the IHDR chunk (and fix its CRC); the pixel data no longer
+        // matches, so decoding it would fail with a different error.
+        png[16..20].copy_from_slice(&(MAX_READ_SIDE + 1).to_be_bytes());
+        let crc = crc32(&png[12..29]);
+        png[29..33].copy_from_slice(&crc.to_be_bytes());
+        let mut bmi = vec![0u8; 40];
+        bmi[..4].copy_from_slice(&40u32.to_le_bytes());
+        bmi[16..20].copy_from_slice(&BI_PNG.to_le_bytes());
+        let err = decode(&bmi, &png, Alpha::Ignore).unwrap_err();
+        assert_eq!(err, "a bitmap is too large to read");
     }
 
     #[test]

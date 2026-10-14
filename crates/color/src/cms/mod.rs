@@ -13,7 +13,7 @@ pub mod generic;
 pub mod icc;
 pub mod lab;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -165,6 +165,8 @@ fn generic() -> Arc<GenericCmyk> {
 }
 
 static USER: RwLock<Vec<Arc<IccProfile>>> = RwLock::new(Vec::new());
+/// Counts the profiles [`register_icc`] has registered ([`profiles_generation`]).
+static PROFILES_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn builtin_rgb_cache(name: &str) -> Option<Arc<IccProfile>> {
     static CACHE: Mutex<Vec<Arc<IccProfile>>> = Mutex::new(Vec::new());
@@ -251,7 +253,15 @@ pub fn register_icc(bytes: &[u8], name: Option<String>) -> Result<ProfileInfo, C
     u.push(Arc::new(p));
     drop(u);
     clear_proof_cache();
+    PROFILES_GENERATION.fetch_add(1, Ordering::Relaxed);
     Ok(info)
+}
+
+/// A number that changes whenever [`register_icc`] registers a profile: conversions through a
+/// profile looked up by name, such as those of a [`ProofTarget::Cmyk`] proof, give the same colors
+/// as long as the number stays the same.
+pub fn profiles_generation() -> u64 {
+    PROFILES_GENERATION.load(Ordering::Relaxed)
 }
 
 /// Profile `name` as an ICC file to embed in an export: any RGB or CMYK profile of [`profiles`]
@@ -356,9 +366,36 @@ impl Cms {
         }
     }
 
-    /// CMYK in the working space → display sRGB (`absolute` simulates the paper colour).
+    /// CMYK in the working space → display sRGB (`absolute` simulates the paper colour). An ICC
+    /// CMYK profile converts as [`Self::cmyk_to_rgb`] does into sRGB (with the settings'
+    /// black-point compensation), so what shows is what an RGB export writes.
     pub fn cmyk_to_srgb(&self, cmyk: [f32; 4], absolute: bool) -> [f32; 3] {
+        if let (false, CmykSpace::Icc(p)) = (absolute, &self.cmyk)
+            && let Some(srgb) = builtin_rgb_cache(SRGB)
+            && let Some(v) = p.to_rgb_of(&srgb, &cmyk.map(|v| v.clamp(0.0, 1.0)), Intent::RelativeColorimetric, self.settings.bpc)
+        {
+            return v;
+        }
         Self::cmyk_to_srgb_in(&self.cmyk, cmyk, absolute)
+    }
+    /// CMYK in the working space → working RGB with `intent`. An ICC CMYK profile converts
+    /// directly into the RGB profile: not through display sRGB, which would clip colours a wider
+    /// RGB space holds (Wide Gamut RGB keeps CMYK cyan that sRGB can't show), and with the
+    /// settings' black-point compensation. The built-in CMYK spaces go through sRGB as before
+    /// (Generic CMYK compensates in its own model).
+    pub fn cmyk_to_rgb(&self, cmyk: [f32; 4], intent: Intent) -> [f32; 3] {
+        let cmyk = cmyk.map(|v| v.clamp(0.0, 1.0));
+        let src = match &self.cmyk {
+            CmykSpace::Icc(p) => Some(p.clone()),
+            CmykSpace::Generic(_) | CmykSpace::Device => None,
+        };
+        let dest = match &self.rgb {
+            RgbSpace::Icc(p) => Some(p.clone()),
+            RgbSpace::Srgb => builtin_rgb_cache(SRGB),
+        };
+        src.zip(dest)
+            .and_then(|(s, d)| s.to_rgb_of(&d, &cmyk, intent, self.settings.bpc))
+            .unwrap_or_else(|| self.srgb_to_rgb(self.cmyk_to_srgb(cmyk, false)))
     }
     /// Display sRGB → working CMYK with `intent`.
     pub fn srgb_to_cmyk(&self, srgb: [f32; 3], intent: Intent) -> [f32; 4] {
@@ -423,6 +460,10 @@ impl Cms {
             (_, Model::Cmyk) => {
                 let [c, m, y, k] = self.to_cmyk(c, intent);
                 Color::Cmyk { c, m, y, k }
+            }
+            (Color::Cmyk { c, m, y, k }, Model::Rgb) => {
+                let [r, g, b] = self.cmyk_to_rgb([*c, *m, *y, *k], intent);
+                Color::Rgb { r, g, b }
             }
             (_, Model::Rgb) => {
                 let [r, g, b] = self.srgb_to_rgb(self.display_rgb(c));

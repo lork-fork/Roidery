@@ -22,6 +22,9 @@ proptest! {
         paras in any::<bool>(),
         spaces in prop::option::of(0u64..8),
     ) {
+        // Exercise import/options/thumbnails with bundled fonts, independently of host font collections.
+        // Font lookup and fallback have dedicated tests in vectorcraft-text.
+        vectorcraft_text::FontDb::global().set_system_fallback(false);
         let data = [bom, &bytes[..]].concat();
         let r = catch_quiet(|| {
             let mut s = vectorcraft_engine::Session::new();

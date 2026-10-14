@@ -192,22 +192,22 @@ impl FreeTransformTool {
             }
             Op::Move => {
                 let v = move_delta(d.start, p, shift);
-                self.measure = Some((p, cx.offset_label(v.x, v.y)));
+                self.measure = cx.measurement_labels.then(|| (p, cx.offset_label(v.x, v.y)));
                 Affine::translate(v)
             }
             Op::Scale(h) => {
                 let mut a = scale_for_drag(d.rect, h, p, shift, m.alt);
                 if let Some(t) = &self.targets {
-                    (a, self.guides) = t.snap_scale(&vectorcraft_doc::OrientedBox::aligned(d.rect), h, a, shift, m.alt, cx.tol(5.0));
+                    (a, self.guides) = t.snap_scale(&vectorcraft_doc::OrientedBox::aligned(d.rect), h, a, shift, m.alt, cx.snap_tol());
                 }
                 let nr = a.transform_rect_bbox(d.rect);
-                self.measure = Some((p, cx.size_label(nr.width(), nr.height())));
+                self.measure = cx.transform_tools_guides.then(|| (p, cx.size_label(nr.width(), nr.height())));
                 a
             }
             Op::Shear(h) => shear_for_side(d.rect, h, delta, m.alt),
             Op::Rotate => {
                 let (a, deg) = rotate_for_drag(d.rect.center(), d.start, p, shift);
-                self.measure = Some((p, format!("{:.1}°", -deg)));
+                self.measure = cx.transform_tools_guides.then(|| (p, format!("{:.1}°", -deg)));
                 a
             }
         };
@@ -232,8 +232,8 @@ impl Tool for FreeTransformTool {
                 self.drag = None;
                 let Some(r) = selection_bounds(cx) else { return vec![] };
                 if let Some(op) = self.classify(cx, r, p, ev.mods) {
-                    self.targets =
-                        (cx.smart_guides && op.handle().is_some()).then(|| crate::guides::Targets::collect(cx.doc, &cx.selection.objects, None));
+                    self.targets = (cx.smart_guides && op.handle().is_some())
+                        .then(|| crate::guides::Targets::collect(cx.doc, &cx.selection.objects, None).styled(cx));
                     self.drag = Some(Drag { op, rect: r, start: p, began: false });
                 }
                 vec![]
@@ -313,7 +313,7 @@ impl Tool for FreeTransformTool {
     fn cursor(&self, cx: &ToolContext, p: Point, m: Mods) -> Cursor {
         let Some(r) = selection_bounds(cx) else { return Cursor::Arrow };
         match self.drag.map(|d| d.op).or_else(|| self.classify(cx, r, p, m)) {
-            Some(Op::Rotate) => Cursor::Rotate,
+            Some(Op::Rotate) => Cursor::rotate_about(r.center(), p),
             Some(Op::Move) => Cursor::Move,
             Some(Op::Scale(h) | Op::Shear(h)) => match h {
                 Handle::Top | Handle::Bottom => Cursor::ResizeV,

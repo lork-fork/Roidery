@@ -106,6 +106,59 @@ fn screens_and_rasterize_take_anti_aliasing() {
     assert!(s.execute("object.rasterize", &json!({"antiAlias": "fuzzy"})).is_err());
 }
 
+/// Appearance of Black › Printing / Exporting (#394): Output All Blacks as Rich Black makes an
+/// RGB PNG of a CMYK document draw pure black ink as RGB black; Accurately (the default) shows it
+/// through the CMYK profile. `blackOnScreen` does not change the export; a rich black is the same
+/// either way.
+#[test]
+fn black_output_rich_draws_pure_cmyk_black_as_rgb_black_in_png() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 20, "height": 20, "colorMode": "cmyk"})).unwrap();
+    s.execute("paint.setStroke", &json!({"none": true})).unwrap();
+    s.execute("paint.setFill", &json!({"color": {"c": 0, "m": 0, "y": 0, "k": 1}})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 20, "height": 20})).unwrap();
+    let centre = |s: &mut Session| {
+        let png = rgba(&b64(&s.execute("document.export", &json!({"format": "png", "background": "white"})).unwrap()));
+        png.get_pixel(10, 10).0
+    };
+    let accurate = centre(&mut s);
+    let shown = vectorcraft_color::Color::cmyk(0.0, 0.0, 0.0, 1.0).to_rgba8(1.0);
+    assert!(accurate.iter().zip(shown).all(|(a, b)| a.abs_diff(b) <= 1), "accurate: {accurate:?}");
+    assert!(accurate[0] > 10, "accurate: dark grey, not RGB black");
+    s.execute("prefs.set", &json!({"key": "blackOnScreen", "value": "rich"})).unwrap();
+    assert_eq!(centre(&mut s), accurate, "blackOnScreen does not change exports");
+    s.execute("prefs.set", &json!({"key": "blackOutput", "value": "rich"})).unwrap();
+    assert_eq!(centre(&mut s), [0, 0, 0, 255], "rich: RGB black");
+    s.execute("select.all", &json!({})).unwrap();
+    s.execute("paint.setFill", &json!({"color": {"c": 0.6, "m": 0.4, "y": 0.4, "k": 1}})).unwrap();
+    let rich = centre(&mut s);
+    s.execute("prefs.set", &json!({"key": "blackOutput", "value": "accurate"})).unwrap();
+    assert_eq!(centre(&mut s), rich, "a rich black shows the same either way");
+}
+
+/// Output All Blacks as Rich Black reaches a CMYK document composed from ink planes (one with a
+/// blending mode) as it does one drawn directly, and leaves CMYK-model exports alone: only RGB
+/// output changes.
+#[test]
+fn black_output_rich_covers_ink_plane_documents_and_leaves_cmyk_exports_alone() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 40, "height": 20, "colorMode": "cmyk"})).unwrap();
+    s.execute("paint.setStroke", &json!({"none": true})).unwrap();
+    s.execute("paint.setFill", &json!({"color": {"c": 0, "m": 0, "y": 0, "k": 1}})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 20, "height": 20})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 30, "y": 0, "width": 10, "height": 20})).unwrap();
+    s.execute("transparency.set", &json!({"blendMode": "multiply"})).unwrap();
+    let png =
+        |s: &mut Session| rgba(&b64(&s.execute("document.export", &json!({"format": "png", "background": "white"})).unwrap())).get_pixel(10, 10).0;
+    let cmyk = |s: &mut Session, format: &str| b64(&s.execute("document.export", &json!({"format": format, "colorModel": "cmyk"})).unwrap());
+    let accurate = png(&mut s);
+    assert!(accurate[0] > 10, "accurate: dark grey, {accurate:?}");
+    let inks = [cmyk(&mut s, "tiff"), cmyk(&mut s, "jpg")];
+    s.execute("prefs.set", &json!({"key": "blackOutput", "value": "rich"})).unwrap();
+    assert_eq!(png(&mut s), [0, 0, 0, 255], "rich: RGB black through the ink planes too");
+    assert!(inks == [cmyk(&mut s, "tiff"), cmyk(&mut s, "jpg")], "CMYK exports keep the document's inks");
+}
+
 #[test]
 fn formats_list_the_raster_options() {
     let mut s = Session::new();
@@ -146,4 +199,37 @@ fn the_document_background_is_the_default_export_background() {
     assert_eq!(png(&mut s, json!({"format": "png"})).get_pixel(0, 0).0, [255, 255, 255, 255], "a white document exports opaque");
     assert_eq!(png(&mut s, json!({"format": "png", "background": "transparent"})).get_pixel(0, 0)[3], 0, "the option wins");
     assert_eq!(png(&mut s, json!({"format": "webp", "background": "black"})).get_pixel(0, 0).0, [0, 0, 0, 255]);
+}
+
+#[test]
+fn an_image_opens_at_the_size_its_resolution_declares() {
+    let mut s = session(72.0, 36.0, 1);
+    let hi = b64(&s.execute("document.export", &json!({"format": "png", "ppi": 300, "background": "white"})).unwrap());
+    let lo = b64(&s.execute("document.export", &json!({"format": "png", "background": "white"})).unwrap());
+    let lo = super::ppi::with_png_resolution(&lo, (72.0, 72.0));
+    for (png, w, h, what) in [(hi, 72.0, 36.0, "300 ppi: 300 x 150 px is 1 x 0.5 in"), (lo, 72.0, 36.0, "72 ppi: 1 px = 1 pt")] {
+        s.execute("document.open", &json!({"name": "art.png", "dataBase64": vectorcraft_format::base64_encode(&png)})).unwrap();
+        let doc = &s.doc().unwrap().doc;
+        let ab = doc.artboards[0].rect;
+        assert!((ab.width() - w).abs() < 1e-6 && (ab.height() - h).abs() < 1e-6, "{what}: artboard {ab:?}");
+        let art = doc.art_bounds().expect("the image");
+        assert!((art.width() - w).abs() < 1e-6 && (art.height() - h).abs() < 1e-6, "{what}: the image fills it, {art:?}");
+    }
+}
+
+#[test]
+fn a_raster_export_says_when_an_image_could_not_be_decoded() {
+    // A PNG whose header reads (so it places at its size) but whose pixel data is cut short:
+    // the renderer can't decode it and draws nothing, which the export must say.
+    let mut s = session(72.0, 36.0, 1);
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(64, 32, image::Rgba([200, 30, 30, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let cut = png_chunk(&png, b"IDAT").map(|d| d.as_ptr() as usize - png.as_ptr() as usize).unwrap() + 4;
+    png.truncate(cut);
+    s.execute("file.place", &json!({"name": "cut.png", "dataBase64": vectorcraft_format::base64_encode(&png)})).unwrap();
+    let r = s.execute("document.export", &json!({"format": "png", "background": "transparent"})).unwrap();
+    let warnings = r["warnings"].as_array().cloned().unwrap_or_default();
+    assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("couldn't be decoded"))), "{r}");
 }

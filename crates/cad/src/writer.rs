@@ -441,7 +441,8 @@ impl Drawing {
         c.xy(13, 0.0, 0.0);
         c.xy(14, 1.0, 1.0);
         c.xy(15, 10.0, 10.0);
-        c.xyz(16, 0.0, 0.0);
+        // The view direction looks down the z axis: (0, 0, 1), each code once.
+        c.xy(16, 0.0, 0.0);
         c.num(36, 1.0);
         c.xyz(17, 0.0, 0.0);
         let (w, h) = ((x1 - x0).abs(), (y1 - y0).abs());

@@ -28,7 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Export EPS",
         [],
         None,
-        "{path?, level?: 2|3 (default; PostScript language level: 3 writes smooth gradients and masks transparent image pixels out, 2 steps gradients and writes those pixels white), previewFormat?: none|tiffBw|tiffColor (default: a TIFF preview other apps show), transparentPreview?: true (else on white), overprints?: preserve (default)|discard, flattenerPreset?: \"medium\" (default; high, low or a saved preset: flattener.presets.list), flattener?: {the options of object.flattenTransparency over the preset}, embedFonts?: true (type is always written as outlines, so no fonts are needed), includeLinkedFiles?: false (the embedded document keeps linked images whole, not just their previews), thumbnails?: true (a PNG thumbnail in the file), cmykPostScript?: true (RGB documents written in CMYK), compatibleGradients?: false (stepped gradients at level 3 too), selectedOnly?: false, useArtboards?: true (one file per chosen artboard, artboards?/range?, {stem}_{artboard}.eps, the bounding box the artboard) | false (default: one file, the bounding box the visible art, y up from the first artboard's bottom-left corner)} → {path, bytes, warnings, files?}; no path → {dataBase64, …}. Transparency is flattened with the preset (EPS has none); the native document rides along in comments, for reopening the file as it was. Same as document.export {format: eps}",
+        "{path?, level?: 2|3 (default; PostScript language level: 3 writes smooth gradients and masks transparent image pixels out, 2 steps gradients and writes those pixels white), previewFormat?: none|tiffBw|tiffColor (default: a TIFF preview other apps show), transparentPreview?: true (else on white), overprints?: preserve (default)|discard, flattenerPreset?: \"medium\" (default; high, low or a saved preset: flattener.presets.list), flattener?: {the options of object.flattenTransparency over the preset}, embedFonts?: true (type is always written as outlines, so no fonts are needed), includeLinkedFiles?: false (the embedded document keeps linked images whole, not just their previews), thumbnails?: true (a PNG thumbnail in the file), cmykPostScript?: true (RGB documents written in CMYK), compatibleGradients?: false (stepped gradients at level 3 too), selectedOnly?: false, useArtboards?: true (one file per chosen artboard, artboards?/range?, {stem}_{artboard}.eps, the bounding box the artboard) | false (default: one file, the bounding box the visible art, y up from the first artboard's bottom-left corner), format?: \"eps\", artboard?: i | artboards?: [i…] | range?: \"1-3, 5\" (with useArtboards: the artboards written)} → {path, bytes, warnings, files?}; no path → {dataBase64, …}. Transparency is flattened with the preset (EPS has none); the native document rides along in comments, for reopening the file as it was. Same as document.export {format: eps}",
         has_doc,
         export_eps
     )]
@@ -255,6 +255,17 @@ fn native(doc: &Document, board: Option<usize>, include_linked: bool) -> Vec<u8>
 /// itself.
 pub(super) fn encode(doc: &Document, p: &Value) -> Result<Encoded> {
     let set = parse(p)?;
+    let original = doc;
+    let (full, warnings) = crate::cmd::place::document::full_documents(doc);
+    let doc = &*full;
+    // Include available bytes while retaining missing, relinkable objects in the attachment.
+    let editing = if set.include_linked {
+        let mut d = original.clone();
+        d.images = doc.images.clone();
+        Cow::Owned(d)
+    } else {
+        Cow::Borrowed(original)
+    };
     let pages = pages(doc, &set)?;
     if pages.is_empty() {
         return Err(bad(C, "the document has no artboard"));
@@ -262,7 +273,7 @@ pub(super) fn encode(doc: &Document, p: &Value) -> Result<Encoded> {
     let transparent = doc.layers.iter().any(|l| l.shows_transparency());
     let flat = flatten_document(doc, &set.flatten)?;
     let drawn = flat.as_ref().unwrap_or(doc);
-    let mut enc = Encoded { joiner: Some("_"), ..Encoded::default() };
+    let mut enc = Encoded { warnings, joiner: Some("_"), ..Encoded::default() };
     if transparent && flat.is_some() {
         enc.warnings.push("transparency is flattened into opaque art and images (EPS has none): see the flattener preset".into());
     }
@@ -275,8 +286,14 @@ pub(super) fn encode(doc: &Document, p: &Value) -> Result<Encoded> {
             kind => Some(render(&mut renderer, doc, rect, MAX_PREVIEW, set.eps.transparent_preview && kind == Preview::TiffColor)?),
         };
         let thumbnail = set.thumbnails.then(|| render(&mut renderer, doc, rect, THUMBNAIL, false)).transpose()?;
-        let o =
-            EpsOptions { region, origin, title: doc.title.clone(), created, native: Some(native(doc, board, set.include_linked)), ..set.eps.clone() };
+        let o = EpsOptions {
+            region,
+            origin,
+            title: doc.title.clone(),
+            created,
+            native: Some(native(&editing, board, set.include_linked)),
+            ..set.eps.clone()
+        };
         let out = vectorcraft_eps::export(drawn, &o, preview.as_ref(), thumbnail.as_ref()).map_err(|e| bad(C, e))?;
         enc.files.push((board, out.bytes));
         for w in out.warnings {

@@ -5,13 +5,15 @@
 //!
 //! - **Geometry effects** (Distort & Transform, Path, Convert to Shape, Round Corners, Scribble,
 //!   Warp) rewrite a path: [`apply_geometry`] evaluates them in stack order.
-//! - **Raster effects** (Drop Shadow, Inner/Outer Glow, Feather, Gaussian Blur) are described by
+//! - **Raster effects** (Drop Shadow, Inner/Outer Glow, Feather, Gaussian Blur, and the
+//!   Photoshop-style filters of [`pixel`]: Radial Blur, Smart Blur, Color Halftone, Crystallize, Mezzotint, Pointillize,
+//!   Unsharp Mask and Glowing Edges) are described by
 //!   [`raster_effects`] and painted by the renderer; [`outset`] says how far they reach beyond
 //!   the geometry.
 //! - **Stroke geometry** ([`stroke`]): arrowheads, dash patterns and width profiles, shared by the
 //!   renderer, the exporters and Outline Stroke.
-//! - [`effect_catalog`] lists every effect with its menu path, parameter documentation and the
-//!   defaults of Illustrator's dialogs. Missing parameters always fall back to those defaults.
+//! - [`effect_catalog`] lists every effect with its menu path, parameter documentation and
+//!   default values. Missing parameters always fall back to those defaults.
 //! - [`reshape`] applies geometry effects to type, images, symbol instances and live objects
 //!   through their outlines.
 //! - [`evaluate_container`] turns a group's or layer's own fills, strokes and geometry effects into
@@ -26,7 +28,8 @@
 //!   renderer and the exporters.
 //!
 //! Everything is deterministic: "random" effects (Roughen, Tweak, Scribble) use a seeded hash
-//! noise (`seed` parameter, default 0).
+//! noise (`seed` parameter, default 0); the random Pixelate filters hash their pattern's cells,
+//! anchored at the object's centre.
 #![forbid(unsafe_code)]
 
 mod adjust;
@@ -36,8 +39,11 @@ mod distort;
 mod group;
 mod live;
 mod marks;
+pub mod pixel;
 mod raster;
 mod reshape;
+mod revolve;
+mod solids;
 pub mod stroke;
 mod stylize;
 mod util;
@@ -61,8 +67,14 @@ pub use group::{
 };
 pub use live::{expand_live, expand_live_deep, expanded_live_group, text_outliner};
 pub use marks::{CROP_MARKS, crop_marks_art, has_crop_marks};
+pub use pixel::{PIXEL_EFFECTS, PixelFx, PixelSpace};
 pub use raster::{RasterFx, outset, raster_effects};
 pub use reshape::{expand_outlined, needs_outline, outline_art, outline_text, reshape};
+pub use revolve::{REVOLVE, has_revolve, revolve_art, revolve_options, validate_revolve};
+pub use solids::{
+    EXTRUDE, INFLATE, ROTATE, ROTATION_PRESETS, SOLIDS, extrude_options, has_solid, inflate_options, is_three_d, solid_art, validate_solid,
+    view_options,
+};
 pub use warp::{WarpStyle, warp_point};
 
 /// Catalogue entry for one effect.
@@ -117,11 +129,26 @@ fn lengths_of(id: &str) -> Lengths {
         "distort.tweak" => Lengths { always: &[], absolute: &["h", "v"] },
         "distort.transform" => always(&["moveH", "moveV"]),
         "path.offsetPath" => always(&["offset"]),
+        "threeD.revolve" => always(&["offset"]),
+        "threeD.extrude" => always(&["depth", "bevelWidth", "bevelHeight"]),
+        "threeD.inflate" => always(&["depth"]),
         "path.outlineStroke" => always(&["width"]),
-        "stylize.roundCorners" | "stylize.feather" | "blur.gaussian" => always(&["radius"]),
+        "stylize.roundCorners" | "stylize.feather" | "blur.gaussian" | "blur.smart" | "sharpen.unsharpMask" => always(&["radius"]),
         "stylize.scribble" => always(&["overlap", "strokeWidth", "spacing", "variation"]),
         "stylize.dropShadow" => always(&["x", "y", "blur"]),
         "stylize.innerGlow" | "stylize.outerGlow" => always(&["blur"]),
+        "stylize.glowingEdges" => always(&["edgeWidth", "smoothness"]),
+        "brushStrokes.accentedEdges" => always(&["edgeWidth"]),
+        "brushStrokes.angledStrokes" | "brushStrokes.crosshatch" | "brushStrokes.inkOutlines" => always(&["strokeLength"]),
+        "brushStrokes.spatter" => always(&["sprayRadius"]),
+        "brushStrokes.sprayedStrokes" => always(&["strokeLength", "sprayRadius"]),
+        "brushStrokes.sumiE" => always(&["strokeWidth"]),
+        "pixelate.colorHalftone" => always(&["maxRadius"]),
+        "pixelate.crystallize" | "pixelate.pointillize" => always(&["cellSize"]),
+        "texture.craquelure" => always(&["crackSpacing"]),
+        "texture.mosaicTiles" => always(&["tileSize"]),
+        "texture.patchwork" => always(&["squareSize"]),
+        "texture.stainedGlass" => always(&["cellSize"]),
         _ => Lengths::default(),
     }
 }
@@ -134,6 +161,13 @@ const SHAPE: &[&str] = &["Effect", "Convert to Shape"];
 const STYLIZE: &[&str] = &["Effect", "Stylize"];
 const WARP: &[&str] = &["Effect", "Warp"];
 const BLUR: &[&str] = &["Effect", "Blur"];
+const ARTISTIC: &[&str] = &["Effect", "Artistic"];
+const BRUSH_STROKES: &[&str] = &["Effect", "Brush Strokes"];
+const DISTORT: &[&str] = &["Effect", "Distort"];
+const SHARPEN: &[&str] = &["Effect", "Sharpen"];
+const PIXELATE: &[&str] = &["Effect", "Pixelate"];
+const TEXTURE: &[&str] = &["Effect", "Texture"];
+const VIDEO: &[&str] = &["Effect", "Video"];
 const PATHFINDER: &[&str] = &["Effect", "Pathfinder"];
 const PLUGINS: &[&str] = &["Effect", "Plug-ins"];
 const ADJUST: &[&str] = &["Effect", "Color Adjustments"];
@@ -163,6 +197,34 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
     let r = |id, label, menu, params, defaults| EffectInfo { id, label, menu, params, defaults, raster: true, lengths: lengths_of(id) };
     let mut v = vec![
         g(
+            REVOLVE,
+            "Revolve…",
+            &["Effect", "3D and Materials"],
+            "{angle: degrees (0..360, 360), offset: pt (0..100000, 0), edge: left|right, rotationX: degrees (0), rotationY: degrees (0), rotationZ: degrees (0), perspectiveAngle: degrees (0..160, 0; 0 is none, wider brings the eye nearer), perspective: % (0..100; the earlier form, read as the perspectiveAngle that shows the same view), segments: integer (8..128, 64), shade: bool (true), lightRotation: degrees (-180..180, 125.26; round the object on the page, 0 on its right, counterclockwise), lightHeight: degrees (0..90, 30; 0 beside the object, 90 straight in front), lightBehind: bool (false; true lights it from behind), lightIntensity: % (0..100, 80), lightSoftness: % (0..100, 0; how far round the object the light reaches), ambient: % (0..200, 25; Ambient Light), lightAzimuth: degrees (the earlier form: with lightElevation, read as the lightRotation, lightHeight and lightBehind of the same light), lightElevation: degrees (the earlier form, with lightAzimuth), expandVisibleOnly: bool (true, trim covered opaque solid surfaces only on Expand Appearance)}. Open paths create uncapped surfaces; intersecting profiles use approximate painter visibility.",
+            json!({"angle":360.0,"offset":0.0,"edge":"left","rotationX":0.0,"rotationY":0.0,"rotationZ":0.0,"perspectiveAngle":0.0,"segments":64,"shade":true,"lightRotation":125.26438968275465,"lightHeight":30.0,"lightBehind":false,"lightIntensity":80.0,"lightSoftness":0.0,"ambient":25.0,"expandVisibleOnly":true}),
+        ),
+        g(
+            EXTRUDE,
+            "Extrude & Bevel…",
+            &["Effect", "3D and Materials"],
+            "{depth: pt (0..2000, 50), twist: degrees (0..360, 0; the back turned against the front), taper: % (1..100, 100; the back's size), cap: bool (true: solid; false: hollow), bevel: none|classic|rounded|cove|step|ogee (none), bevelWidth: pt (0..1000, 4), bevelHeight: pt (0..1000, 4), bevelRepeat: integer (1..32, 1), bevelSpace: % (0..90, 0; flat between repeats), bevelInside: bool (false: added around the shape; true: carved into it), bevelBothSides: bool (false), rotationX: degrees (-180..180, -21.88), rotationY: degrees (-180..180, -23.4), rotationZ: degrees (-180..180, 9.06; the defaults are the Off-Axis Front position), perspectiveAngle: degrees (0..160, 0; 0 is none, wider brings the eye nearer), perspective: % (0..100; the earlier form, read as the perspectiveAngle that shows the same view), shade: bool (true), lightRotation: degrees (-180..180, 125.26; round the object on the page, 0 on its right, counterclockwise), lightHeight: degrees (0..90, 30; 0 beside the object, 90 straight in front), lightBehind: bool (false; true lights it from behind), lightIntensity: % (0..100, 80), lightSoftness: % (0..100, 0; how far round the object the light reaches), ambient: % (0..200, 25; Ambient Light), lightAzimuth: degrees (the earlier form: with lightElevation, read as the lightRotation, lightHeight and lightBehind of the same light), lightElevation: degrees (the earlier form, with lightAzimuth)}. The front face is the art, extruded backwards about the centre of its bounds; painted with the top fill (else the top stroke).",
+            json!({"depth":50.0,"twist":0.0,"taper":100.0,"cap":true,"bevel":"none","bevelWidth":4.0,"bevelHeight":4.0,"bevelRepeat":1,"bevelSpace":0.0,"bevelInside":false,"bevelBothSides":false,"rotationX":-21.88,"rotationY":-23.4,"rotationZ":9.06,"perspectiveAngle":0.0,"shade":true,"lightRotation":125.26438968275465,"lightHeight":30.0,"lightBehind":false,"lightIntensity":80.0,"lightSoftness":0.0,"ambient":25.0}),
+        ),
+        g(
+            INFLATE,
+            "Inflate…",
+            &["Effect", "3D and Materials"],
+            "{depth: pt (0..2000, 0; flat depth between front and back), twist: degrees (0..360, 0; the back turned against the front), taper: % (1..100, 100; the back's size), cap: bool (true: solid; false: no back, a shell open behind), volume: % (0..100, 50; 50 rounds the edge like a half sphere), bothSides: bool (false: flat back), rotationX: degrees (-180..180, -21.88), rotationY: degrees (-180..180, -23.4), rotationZ: degrees (-180..180, 9.06; the defaults are the Off-Axis Front position), perspectiveAngle: degrees (0..160, 0; 0 is none, wider brings the eye nearer), perspective: % (0..100; the earlier form, read as the perspectiveAngle that shows the same view), shade: bool (true), lightRotation: degrees (-180..180, 125.26; round the object on the page, 0 on its right, counterclockwise), lightHeight: degrees (0..90, 30; 0 beside the object, 90 straight in front), lightBehind: bool (false; true lights it from behind), lightIntensity: % (0..100, 80), lightSoftness: % (0..100, 0; how far round the object the light reaches), ambient: % (0..200, 25; Ambient Light), lightAzimuth: degrees (the earlier form: with lightElevation, read as the lightRotation, lightHeight and lightBehind of the same light), lightElevation: degrees (the earlier form, with lightAzimuth)}. Painted with the top fill (else the top stroke).",
+            json!({"depth":0.0,"twist":0.0,"taper":100.0,"cap":true,"volume":50.0,"bothSides":false,"rotationX":-21.88,"rotationY":-23.4,"rotationZ":9.06,"perspectiveAngle":0.0,"shade":true,"lightRotation":125.26438968275465,"lightHeight":30.0,"lightBehind":false,"lightIntensity":80.0,"lightSoftness":0.0,"ambient":25.0}),
+        ),
+        g(
+            ROTATE,
+            "Rotate…",
+            &["Effect", "3D and Materials"],
+            "{rotationX: degrees (-180..180, -21.88), rotationY: degrees (-180..180, -23.4), rotationZ: degrees (-180..180, 9.06; the defaults are the Off-Axis Front position), perspectiveAngle: degrees (0..160, 0; 0 is none, wider brings the eye nearer), perspective: % (0..100; the earlier form, read as the perspectiveAngle that shows the same view), shade: bool (true), lightRotation: degrees (-180..180, 125.26; round the object on the page, 0 on its right, counterclockwise), lightHeight: degrees (0..90, 30; 0 beside the object, 90 straight in front), lightBehind: bool (false; true lights it from behind), lightIntensity: % (0..100, 80), lightSoftness: % (0..100, 0; how far round the object the light reaches), ambient: % (0..200, 25; Ambient Light), lightAzimuth: degrees (the earlier form: with lightElevation, read as the lightRotation, lightHeight and lightBehind of the same light), lightElevation: degrees (the earlier form, with lightAzimuth)}. Turns the flat art in 3D about the centre of its bounds; every fill and stroke keeps its paint, shaded as one plane.",
+            json!({"rotationX":-21.88,"rotationY":-23.4,"rotationZ":9.06,"perspectiveAngle":0.0,"shade":true,"lightRotation":125.26438968275465,"lightHeight":30.0,"lightBehind":false,"lightIntensity":80.0,"lightSoftness":0.0,"ambient":25.0}),
+        ),
+        g(
             "convertToShape.rectangle",
             "Rectangle…",
             SHAPE,
@@ -187,7 +249,7 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             "distort.freeDistort",
             "Free Distort…",
             DT,
-            "{corners: [[x,y]×4] new positions of the bounding-box corners TL, TR, BR, BL in unit box coordinates (identity [[0,0],[1,0],[1,1],[0,1]])}",
+            "{corners: [[x,y]×4] (new positions of the bounding-box corners TL, TR, BR, BL in unit box coordinates; identity [[0,0],[1,0],[1,1],[0,1]])}",
             json!({"corners": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]}),
         ),
         g("distort.puckerBloat", "Pucker & Bloat…", DT, "{amount: % (-200 pucker … 200 bloat, default 0)}", json!({"amount": 0.0})),
@@ -202,8 +264,8 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             "distort.transform",
             "Transform…",
             DT,
-            "{scaleH: % (100), scaleV: % (100), moveH: pt (0), moveV: pt (0), rotate: deg (0), copies: int (0), reflectX: bool, reflectY: bool}",
-            json!({"scaleH": 100.0, "scaleV": 100.0, "moveH": 0.0, "moveV": 0.0, "rotate": 0.0, "copies": 0, "reflectX": false, "reflectY": false}),
+            "{scaleH: % (100), scaleV: % (100), moveH: pt (0; right = +), moveV: pt (0; down = +), rotate: deg (0; counter-clockwise), copies: 0..1000 (0; each copy transforms the last again), reflectX: bool (false; flips left to right), reflectY: bool (false; flips top to bottom), reference: 0..8 (4; the point of the bounds' 9-point grid it scales, rotates and reflects about: 0 top left, 4 centre, 8 bottom right), random: bool (false; each scale goes a random share of the way from 100 % to its value, each move and the angle a random share of theirs, differently for each object and the same on every redraw)}",
+            json!({"scaleH": 100.0, "scaleV": 100.0, "moveH": 0.0, "moveV": 0.0, "rotate": 0.0, "copies": 0, "reflectX": false, "reflectY": false, "reference": 4, "random": false}),
         ),
         g(
             "distort.tweak",
@@ -253,7 +315,7 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             "stylize.innerGlow",
             "Inner Glow…",
             STYLIZE,
-            "{mode: blend mode (\"screen\"), opacity: % (75), blur: pt (5), color: \"#rrggbb\" (\"#ffffff\"), source: \"edge\"|\"center\"}",
+            "{mode: blend mode (\"screen\"), opacity: % (75), blur: pt (5), color: \"#rrggbb\" (\"#ffffff\"), source: \"center\"|\"edge\" (\"edge\")}",
             json!({"mode": "screen", "opacity": 75.0, "blur": 5.0, "color": "#ffffff", "source": "edge"}),
         ),
         r(
@@ -265,6 +327,202 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
         ),
         r("stylize.feather", "Feather…", STYLIZE, "{radius: pt (5)}", json!({"radius": 5.0})),
         r("blur.gaussian", "Gaussian Blur…", BLUR, "{radius: pt (5)}", json!({"radius": 5.0})),
+        r(
+            "artistic.filmGrain",
+            "Film Grain…",
+            ARTISTIC,
+            "{grain: 0..20 (4; monochrome noise in shadows and midtones), highlightArea: 0..20 (0; widens the bright highlight area), intensity: 0..10 (10; highlight strength and quieter highlight grain)}. Smooth document-space grain follows translations; minification uses approximate footprint filtering. Coverage and pure white are preserved; black takes light speckles, and saturated colour channels may clip. Grain 0 with either highlightArea 0 or intensity 0 leaves the art unchanged. Original visual approximation; chosen VectorCraft defaults.",
+            json!({"grain": 4.0, "highlightArea": 0.0, "intensity": 10.0}),
+        ),
+        r(
+            "blur.radial",
+            "Radial Blur…",
+            BLUR,
+            "{amount: 1..100 (10; spin: an arc of `amount`°, zoom: the content scaled by up to about ±amount/2 %), method: \"spin\"|\"zoom\" (\"spin\"), quality: \"draft\"|\"good\"|\"best\" (\"good\"; 16, 64 or 256 samples)} blurs around the object's centre",
+            json!({"amount": 10.0, "method": "spin", "quality": "good"}),
+        ),
+        r(
+            "blur.smart",
+            "Smart Blur…",
+            BLUR,
+            "{radius: pt 0.1..100 (3), threshold: levels 0.1..100 (25; only colours closer than this blur together, so edges stay sharp), quality: \"low\"|\"medium\"|\"high\" (\"medium\"; 5, 7 or 9 samples across)} (Normal mode)",
+            json!({"radius": 3.0, "threshold": 25.0, "quality": "medium"}),
+        ),
+        r(
+            "brushStrokes.accentedEdges",
+            "Accented Edges…",
+            BRUSH_STROKES,
+            "{edgeWidth: pt 1..14 (2), edgeBrightness: 0..50 (38; high: white chalk, low: black ink), smoothness: 1..15 (5; softens the object first and leaves its faint edges out)} accentuates the object's edges",
+            json!({"edgeWidth": 2.0, "edgeBrightness": 38.0, "smoothness": 5.0}),
+        ),
+        r(
+            "brushStrokes.angledStrokes",
+            "Angled Strokes…",
+            BRUSH_STROKES,
+            "{directionBalance: 0..100 (50; 0: every stroke a left diagonal, 100: every stroke a right diagonal, between: light areas right, dark areas left), strokeLength: pt 3..50 (15), sharpness: 0..10 (3)} repaints the object with diagonal strokes, the light areas' going the opposite way to the dark areas'",
+            json!({"directionBalance": 50.0, "strokeLength": 15.0, "sharpness": 3.0}),
+        ),
+        r(
+            "brushStrokes.crosshatch",
+            "Crosshatch…",
+            BRUSH_STROKES,
+            "{strokeLength: pt 3..50 (9), sharpness: 0..20 (6), strength: 1..3 (1; passes of hatching)} keeps the object's detail under pencil hatching along both diagonals and roughens its edges",
+            json!({"strokeLength": 9.0, "sharpness": 6.0, "strength": 1.0}),
+        ),
+        r(
+            "brushStrokes.darkStrokes",
+            "Dark Strokes…",
+            BRUSH_STROKES,
+            "{balance: 0..10 (5; the higher, the more of the object counts as dark), blackIntensity: 0..10 (6), whiteIntensity: 0..10 (2)} paints the dark areas closer to black with short strokes and the light areas with long white strokes",
+            json!({"balance": 5.0, "blackIntensity": 6.0, "whiteIntensity": 2.0}),
+        ),
+        r(
+            "brushStrokes.inkOutlines",
+            "Ink Outlines…",
+            BRUSH_STROKES,
+            "{strokeLength: pt 1..50 (4), darkIntensity: 0..50 (20), lightIntensity: 0..50 (10)} redraws the object in pen and ink: fine outlines over its edges and ink strokes in its shadows",
+            json!({"strokeLength": 4.0, "darkIntensity": 20.0, "lightIntensity": 10.0}),
+        ),
+        r(
+            "brushStrokes.spatter",
+            "Spatter…",
+            BRUSH_STROKES,
+            "{sprayRadius: pt 0..25 (10; colours scattered up to 0.4 × this), smoothness: 1..15 (5; larger, smoother grains)} renders the object as if sprayed with a spatter airbrush",
+            json!({"sprayRadius": 10.0, "smoothness": 5.0}),
+        ),
+        r(
+            "brushStrokes.sprayedStrokes",
+            "Sprayed Strokes…",
+            BRUSH_STROKES,
+            "{strokeLength: pt 0..20 (12), sprayRadius: pt 0..25 (7; strokes scattered up to 0.3 × this), strokeDirection: \"rightDiagonal\"|\"horizontal\"|\"leftDiagonal\"|\"vertical\" (\"rightDiagonal\")} repaints the object with sprayed, angled strokes of its main colours",
+            json!({"strokeLength": 12.0, "sprayRadius": 7.0, "strokeDirection": "rightDiagonal"}),
+        ),
+        r(
+            "brushStrokes.sumiE",
+            "Sumi-e…",
+            BRUSH_STROKES,
+            "{strokeWidth: pt 3..15 (10), strokePressure: 0..15 (2; more ink), contrast: 0..40 (16)} paints the object in the Japanese style, as if with a wet brush full of black ink on rice paper: soft, blurred edges and rich blacks, the colours keeping their hue and the object its shape",
+            json!({"strokeWidth": 10.0, "strokePressure": 2.0, "contrast": 16.0}),
+        ),
+        r(
+            "distort.diffuseGlow",
+            "Diffuse Glow…",
+            DISTORT,
+            "{graininess: 0..10 (6; white grain, thicker in the glow), glowAmount: 0..20 (10), clearAmount: 0..20 (15; the higher, the more of the image stays clear of glow)} renders the object as if seen through a soft diffusion filter: its highlights glow white under see-through white grain",
+            json!({"graininess": 6.0, "glowAmount": 10.0, "clearAmount": 15.0}),
+        ),
+        r(
+            "distort.glass",
+            "Glass…",
+            DISTORT,
+            "{distortion: 0..20 (5), smoothness: 1..15 (3), texture: \"blocks\"|\"canvas\"|\"frosted\"|\"tinyLens\" (\"frosted\"; surfaces made in code), scaling: % 50..200 (100), invert: bool (false; turns the surface's heights over)} makes the object look as if seen through glass",
+            json!({"distortion": 5.0, "smoothness": 3.0, "texture": "frosted", "scaling": 100.0, "invert": false}),
+        ),
+        r(
+            "distort.oceanRipple",
+            "Ocean Ripple…",
+            DISTORT,
+            "{rippleSize: 1..15 (9), rippleMagnitude: 0..20 (9)} adds randomly spaced ripples, as if the object were under water",
+            json!({"rippleSize": 9.0, "rippleMagnitude": 9.0}),
+        ),
+        r(
+            "sharpen.unsharpMask",
+            "Unsharp Mask…",
+            SHARPEN,
+            "{amount: % 1..500 (50), radius: pt 0.1..250 (1; σ of the blur edges are found against), threshold: levels 0..255 (0; smaller differences are left alone)}",
+            json!({"amount": 50.0, "radius": 1.0, "threshold": 0.0}),
+        ),
+        r(
+            "stylize.glowingEdges",
+            "Glowing Edges…",
+            STYLIZE,
+            "{edgeWidth: pt 1..14 (2), edgeBrightness: 0..20 (6), smoothness: pt 1..15 (5)} finds alpha-weighted Sobel edges and draws bright coloured outlines on black",
+            json!({"edgeWidth": 2.0, "edgeBrightness": 6.0, "smoothness": 5.0}),
+        ),
+        r(
+            "pixelate.colorHalftone",
+            "Color Halftone…",
+            PIXELATE,
+            "{maxRadius: pt 4..127 (8; the radius of a dot at full strength, which fills its square cell), channel1: screen angle deg -360..360 (108), channel2: deg (162), channel3: deg (90), channel4: deg (45)} screens each colour channel (red, green, blue: channels 1 to 3; in CMYK documents cyan, magenta, yellow, black: 1 to 4) at its angle into dots whose area follows the channel's mean over their cell",
+            json!({"maxRadius": 8.0, "channel1": 108.0, "channel2": 162.0, "channel3": 90.0, "channel4": 45.0}),
+        ),
+        r(
+            "pixelate.crystallize",
+            "Crystallize…",
+            PIXELATE,
+            "{cellSize: pt 3..300 (10)} redraws the object as polygon crystals of solid colour around random points about cellSize apart",
+            json!({"cellSize": 10.0}),
+        ),
+        r(
+            "pixelate.mezzotint",
+            "Mezzotint…",
+            PIXELATE,
+            "{type: \"fineDots\"|\"mediumDots\"|\"grainyDots\"|\"coarseDots\"|\"shortLines\"|\"mediumLines\"|\"longLines\"|\"shortStrokes\"|\"mediumStrokes\"|\"longStrokes\" (\"fineDots\")} turns each colour channel fully on or off against a random pattern of dots, lines or strokes: fully saturated colours",
+            json!({"type": "fineDots"}),
+        ),
+        r(
+            "pixelate.pointillize",
+            "Pointillize…",
+            PIXELATE,
+            "{cellSize: pt 3..300 (5)} redraws the object as randomly placed dots of its colours on a white canvas",
+            json!({"cellSize": 5.0}),
+        ),
+        r(
+            "texture.craquelure",
+            "Craquelure…",
+            TEXTURE,
+            "{crackSpacing: pt 2..100 (15; how far apart the cracks are), crackDepth: 0..10 (6; how deep and wide the cracks are, and how high the plates and the tones stand), crackBrightness: 0..10 (9; how brightly the plaster is lit)} paints the object on relief plaster cracked into plates and along the contours of its tones",
+            json!({"crackSpacing": 15.0, "crackDepth": 6.0, "crackBrightness": 9.0}),
+        ),
+        r(
+            "texture.grain",
+            "Grain…",
+            TEXTURE,
+            "{intensity: 0..100 (40), contrast: 0..100 (50; the image's contrast, 50 leaves it as it is), grainType: \"regular\"|\"soft\"|\"sprinkles\"|\"clumped\"|\"contrasty\"|\"enlarged\"|\"stippled\"|\"horizontal\"|\"vertical\"|\"speckle\" (\"regular\")} adds grain in 1 pt grains (2 pt Enlarged, clumps Clumped, streaks Horizontal and Vertical); Sprinkles and Stippled use the background colour, white",
+            json!({"intensity": 40.0, "contrast": 50.0, "grainType": "regular"}),
+        ),
+        r(
+            "texture.mosaicTiles",
+            "Mosaic Tiles…",
+            TEXTURE,
+            "{tileSize: pt 2..100 (12), groutWidth: 1..15 (3; the grout is half a point wide per step), lightenGrout: 0..10 (9; how light the grout is)} lays the object in irregular tiles bevelled at their edges, with sunken grout between them",
+            json!({"tileSize": 12.0, "groutWidth": 3.0, "lightenGrout": 9.0}),
+        ),
+        r(
+            "texture.patchwork",
+            "Patchwork…",
+            TEXTURE,
+            "{squareSize: pt 0..10 (4; 0 draws 1 pt squares), relief: 0..25 (8)} redraws the object in squares of the colour around their centres, raised to heights that follow its highlights and shadows, a little more or less at random, lit from the top left",
+            json!({"squareSize": 4.0, "relief": 8.0}),
+        ),
+        r(
+            "texture.stainedGlass",
+            "Stained Glass…",
+            TEXTURE,
+            "{cellSize: pt 2..50 (10), borderThickness: 1..20 (4; the lead between the panes, half a point wide per step, in the foreground colour: black), lightIntensity: 0..10 (3; a light behind the object's centre, fading out towards its corners)} redraws the object as single-coloured panes around random points about cellSize apart",
+            json!({"cellSize": 10.0, "borderThickness": 4.0, "lightIntensity": 3.0}),
+        ),
+        r(
+            "texture.texturizer",
+            "Texturizer…",
+            TEXTURE,
+            "{texture: \"brick\"|\"burlap\"|\"canvas\"|\"sandstone\" (\"canvas\"; surfaces made in code), scaling: % 50..200 (100), relief: 0..50 (4), lightDirection: \"bottom\"|\"bottomLeft\"|\"left\"|\"topLeft\"|\"top\"|\"topRight\"|\"right\"|\"bottomRight\" (\"top\"), invert: bool (false; turns the surface's heights over)} paints the object on a surface in relief",
+            json!({"texture": "canvas", "scaling": 100.0, "relief": 4.0, "lightDirection": "top", "invert": false}),
+        ),
+        r(
+            "video.deinterlace",
+            "De-Interlace…",
+            VIDEO,
+            "{eliminate: \"odd\"|\"even\" (\"odd\"; which field lines are taken out), create: \"duplication\"|\"interpolation\" (\"duplication\"; a line taken out becomes a copy of the line above, or the average of the lines above and below)} the field lines are the rows of the document's raster grid (Document Raster Effects Settings › Resolution), numbered from 1 at the top of the page",
+            json!({"eliminate": "odd", "create": "duplication"}),
+        ),
+        r(
+            "video.ntscColors",
+            "NTSC Colors",
+            VIDEO,
+            "{} makes colours a television signal can't carry (luma plus chroma past 110 % of white, or luma minus chroma below −20 %) less saturated, keeping their brightness",
+            json!({}),
+        ),
     ];
     v.extend([
         g(
@@ -384,19 +642,62 @@ pub fn default_params(id: &str) -> Option<Value> {
     }
 }
 
-/// `params` layered over the defaults of `id` (unknown keys are kept).
+/// `params` layered over the defaults of `id` (unknown keys are kept), with the 3D effects'
+/// earlier `perspective` read as `perspectiveAngle` (see [`upgrade_params`]).
 pub fn merged_params(id: &str, params: &Value) -> Value {
     let mut out = match catalog_index().get(id).map(|e| &e.defaults) {
         Some(Value::Object(m)) => m.clone(),
         Some(_) => Map::new(),
         None => vectorcraft_plugins::effect::installed(id).map(|p| p.manifest().defaults()).unwrap_or_default(),
     };
-    if let Value::Object(p) = params {
-        for (k, v) in p {
-            out.insert(k.clone(), v.clone());
-        }
+    // Upgraded before the defaults are under it: a default angle is no angle given.
+    if let Value::Object(p) = upgrade_params(id, params) {
+        out.extend(p);
     }
     Value::Object(out)
+}
+
+/// `params` for effect `id` in their current form. The 3D effects took Perspective as a 0–100 %
+/// strength, `perspective`, before the documented 0°–160° angle, `perspectiveAngle`, and the light
+/// as `lightAzimuth` and `lightElevation` before the documented Rotation and Height
+/// (`lightRotation`, `lightHeight`, `lightBehind`). Earlier values (from a file or a script of
+/// then) become the current ones that show exactly the same, unless those are given too, which win.
+pub fn upgrade_params(id: &str, params: &Value) -> Value {
+    match params {
+        Value::Object(m) => {
+            let mut m = m.clone();
+            upgrade_perspective(id, &mut m);
+            upgrade_light(id, &mut m);
+            Value::Object(m)
+        }
+        other => other.clone(),
+    }
+}
+
+fn upgrade_light(id: &str, m: &mut Map<String, Value>) {
+    if !is_three_d(id) {
+        return;
+    }
+    let (azimuth, elevation) = (m.remove("lightAzimuth"), m.remove("lightElevation"));
+    if azimuth.is_none() && elevation.is_none() || m.contains_key("lightRotation") || m.contains_key("lightHeight") {
+        return;
+    }
+    let degrees = |v: Option<Value>, default: f64| v.and_then(|v| v.as_f64()).unwrap_or(default);
+    let (rotation, height, behind) = vectorcraft_three_d::light_from_azimuth_elevation(degrees(azimuth, -45.0), degrees(elevation, 45.0));
+    m.insert("lightRotation".into(), json!(rotation));
+    m.insert("lightHeight".into(), json!(height));
+    m.insert("lightBehind".into(), json!(behind));
+}
+
+fn upgrade_perspective(id: &str, m: &mut Map<String, Value>) {
+    if !is_three_d(id) {
+        return;
+    }
+    let Some(strength) = m.remove("perspective") else { return };
+    if !m.contains_key("perspectiveAngle") {
+        let angle = vectorcraft_three_d::perspective_from_strength(strength.as_f64().unwrap_or(0.0) / 100.0);
+        m.insert("perspectiveAngle".into(), json!(angle));
+    }
 }
 
 /// A new effect record with default parameters (overridden by `params`).
@@ -428,6 +729,7 @@ pub fn scale_effect(e: &mut Effect, s: f64) {
 /// Is `id` a raster (painted) effect?
 pub fn is_raster(id: &str) -> bool {
     matches!(id, "stylize.dropShadow" | "stylize.innerGlow" | "stylize.outerGlow" | "stylize.feather" | "blur.gaussian")
+        || PIXEL_EFFECTS.contains(&id)
 }
 
 /// Does `id` change geometry? (Crop Marks adds art of its own instead, [`crop_marks_art`]; colour
@@ -438,6 +740,7 @@ pub fn is_geometry(id: &str) -> bool {
         && !is_pathfinder(id)
         && !is_adjustment(id)
         && id != CROP_MARKS
+        && !is_three_d(id)
         && (catalog_index().contains_key(id) || vectorcraft_plugins::effect::plugin_id(id).is_some())
 }
 
@@ -455,6 +758,9 @@ pub struct GeomContext<'a> {
     pub stroke: Option<&'a StrokeLayer>,
     /// The object's fill rule (inside and outside alignment).
     pub rule: FillRule,
+    /// The seed of the Transform effect's Random: the object's id, so each object varies its own
+    /// way and keeps its result on every redraw.
+    pub seed: u64,
 }
 
 impl<'a> GeomContext<'a> {
@@ -464,7 +770,7 @@ impl<'a> GeomContext<'a> {
             NodeKind::Path { rule, .. } | NodeKind::Compound { rule, .. } => *rule,
             _ => FillRule::NonZero,
         };
-        Self { stroke: n.appearance.stroke().filter(|s| !s.paint.is_none() && s.width > 0.0), rule }
+        Self { stroke: n.appearance.stroke().filter(|s| !s.paint.is_none() && s.width > 0.0), rule, seed: n.id.0 }
     }
 
     /// The context of the effects on `item`, one of the same object's appearance items: a
@@ -517,7 +823,7 @@ pub(crate) fn apply_one(id: &str, p: &Value, path: &PathData, b: Rect, ctx: &Geo
         "distort.freeDistort" => distort::free_distort(path, b, p),
         "distort.puckerBloat" => distort::pucker_bloat(path, b, num(p, "amount", 0.0)),
         "distort.roughen" => distort::roughen(path, b, p),
-        "distort.transform" => distort::transform(path, b, p),
+        "distort.transform" => distort::transform(path, b, p, ctx.seed),
         "distort.tweak" => distort::tweak(path, b, p),
         "distort.twist" => distort::twist(path, b, num(p, "angle", 10.0)),
         "distort.zigZag" => distort::zig_zag(path, b, p),

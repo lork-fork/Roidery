@@ -105,6 +105,12 @@ pub fn leaf_shapes<'a>(n: &'a Node, out: &mut Vec<&'a Node>) {
     if !n.visible {
         return;
     }
+    if n.extras().shaper.is_some() {
+        for c in n.children().into_iter().flatten().skip(1) {
+            leaf_shapes(c, out);
+        }
+        return;
+    }
     match &n.kind {
         NodeKind::Path { guide: true, .. } | NodeKind::Path { clipping: true, .. } => {}
         NodeKind::Path { .. } | NodeKind::Compound { .. } => out.push(n),
@@ -256,7 +262,7 @@ impl BuilderMap {
     }
 
     /// The regions just either side of the middle of `piece` (None: outside every region).
-    fn sides(&self, piece: &po::Shape) -> [Option<usize>; 2] {
+    pub fn sides(&self, piece: &po::Shape) -> [Option<usize>; 2] {
         let Some(sp) = piece.path.subpaths.first() else { return [None; 2] };
         let n = sp.segment_count();
         if n == 0 {

@@ -63,7 +63,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             *field(&mut next) = !on;
         }
     }
-    if st.tracking.abs() > 1e-9 && cur.ligatures {
+    if cur.ligatures && vectorcraft_text::ligatures_suppressed_by(st.tracking) && !vectorcraft_text::explicit_ligatures(&st.features) {
         widgets::dim_label(ui, tl!("Ligatures are off while the text is tracked."));
     }
     if next != cur {

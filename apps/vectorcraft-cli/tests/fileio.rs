@@ -82,3 +82,36 @@ fn help_lists_readable_formats() {
     let out = ok(&["--help"]);
     assert!(out.contains("Readable formats: .vectorcraft") && out.contains(".ait") && out.contains(".webp"), "{out}");
 }
+
+#[test]
+fn help_lists_perf_deep() {
+    let out = ok(&["--help"]);
+    assert!(out.contains("vectorcraft-cli perf [--paths N] [--deep]") && out.contains("--deep also times"), "{out}");
+}
+
+/// `info` reports the import warnings: an EPS read only up to an error names it.
+#[test]
+fn info_reports_why_an_eps_read_partly() {
+    let eps = tmp("partial.eps");
+    std::fs::write(&eps, "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\n%%EndComments\n0 0 10 10 rectfill frobnicate\n%%EOF\n").unwrap();
+    let v = info(&eps);
+    let w = v["warnings"][0].as_str().unwrap_or_default();
+    assert!(w.contains("`frobnicate`"), "{v}");
+    assert_eq!(v["kinds"]["Path"], 1, "{v}");
+}
+
+/// #1604: convert reports what reading the input left out (here a missing linked image) as
+/// importWarnings, next to the export's own warnings.
+#[test]
+fn convert_reports_import_warnings() {
+    let svg = tmp("missing-link.svg");
+    std::fs::write(
+        &svg,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><image width="40" height="40" href="nowhere-to-be-found.png"/></svg>"#,
+    )
+    .unwrap();
+    let png = tmp("missing-link.png");
+    let out: Value = serde_json::from_str(ok(&["convert", &svg, &png]).trim()).unwrap();
+    let w = out["importWarnings"].as_array().unwrap_or_else(|| panic!("{out}"));
+    assert!(w.iter().any(|w| w.as_str().unwrap().contains("nowhere-to-be-found.png")), "{out}");
+}

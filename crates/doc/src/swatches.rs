@@ -109,10 +109,11 @@ impl Document {
     }
 
     /// Visit every colour that can link to a swatch — solid paints and gradient stops of fills,
-    /// strokes and text runs — in the art, symbol definitions, pattern tiles, graphic styles and the
-    /// swatches themselves (tint swatches, gradient swatches' stops). `f(colour, link, tint)` may
-    /// change them and returns true when it did ([`Paint::map_links`]). Only nodes holding a changed
-    /// paint (and the paths to them) are copied. Returns the number of changed paints.
+    /// strokes and text runs — in the art (opacity masks included), symbol definitions, pattern
+    /// tiles, graphic styles and the swatches themselves (tint swatches, gradient swatches' stops).
+    /// `f(colour, link, tint)` may change them and returns true when it did
+    /// ([`Paint::map_links`]). Only nodes holding a changed paint (and the paths to them) are
+    /// copied. Returns the number of changed paints.
     pub fn map_solid_paints(&mut self, f: &mut LinkFn) -> usize {
         let mut n = map_trees(&mut self.layers, f);
         for s in &mut self.symbols {
@@ -152,18 +153,24 @@ impl Document {
 }
 
 impl Document {
-    /// Visit every paint held by the art, symbol definitions, pattern tiles and graphic styles
-    /// (fills, strokes and text runs), and the colour of every gradient-mesh point as a solid paint.
+    /// Visit every paint held by the art (opacity masks included), symbol definitions, pattern
+    /// tiles and graphic styles (fills, strokes and text runs), and the colour of every
+    /// gradient-mesh point as a solid paint.
     pub fn visit_paints(&self, f: &mut dyn FnMut(&Paint)) {
         let mut tree = |n: &Node| {
-            n.walk(&mut |m| {
+            walk_with_masks(n, &mut |m| {
                 node_paints(m).for_each(&mut *f);
                 if let NodeKind::Mesh(mesh) = &m.kind {
                     mesh.points.iter().for_each(|p| f(&Paint::solid(p.color)));
                 }
             })
         };
-        self.layers.iter().chain(self.symbols.iter().map(|s| &s.art)).chain(self.patterns.iter().flat_map(|p| &p.art)).for_each(|n| tree(n));
+        self.layers
+            .iter()
+            .chain(self.symbols.iter().map(|s| &s.art))
+            .chain(self.graph_designs.iter().map(|g| &g.art))
+            .chain(self.patterns.iter().flat_map(|p| &p.art))
+            .for_each(|n| tree(n));
         self.graphic_styles.iter().flat_map(|gs| &gs.appearance.items).for_each(|it| f(item_paint(it)));
     }
 }
@@ -219,7 +226,7 @@ fn item_paint_mut(it: &mut AppearanceItem) -> &mut Paint {
 }
 
 /// The paints a node holds itself (not its children): appearance items, then text runs.
-fn node_paints(n: &Node) -> impl Iterator<Item = &Paint> {
+pub fn node_paints(n: &Node) -> impl Iterator<Item = &Paint> {
     let runs = match &n.kind {
         NodeKind::Text(t) => t.runs.as_slice(),
         _ => &[],
@@ -228,7 +235,7 @@ fn node_paints(n: &Node) -> impl Iterator<Item = &Paint> {
 }
 
 /// Mutable [`node_paints`], in the same order.
-fn node_paints_mut(n: &mut Node) -> impl Iterator<Item = &mut Paint> {
+pub fn node_paints_mut(n: &mut Node) -> impl Iterator<Item = &mut Paint> {
     let runs = match &mut n.kind {
         NodeKind::Text(t) => t.runs.as_mut_slice(),
         _ => &mut [],
@@ -275,7 +282,29 @@ fn map_node(n: &Node, f: &mut LinkFn) -> Option<(Node, usize)> {
             }
         }
     }
+    // Opacity mask art lives outside the tree, but its colours are the object's too (#1735).
+    if let Some(mask) = n.extras().mask.as_deref()
+        && let Some((new, k)) = map_node(&mask.art, f)
+    {
+        let m = out.get_or_insert_with(|| n.clone());
+        if let Some(slot) = m.extras_if_any().and_then(|e| e.mask.as_deref_mut()) {
+            slot.art = Arc::new(new);
+            count += k;
+        }
+    }
     out.map(|m| (m, count))
+}
+
+/// Visit `n` and its subtree, the art of opacity masks included (mask art after the masked
+/// object, before its children).
+fn walk_with_masks<'a>(n: &'a Node, f: &mut dyn FnMut(&'a Node)) {
+    f(n);
+    if let Some(mask) = n.extras().mask.as_deref() {
+        walk_with_masks(&mask.art, f);
+    }
+    for c in n.children().into_iter().flatten() {
+        walk_with_masks(c, f);
+    }
 }
 
 fn map_tree(n: &mut Arc<Node>, f: &mut LinkFn) -> usize {

@@ -72,7 +72,7 @@ fn masked(clip: bool, invert: bool) -> Document {
     let mut red = rect(&mut d, Rect::new(0.0, 0.0, 40.0, 20.0), [255, 0, 0]);
     let mut m = OpacityMask::new(art, clip);
     m.invert = invert;
-    red.mask = Some(Box::new(m));
+    red.extras_mut().mask = Some(Box::new(m));
     add(&mut d, red);
     d
 }
@@ -94,4 +94,49 @@ fn clip_and_invert_masks_match_the_canvas() {
         let g = (255.0 * (1.0 - lum)).round() as u8;
         assert!(within(canvas.over_white(10, 10), [255, g, g], 2), "{:?}", canvas.over_white(10, 10));
     }
+}
+
+/// A knockout group of opaque art draws its elements plainly: each covers what it knocks out, and
+/// masks of their shapes would leave seams along the antialiased edges. Translucent art still knocks
+/// out through masks.
+#[test]
+fn a_knockout_group_of_opaque_art_needs_no_masks() {
+    let knockout = |opacity: f32| {
+        let mut d = Document::new(20.0, 20.0);
+        let below = rect(&mut d, Rect::new(0.0, 0.0, 20.0, 20.0), [200, 0, 0]);
+        let mut top = rect(&mut d, Rect::new(5.0, 5.0, 15.0, 15.0), [0, 0, 200]);
+        top.opacity = opacity;
+        let mut group = Node::group(d.alloc_id(), vec![below.into(), top.into()]);
+        group.knockout = vectorcraft_doc::Knockout::On;
+        add(&mut d, group);
+        export(&d, &ExportOptions::default())
+    };
+    let opaque = knockout(1.0);
+    assert!(!opaque.contains("<mask"), "{opaque}");
+    assert!(within(resvg_render(&opaque, 20, 20).over_white(10, 10), [0, 0, 200], 2));
+    let translucent = knockout(0.5);
+    assert!(translucent.contains("<mask"), "{translucent}");
+    // The top half-shows white, not the red it knocks out.
+    assert!(
+        within(resvg_render(&translucent, 20, 20).over_white(10, 10), [128, 128, 228], 3),
+        "{:?}",
+        resvg_render(&translucent, 20, 20).over_white(10, 10)
+    );
+}
+
+/// A brushed stroke is no opaque art: its pieces carry their own opacity (a bristle brush's vary),
+/// so the knockout group keeps its masks.
+#[test]
+fn a_knockout_group_with_a_brushed_stroke_keeps_its_masks() {
+    let mut d = Document::new(40.0, 40.0);
+    let below = rect(&mut d, Rect::new(0.0, 0.0, 40.0, 40.0), [200, 0, 0]);
+    let mut stroke = vectorcraft_doc::StrokeLayer::new(Paint::solid(Color::rgb8(0, 0, 200)), 8.0);
+    stroke.brush = Some("Bristle Round".into());
+    let line = shapes::line(vectorcraft_geom::Point::new(5.0, 20.0), vectorcraft_geom::Point::new(35.0, 20.0));
+    let top = Node::path(d.alloc_id(), line, Appearance { items: vec![vectorcraft_doc::AppearanceItem::Stroke(stroke)], ..Default::default() });
+    let mut group = Node::group(d.alloc_id(), vec![below.into(), top.into()]);
+    group.knockout = vectorcraft_doc::Knockout::On;
+    add(&mut d, group);
+    let svg = export(&d, &ExportOptions::default());
+    assert!(svg.contains("<mask"), "{svg}");
 }

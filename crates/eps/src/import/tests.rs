@@ -11,21 +11,38 @@ use crate::import::{Dsc, import};
 use crate::{EpsOptions, Level, Preview, Raster};
 
 /// `body` as an EPS file with a 100 × 100 pt bounding box.
-fn eps(body: &str) -> Vec<u8> {
+pub(super) fn eps(body: &str) -> Vec<u8> {
     format!("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\n%%EndComments\n{body}\nshowpage\n%%EOF\n").into_bytes()
 }
 
-fn read(body: &str) -> crate::Imported {
+pub(super) fn read(body: &str) -> crate::Imported {
     import(&eps(body)).unwrap()
 }
 
+/// #1714: arrays and dictionaries a program links into themselves or each other are freed with
+/// the interpreter, also the ones it no longer reaches and when it stops on an error.
+#[test]
+fn arrays_and_dictionaries_holding_themselves_are_freed() {
+    // The arrays still alive once a program's interpreter has released what it made: the ones
+    // the interpreter itself holds, the same for every program here.
+    let left = |program: &str| {
+        let _ = import(&eps(program));
+        crate::import::obj::ARRAYS_LEFT.with(std::cell::Cell::get)
+    };
+    let plain = left("/a 1 array def /b 1 array def a 0 b put");
+    let cycles = "/a 1 array def a 0 a put         /b 1 array def /c 1 array def b 0 c put c 0 b put         /d 1 dict def /e 1 array def d /e e put e 0 d put         1 array dup 0 1 index put pop         /a null def /b null def";
+    for program in [cycles.to_string(), format!("{cycles} 1 0 div"), format!("{cycles} /p {{ p }} def")] {
+        assert_eq!(left(&program), plain, "{program}");
+    }
+}
+
 /// The objects of the document's layer.
-fn objects(d: &Document) -> Vec<Arc<Node>> {
+pub(super) fn objects(d: &Document) -> Vec<Arc<Node>> {
     d.layers[0].children().unwrap().clone()
 }
 
 /// Every object, down through groups, in order.
-fn all(d: &Document) -> Vec<Arc<Node>> {
+pub(super) fn all(d: &Document) -> Vec<Arc<Node>> {
     fn walk(n: &Arc<Node>, out: &mut Vec<Arc<Node>>) {
         out.push(n.clone());
         for c in n.children().into_iter().flatten() {
@@ -39,25 +56,25 @@ fn all(d: &Document) -> Vec<Arc<Node>> {
     out
 }
 
-fn fill(n: &Node) -> Option<&Paint> {
+pub(super) fn fill(n: &Node) -> Option<&Paint> {
     n.appearance.items.iter().find_map(|i| match i {
         AppearanceItem::Fill(f) => Some(&f.paint),
         _ => None,
     })
 }
 
-fn stroke(n: &Node) -> Option<&vectorcraft_doc::StrokeLayer> {
+pub(super) fn stroke(n: &Node) -> Option<&vectorcraft_doc::StrokeLayer> {
     n.appearance.items.iter().find_map(|i| match i {
         AppearanceItem::Stroke(s) => Some(s),
         _ => None,
     })
 }
 
-fn bounds(n: &Node) -> Rect {
+pub(super) fn bounds(n: &Node) -> Rect {
     n.geometric_bounds().unwrap()
 }
 
-fn near(a: Rect, b: Rect) -> bool {
+pub(super) fn near(a: Rect, b: Rect) -> bool {
     [(a.x0, b.x0), (a.y0, b.y0), (a.x1, b.x1), (a.y1, b.y1)].iter().all(|(x, y)| (x - y).abs() < 0.05)
 }
 
@@ -81,6 +98,26 @@ fn paths_fill_and_stroke_in_document_space() {
     assert!(near(bounds(&o[0]), Rect::new(10.0, 70.0, 30.0, 90.0)));
     assert!(near(bounds(&o[1]), Rect::new(5.0, 85.0, 15.0, 95.0)));
     assert!(stroke(&o[2]).is_some());
+}
+
+/// Each `closepath` adds an element to the path, so on a path that holds `MAX_PATH` (1,048,576)
+/// elements it stops the reading with the same error as `lineto`, run from a procedure or from an
+/// encoded user path.
+#[test]
+fn closepath_stops_at_the_path_limit() {
+    for body in [
+        // A moveto and 1,100,000 closepaths.
+        "newpath 0 0 moveto 1100000 { closepath } repeat",
+        // An encoded user path: setbbox and moveto, then 4,750 pairs of a repeat count of 223 (the
+        // byte 255) and closepath (10), 1,059,250 closepaths.
+        "/s 9502 string def s 0 0 put s 1 1 put 2 2 9500 { dup s exch 255 put 1 add s exch 10 put } for \
+         newpath [ [0 0 10 10 0 0] s ] uappend",
+    ] {
+        // The square drawn before the error stays, and the one after it is left out.
+        let r = read(&format!("0 0 10 10 rectfill {body} 20 20 10 10 rectfill"));
+        assert_eq!(objects(&r.document).len(), 1, "{body}: {:?}", r.warnings);
+        assert!(r.warnings[0].contains("a path has too many points"), "{body}: {:?}", r.warnings);
+    }
 }
 
 #[test]
@@ -151,6 +188,41 @@ fn line_state_reaches_the_stroke() {
     assert!(stroke(&objects(&read("0 setlinewidth 0 0 moveto 9 9 lineto stroke").document)[0]).unwrap().width > 0.0);
 }
 
+/// `setdash` takes a dash pattern of up to 65,535 entries, the most elements an array has in a
+/// typical implementation (PLRM 3rd ed., Table B.1), and raises `limitcheck` for a longer one.
+#[test]
+fn dash_patterns_hold_at_most_65535_entries() {
+    let dash = |n: usize| format!("/a {n} array def 0 1 {} {{ a exch 1 put }} for a 0 setdash", n - 1);
+    check(&format!("{} currentdash pop length 65535 eq", dash(65535)));
+    let r = read(&format!("0 0 10 10 rectfill {}", dash(65536)));
+    assert_eq!(objects(&r.document).len(), 1, "{:?}", r.warnings);
+    assert!(r.warnings.iter().any(|w| w.contains("limitcheck in `setdash`")), "{:?}", r.warnings);
+}
+
+/// Saved and copied graphics states share the dash pattern, and `setdash`, `currentdash` and
+/// each stroke count the entries they read or copy against the budgets. Under a pattern of
+/// 65,535 entries, 4,000,000 passes of `gsave grestore` and 2,000,000 passes of
+/// `gstate currentgstate setgstate` finish, and loops of `setdash`, `currentdash` and `strokepath`
+/// run out of a budget.
+#[test]
+fn work_on_the_longest_dash_pattern_ends_soon() {
+    let dash = "0 0 10 10 rectfill /a 65535 array def 0 1 65534 { a exch 1 put } for a 0 setdash";
+    for body in ["4000000 { gsave grestore } repeat", "2000000 { gstate currentgstate setgstate } repeat"] {
+        let r = read_soon(&format!("{dash} {body} 20 20 10 10 rectfill"));
+        assert_eq!(objects(&r.document).len(), 2, "{body}: {:?}", r.warnings);
+        assert!(r.warnings.is_empty(), "{body}: {:?}", r.warnings);
+    }
+    for (body, why) in [
+        ("{ a 0 setdash } loop", "runs too long"),
+        ("{ currentdash pop pop } loop", "uses too much memory"),
+        ("{ newpath 0 0 moveto 100 0 lineto strokepath } loop", "runs too long"),
+    ] {
+        let r = read_soon(&format!("{dash} {body}"));
+        assert_eq!(objects(&r.document).len(), 1, "{body}: {:?}", r.warnings);
+        assert!(r.warnings.iter().any(|w| w.contains(why)), "{body}: {:?}", r.warnings);
+    }
+}
+
 #[test]
 fn procedures_bind_def_loops_and_dictionaries() {
     let r = read(
@@ -193,6 +265,26 @@ fn clips_become_clipping_groups() {
     // eoclip of a path.
     let o = objects(&read("10 10 moveto 30 10 lineto 30 30 lineto closepath eoclip newpath 0 0 50 50 rectfill").document);
     assert!(matches!(o[0].kind, NodeKind::Group { clip: true, .. }));
+    // #1542: a diamond touching the page edges has the page as its bounding box but still clips.
+    let o = objects(&read("50 0 moveto 100 50 lineto 50 100 lineto 0 50 lineto closepath clip newpath 0 0 100 100 rectfill").document);
+    assert!(matches!(o[0].kind, NodeKind::Group { clip: true, .. }), "{:?}", o[0].kind);
+    // A turned square around the whole page clips nothing.
+    let o = objects(&read("50 -60 moveto 160 50 lineto 50 160 lineto -60 50 lineto closepath clip newpath 0 0 100 100 rectfill").document);
+    assert!(matches!(o[0].kind, NodeKind::Path { .. }), "{:?}", o[0].kind);
+}
+
+#[test]
+fn clips_nest_only_so_deep() {
+    // Each clip inside the last one used to nest a clipping group one level deeper, past the stack.
+    let r = read("1 1 200000 { pop 0 0 50 50 rectclip } for 1 1 5 5 rectfill");
+    let mut depth = 0;
+    let mut n = objects(&r.document)[0].clone();
+    while let NodeKind::Group { children, clip: true } = &n.kind {
+        depth += 1;
+        n = children.last().unwrap().clone();
+    }
+    assert_eq!(depth, vectorcraft_doc::clipnest::MAX_NEST);
+    assert!(r.warnings.iter().any(|w| w.contains("clips nested more than")), "{:?}", r.warnings);
 }
 
 #[test]
@@ -217,6 +309,64 @@ fn shadings_become_gradients() {
     assert_eq!(g.gradient.kind, GradientKind::Radial);
     let offsets: Vec<f32> = g.gradient.stops.iter().map(|s| s.offset).collect();
     assert_eq!(offsets, vec![0.0, 0.25, 1.0]);
+    // Pieces that don't meet at a bound make a hard stop: the colour before the bound and the
+    // one after it, at the same offset (the PDF reader does the same).
+    let hard = "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /Function << /FunctionType 3 /Domain [0 1] /Bounds [0.5] /Encode [0 1 0 1] /Functions [<< /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>] >> >>";
+    let r = read(&format!("0 0 200 50 rectclip {hard} shfill"));
+    let o = objects(&r.document);
+    let Some(Paint::Gradient(g)) = fill(&o[0]) else { panic!("{:?}", o[0]) };
+    let stops: Vec<(f32, Color)> = g.gradient.stops.iter().map(|s| (s.offset, s.color)).collect();
+    let (red, blue) = (Color::rgb(1.0, 0.0, 0.0), Color::rgb(0.0, 0.0, 1.0));
+    assert_eq!(stops.len(), 4, "{stops:?}");
+    assert_eq!((stops[0], stops[3]), ((0.0, red), (1.0, blue)), "{stops:?}");
+    assert_eq!((stops[1].0, stops[2]), (0.5, (0.5, red)), "{stops:?}");
+    let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+    assert!(near(stops[1].1.to_rgb(), blue.to_rgb()), "{stops:?}");
+}
+
+/// Tiling patterns and spot inks are found again through a hash of what tells them apart, so a
+/// program that makes 200,000 patterns and 200,001 inks reads within [`read_soon`]'s 20 seconds.
+/// Patterns are named Pattern 1, Pattern 2 and so on in the order they are made. A pattern made
+/// again from its prototype is the same pattern, and so is an uncolored pattern set again in a
+/// color it was set in before.
+#[test]
+fn many_tiling_patterns_and_spot_inks_read_in_linear_time() {
+    let r = read(
+        "/pp { pop 0 0 1 1 rectfill } def \
+         /a << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 1 1] /XStep 2 /YStep 2 /PaintProc /pp load >> def \
+         /b << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 1 1] /XStep 3 /YStep 2 /PaintProc /pp load >> def \
+         /u << /PatternType 1 /PaintType 2 /TilingType 1 /BBox [0 0 1 1] /XStep 2 /YStep 2 /PaintProc /pp load >> matrix makepattern def \
+         a matrix makepattern setpattern 0 0 10 10 rectfill b matrix makepattern setpattern 10 0 10 10 rectfill \
+         a [2 0 0 2 0 0] makepattern setpattern 20 0 10 10 rectfill /DeviceRGB setcolorspace \
+         1 0 0 u setpattern 30 0 10 10 rectfill 0 0 1 u setpattern 40 0 10 10 rectfill 1 0 0 u setpattern 50 0 10 10 rectfill",
+    );
+    let d = &r.document;
+    let names: Vec<&str> = d.patterns.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Pattern 1", "Pattern 2", "Pattern 3", "Pattern 4"]);
+    let fills: Vec<String> = objects(d)
+        .iter()
+        .map(|o| match fill(o) {
+            Some(Paint::Pattern { pattern, .. }) => pattern.clone(),
+            p => panic!("{p:?}"),
+        })
+        .collect();
+    assert_eq!(fills, ["Pattern 1", "Pattern 2", "Pattern 1", "Pattern 3", "Pattern 4", "Pattern 3"]);
+    assert!(names.iter().all(|n| d.swatch(n).is_some_and(|s| matches!(s.paint, Paint::Pattern { .. }))));
+    // 100,000 patterns whose cells differ, an uncolored pattern in 100,000 tints of an ink that is
+    // white at every tint (only the tint tells those patterns apart), and 200,000 more inks.
+    let r = read_soon(
+        "0 1 99999 { /i exch def << /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 1 1] /XStep i 2 add /YStep 1 \
+         /PaintProc { pop 0 0 1 1 rectfill } >> matrix makepattern setpattern } for \
+         [/Separation (Spot) /DeviceGray { pop 1 }] setcolorspace \
+         /p << /PatternType 1 /PaintType 2 /TilingType 1 /BBox [0 0 1 1] /XStep 2 /YStep 2 /PaintProc { pop 0 0 1 1 rectfill } >> \
+         matrix makepattern def 0 1 99999 { 100000 div p setpattern } for \
+         0 1 199999 { /i exch def [/Separation i 8 string cvs /DeviceGray {}] setcolorspace } for 0 0 1 1 rectfill",
+    );
+    let d = &r.document;
+    assert_eq!(d.patterns.len(), 200_000);
+    assert!(d.patterns.iter().enumerate().all(|(i, p)| p.name == format!("Pattern {}", i + 1)));
+    assert_eq!(d.swatches.iter().filter(|s| matches!(s.paint, Paint::Pattern { .. })).count(), 200_000);
+    assert_eq!(d.swatches.iter().filter(|s| s.spot).count(), 200_001);
 }
 
 #[test]
@@ -353,6 +503,22 @@ fn the_bounding_box_comes_from_the_header_or_the_trailer() {
     assert!(r.warnings.iter().any(|w| w.contains("first of the file's 2 pages")), "{:?}", r.warnings);
 }
 
+/// #1552: a Type 42 font's glyph space is one unit an em, so its identity FontMatrix scaled to 12
+/// sets 12 pt type (a Type 1's 0.001 matrix needs the 1000-unit space).
+#[test]
+fn type_42_fonts_set_type_at_their_size() {
+    for (kind, matrix) in [(42, "[1 0 0 1 0 0]"), (1, "[0.001 0 0 0.001 0 0]")] {
+        let body = format!(
+            "/T 10 dict begin /FontName /T def /FontType {kind} def /FontMatrix {matrix} def /Encoding StandardEncoding def currentdict end /T exch definefont pop \
+             /T findfont 12 scalefont setfont 10 20 moveto (Hi) show"
+        );
+        let r = read(&body);
+        let NodeKind::Text(t) = &objects(&r.document)[0].kind else { panic!("{:?}", r.warnings) };
+        let size = t.runs[0].style.size * t.xf.determinant().abs().sqrt();
+        assert!((size - 12.0).abs() < 1e-6, "FontType {kind}: {size} pt");
+    }
+}
+
 #[test]
 fn embedded_font_programs_are_skipped() {
     let body = "/MyFont 10 dict begin /FontName /MyFont def /FontMatrix [0.001 0 0 0.001 0 0] def currentdict end currentfile eexec\n\
@@ -403,7 +569,7 @@ fn rich_doc() -> Document {
         link: None,
         placement: Default::default(),
     };
-    let n = Node::new(d.alloc_id(), NodeKind::Image(im));
+    let n = Node::new(d.alloc_id(), NodeKind::Image(Box::new(im)));
     add(&mut d, n);
     d.swatches.push(Swatch { name: "Spot".into(), paint: Paint::solid(Color::cmyk(0.0, 0.5, 1.0, 0.0)), global: true, spot: true });
     let spot = Paint::Solid { color: Color::cmyk(0.0, 0.5, 1.0, 0.0), swatch: Some("Spot".into()), tint: 1.0 };
@@ -463,7 +629,7 @@ fn blue(body: &str) {
 }
 
 /// Check that PostScript `cond` leaves `true`.
-fn check(cond: &str) {
+pub(super) fn check(cond: &str) {
     blue(&format!("{cond} {{ 0 0 1 setrgbcolor }} {{ 1 0 0 setrgbcolor }} ifelse"));
 }
 
@@ -624,6 +790,141 @@ fn hostile_executable_files_and_type_loops_are_refused() {
     refused("/Helvetica findfont 10 scalefont setfont { pop pop pop } 1000000 string cshow", "too long");
     // The program's own file, made executable, is already running.
     blue("currentfile cvx exec currentfile flushfile 0 0 1 setrgbcolor");
+}
+
+/// Reads `body` as [`read`] does, on a thread of its own, and fails the test when reading takes
+/// more than 20 s.
+fn read_soon(body: &str) -> crate::Imported {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let ps = eps(body);
+    std::thread::spawn(move || tx.send(import(&ps)).ok());
+    rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap_or_else(|_| panic!("reading {body} did not finish")).unwrap()
+}
+
+/// Reads `body` after a square through [`read_soon`]: the square stays, and the program runs out
+/// of the operation budget.
+fn runs_out_of_budget(body: &str) {
+    let r = read_soon(&format!("0 0 10 10 rectfill {body}"));
+    assert_eq!(objects(&r.document).len(), 1, "{body}: {:?}", r.warnings);
+    assert!(r.warnings.iter().any(|w| w.contains("the program runs too long")), "{body}: {:?}", r.warnings);
+}
+
+/// A loop of operators whose work grows with the path they make runs out of the operation budget
+/// (PLRM 3rd ed., chapter 8): `arc` and `arct` with a huge radius, which make thousands of curve
+/// segments, `strokepath` with a dash far finer than the line, dashes of length zero included, and
+/// `rectfill` with an array of 2,000 rectangles.
+#[test]
+fn paths_made_in_a_loop_run_out_of_the_budget() {
+    for body in [
+        "{ newpath 0 0 2.2e18 0 1440 arc } loop",
+        "{ newpath 0 0 moveto 1 0 1 1 1e30 arct } loop",
+        "[1] 0 setdash { newpath 0 0 moveto 9900 0 lineto strokepath } loop",
+        "[0 1] 0 setdash { newpath 0 0 moveto 9900 0 lineto strokepath } loop",
+        "/a [ 0 1 1999 { pop 0 0 1 1 } for ] def nulldevice { a rectfill } loop",
+    ] {
+        runs_out_of_budget(body);
+    }
+}
+
+/// A loop of operators that read or copy the whole current path or clip path runs out of the
+/// operation budget (PLRM 3rd ed., chapter 8): `pathbbox`, `clip`, `clippath`, `shfill` (which
+/// reads the clip path for the area it paints), `pathforall` (which copies the path before it runs
+/// a procedure), `gstate`, `currentgstate` and `setgstate`.
+#[test]
+fn paths_read_or_copied_in_a_loop_run_out_of_the_budget() {
+    // 10,001 elements reaching 10,000,000 points to the right: what `shfill` paints in a clip of
+    // them lies far outside the page and is left out.
+    let path = "newpath 0 0 moveto 0 1 9999 { pop 1000 0 rlineto } for";
+    let sh = "/sh << /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 10 0] \
+              /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >> def";
+    for body in [
+        "{ pathbbox pop pop pop pop } loop",
+        "{ clip } loop",
+        "clip newpath { clippath } loop",
+        "clip newpath { sh shfill } loop",
+        "{ { pop pop exit } { } { } { } pathforall } loop",
+        "{ gstate pop } loop",
+        "/g gstate def { g currentgstate pop } loop",
+        "/g gstate def { g setgstate } loop",
+    ] {
+        runs_out_of_budget(&format!("{sh} {path} {body}"));
+    }
+}
+
+/// A loop of `uappend` on an encoded user path runs out of the operation budget (PLRM 3rd ed.,
+/// section 4.6.2 and Table 4.3: each byte of the operator string is an operator, or a count of up
+/// to 223 repeats of the next one): one that runs `ucache` millions of times, one of repeat counts
+/// alone, and one with a long data array.
+#[test]
+fn encoded_user_paths_in_a_loop_run_out_of_the_budget() {
+    for body in [
+        // 100,000 pairs of a count of 223 repeats (byte 255) and `ucache` (byte 11): each
+        // `uappend` runs `ucache` 22,300,000 times.
+        "/s 200000 string def 0 2 199998 { dup s exch 255 put 1 add s exch 11 put } for /up [ [ ] s ] def",
+        // 200,000 repeat counts and no operator.
+        "/s 200000 string def 0 1 199999 { s exch 255 put } for /up [ [ ] s ] def",
+        // A data array of 400,000 nulls and an empty operator string.
+        "/up [ 400000 array () ] def",
+    ] {
+        runs_out_of_budget(&format!("{body} {{ up uappend }} loop"));
+    }
+}
+
+/// `arc` raises its second angle by multiples of 360 until it is at least the first, and `arcn`
+/// lowers it until it is at most the first (PLRM 3rd ed., `arc` and `arcn` in chapter 8), however
+/// large the angles: the arc runs between the angles' remainders after whole turns and ends at
+/// the second angle, the new current point.
+#[test]
+fn arcs_with_huge_angles_end_at_their_second_angle() {
+    // `at(deg)` is the point at `deg` degrees on the circle of radius 10 around (50, 50), in
+    // document space.
+    let at = |deg: f64| Point::new(50.0 + 10.0 * deg.to_radians().cos(), 50.0 - 10.0 * deg.to_radians().sin());
+    // Each program is listed with the remainders of its first and second angles after whole turns.
+    for (body, first, second) in [
+        ("50 50 10 1e18 0 arc", 280.0, 0.0),
+        ("50 50 10 1e308 0 arc", 296.0, 0.0),
+        ("50 50 10 0 1e18 arcn", 0.0, 280.0),
+        ("50 50 10 0 1e308 arcn", 0.0, 296.0),
+    ] {
+        let r = read_soon(&format!("newpath {body} currentpoint stroke 1 1 rectfill"));
+        let o = objects(&r.document);
+        assert_eq!(o.len(), 2, "{body}: {:?}", r.warnings);
+        // The arc lies within one quarter of the circle, so its endpoints span its bounds.
+        let (a, b) = (at(first), at(second));
+        assert!(near(bounds(&o[0]), Rect::from_points(a, b)), "{body}: {:?}", bounds(&o[0]));
+        // The second object is the square drawn at the current point.
+        assert!(near(bounds(&o[1]), Rect::new(b.x, b.y - 1.0, b.x + 1.0, b.y)), "{body}: {:?}", bounds(&o[1]));
+    }
+}
+
+/// An axial shading's function is one function dictionary or an array of one for each color
+/// component (PLRM 3rd ed., Table 4.13). One evaluation visits at most 257 functions, and past
+/// that the shading raises `limitcheck`: when four levels of arrays each have 100 entries that all
+/// refer to the same array of the level below (at the last level, the same function), one
+/// evaluation would visit 101,010,101 functions. Each function visited also counts against the
+/// operation budget.
+#[test]
+fn shading_functions_in_shared_arrays_stop_at_the_limits() {
+    let axial = |function: &str| format!("<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 100 0] /Function {function} >>");
+    let f = "/f << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> def";
+    // `a`: an array of `n` references to the function `f`.
+    let array = |n: usize| format!("{f} /a {n} array def 0 1 {} {{ a exch f put }} for", n - 1);
+    // Each level is an array of 100 references to the level below.
+    let levels = "/l2 100 array def 0 1 99 { l2 exch a put } for /l3 100 array def 0 1 99 { l3 exch l2 put } for \
+                  /l4 100 array def 0 1 99 { l4 exch l3 put } for";
+    let limitcheck = |r: &crate::Imported| r.warnings.iter().any(|w| w.contains("limitcheck in `shfill`: Function"));
+    let r = read_soon(&format!("0 0 10 10 rectfill {} {levels} {} shfill", array(100), axial("l4")));
+    assert!(limitcheck(&r) && objects(&r.document).len() == 1, "{:?}", r.warnings);
+    // 256 references are 257 functions for each sample, the most allowed; one more raises `limitcheck`.
+    let r = read_soon(&format!("{} {} shfill", array(256), axial("a")));
+    let o = objects(&r.document);
+    assert!(r.warnings.is_empty() && matches!(fill(&o[0]), Some(Paint::Gradient(_))), "{:?}", r.warnings);
+    let r = read_soon(&format!("0 0 10 10 rectfill {} {} shfill", array(257), axial("a")));
+    assert!(limitcheck(&r) && objects(&r.document).len() == 1, "{:?}", r.warnings);
+    // Each of these shadings visits 33 * 257 functions (33 samples), and 2000 of them count for
+    // more than the operation budget.
+    let r = read(&format!("{} /sh {} def 2000 {{ sh shfill }} repeat", array(256), axial("a")));
+    assert!(r.warnings.iter().any(|w| w.contains("the program runs too long")), "{:?}", r.warnings);
 }
 
 #[test]

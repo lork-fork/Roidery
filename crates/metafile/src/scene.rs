@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use vectorcraft_color::freeform::{painted_box, spread_scale};
 use vectorcraft_color::{BlendMode, GradientKind, GradientPaint, Paint};
-use vectorcraft_doc::{AppearanceItem, Dash, Document, ImageObject, LineCap, LineJoin, Node, NodeKind, StrokeLayer};
+use vectorcraft_doc::{AppearanceItem, Dash, Document, ImageObject, LineCap, LineJoin, Node, NodeKind, StrokeLayer, SymbolBoxes};
 use vectorcraft_effects::stroke;
 use vectorcraft_geom::{Affine, BezPath, FillRule, PathData, Point, Rect, Shape};
 
@@ -100,6 +100,9 @@ fn q(v: f32) -> u8 {
 
 pub(crate) struct Scene<'a> {
     doc: &'a Document,
+    /// The art boxes of `doc`'s symbols, which the walk measures symbol instances by when it
+    /// leaves out objects outside the region ([`SymbolBoxes::quick`]).
+    symbols: SymbolBoxes<'a>,
     region: Rect,
     /// The format clips (EMF).
     clips: bool,
@@ -116,7 +119,18 @@ pub(crate) struct Scene<'a> {
 
 impl<'a> Scene<'a> {
     pub fn new(doc: &'a Document, region: Rect, clips: bool) -> Self {
-        Self { doc, region, clips, ops: vec![], warnings: vec![], images: HashMap::new(), brushes: None, opacity: 1.0, nest: 0 }
+        Self {
+            doc,
+            symbols: doc.symbol_boxes().quick(),
+            region,
+            clips,
+            ops: vec![],
+            warnings: vec![],
+            images: HashMap::new(),
+            brushes: None,
+            opacity: 1.0,
+            nest: 0,
+        }
     }
 
     /// The operations (clipped to the region when the format clips) and the warnings.
@@ -148,7 +162,7 @@ impl<'a> Scene<'a> {
             return;
         }
         if !n.is_layer() {
-            match n.visual_bounds() {
+            match n.visual_bounds_with(&self.symbols) {
                 Some(b) if !overlaps(b, self.region) => return,
                 None if !n.is_container() => return,
                 _ => {}
@@ -189,7 +203,7 @@ impl<'a> Scene<'a> {
                 }
             }
             // Live blends, envelopes, meshes and repeats are written as their evaluated art.
-            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) => {
+            NodeKind::Blend { .. } | NodeKind::Envelope { .. } | NodeKind::Mesh(_) | NodeKind::Repeat(_) | NodeKind::PlacedDocument(_) => {
                 let g = vectorcraft_effects::expand_live_deep(Some(self.doc), n);
                 for c in g.children().into_iter().flatten() {
                     self.node(c, false);
@@ -236,7 +250,7 @@ impl<'a> Scene<'a> {
         if n.blend != BlendMode::Normal {
             self.warn(BLENDING);
         }
-        if n.mask.as_ref().is_some_and(|m| !m.disabled) {
+        if n.extras().mask.as_ref().is_some_and(|m| !m.disabled) {
             self.warn(MASKS);
         }
         let raster = |fx: &[vectorcraft_doc::Effect]| fx.iter().any(|e| e.visible && vectorcraft_effects::is_raster(&e.id));
@@ -389,7 +403,7 @@ impl<'a> Scene<'a> {
         let doc = self.doc;
         let brushes = self.brushes.get_or_insert_with(|| vectorcraft_brush::library(doc));
         let b = st.brush.as_deref().and_then(|name| brushes.iter().find(|b| b.name == name))?;
-        Some(vectorcraft_brush::stroke_pieces(b, bp, st))
+        Some(vectorcraft_brush::stroke_pieces(doc, b, bp, st))
     }
 
     /// A placed image, decoded once per image.

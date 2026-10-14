@@ -16,26 +16,35 @@ pub fn open_tool_dialog(app: &mut VectorcraftApp, kind: &str, p: Value) {
         "polygon" => Dialog::new(kind, json!({"x": x, "y": y, "radius": "50 pt", "sides": 6})),
         "star" => Dialog::new(kind, json!({"x": x, "y": y, "radius1": "50 pt", "radius2": "25 pt", "points": 5})),
         "lineSegment" => Dialog::new(kind, json!({"x": x, "y": y, "length": "100 pt", "angle": 0})),
+        // The grids: the tool's stored options (divider counts and skews, switches) at the default size.
+        "rectangularGrid" | "polarGrid" => {
+            let mut fields = app.session.tool_options_of(kind);
+            for (key, value) in [("x", json!(x)), ("y", json!(y)), ("width", json!("100 pt")), ("height", json!("100 pt"))] {
+                fields[key] = value;
+            }
+            Dialog::new(kind, fields)
+        }
         // Graph tool click: the graph's size.
         "graph" => Dialog::new(
             "command",
             json!({"__command": "graph.create", "__label": "Graph", "type": p.get("type").cloned().unwrap_or(json!("column")), "x": x, "y": y, "width": 200, "height": 150}),
         ),
-        // After drawing a graph: Graph Data (CSV: header row of series, then category, values…).
-        "graphData" => match app.session.execute("graph.setData", &json!({})) {
-            Ok(v) => Dialog::new("command", json!({"__command": "graph.setData", "__label": "Graph Data", "csv": v["csv"]})),
-            Err(_) => return,
-        },
-        // Flare Tool Options (Center / Halo / Rays / Rings), applied through the generic command dialog.
-        "flare" => Dialog::new(
-            "command",
-            json!({"__command": "shape.flare", "__label": "Flare Tool Options", "cx": x, "cy": y, "diameter": 100, "opacity": 50, "brightness": 30,
-                "growth": 20, "fuzziness": 50, "rays": 15, "longest": 300, "rayFuzziness": 100, "pathLength": 300, "rings": 10, "largest": 50, "direction": 45}),
-        ),
+        "graphData" => {
+            // After drawing a graph: Graph Data, its worksheet.
+            if let Err(e) = super::graph_data::open(app) {
+                app.status(e);
+            }
+            return;
+        }
+        // A Flare tool click: the Flare Tool Options, with the tool's values; OK draws a flare there.
+        "flare" => {
+            super::flare_options::open(app, Some(vectorcraft_geom::Point::new(x, y)));
+            return;
+        }
         "rotate" | "reflect" | "scale" | "shear" | "artboardOptions" => {
             let mut base = match kind {
                 "rotate" => json!({"angle": 0}),
-                "reflect" => json!({"axis": "vertical"}),
+                "reflect" => json!({"axis": "vertical", "angle": 90}),
                 "scale" => json!({"sx": 100, "sy": 100, "uniform": true}),
                 "shear" => json!({"angle": 0, "axis": "horizontal"}),
                 _ => json!({}),

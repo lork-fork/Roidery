@@ -21,7 +21,7 @@ use vectorcraft_color::Swatch;
 use vectorcraft_doc::{Document, GraphicStyle, ImageBlob, Node, NodeId, PatternDef, Symbol, TextStyleDef};
 use vectorcraft_geom::Rect;
 
-pub use flavours::{BITMAP, EMF, FILE_HEAD, Flavour, PASTE_ORDER, PDF, PNG, SVG, TEXT, file_flavour};
+pub use flavours::{BITMAP, EMF, EPS, FILE_HEAD, Flavour, PASTE_ORDER, PDF, PNG, SVG, TEXT, file_flavour, is_address, names_a_picture};
 pub(crate) use resources::SwatchChoices;
 
 use super::*;
@@ -87,11 +87,14 @@ pub struct Clipboard {
     /// The open document the objects came from ([`DocState::uid`]): pasting back into it uses its
     /// own resources as they are now.
     pub source_doc: Option<u64>,
+    /// An artboard copied with the Artboard tool (`artboard.copy`); `nodes` are then its art. Pasting
+    /// adds a copy of it with the art.
+    pub artboard: Option<vectorcraft_doc::Artboard>,
 }
 
 impl Clipboard {
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.nodes.is_empty() && self.artboard.is_none()
     }
 
     /// Objects `roots` of `st`'s document with their resources, source artboard and layers.
@@ -139,8 +142,8 @@ impl Clipboard {
         d.patterns = self.patterns.clone();
         d.swatches.extend(self.swatches.iter().cloned());
         d.graphic_styles.extend(self.graphic_styles.iter().cloned());
-        d.char_styles = self.char_styles.clone();
-        d.para_styles = self.para_styles.clone();
+        d.char_styles = self.char_styles.clone().into();
+        d.para_styles = self.para_styles.clone().into();
         if !self.brushes.is_empty() {
             let mut lib = vectorcraft_brush::library(&d);
             for b in &self.brushes {
@@ -151,11 +154,18 @@ impl Clipboard {
             }
             vectorcraft_brush::store(&mut d, &lib);
         }
-        let mut layer = Node::layer(NodeId(u64::MAX), "Clipboard", vectorcraft_doc::LayerColor::Preset(0));
+        // The layer's id is above every copied object's, so the document saves and reopens as
+        // a native file.
+        let mut top = 0;
+        for n in &self.nodes {
+            n.walk(&mut |c| top = top.max(c.id.0));
+        }
+        let mut layer = Node::layer(NodeId(top.saturating_add(1)), "Clipboard", vectorcraft_doc::LayerColor::Preset(0));
         if let Some(ch) = layer.children_mut() {
             *ch = self.nodes.iter().cloned().map(Arc::new).collect();
         }
         d.layers = vec![Arc::new(layer)];
+        d.fix_next_id();
         d
     }
 }
@@ -167,8 +177,10 @@ impl Session {
             return None;
         }
         let d = self.clipboard.to_document();
+        // SVG has no filters for the Photoshop-style effects: their objects go in as images.
+        let flat = super::rasterfx::flatten_pixel_effects(&d);
         Some(vectorcraft_svg::export(
-            &d,
+            flat.as_ref().unwrap_or(&d),
             &vectorcraft_svg::ExportOptions { artboard: None, object_ids: vectorcraft_svg::ObjectIds::Minimal, ..Default::default() },
         ))
     }
@@ -217,6 +229,43 @@ mod tests {
         s
     }
 
+    /// The address a browser's Copy Image puts next to the picture (#597), and text that isn't one.
+    #[test]
+    fn an_address_alone_is_told_from_other_text() {
+        for a in [
+            "https://example.com/cat.png",
+            " http://x.org/a?b=1
+",
+            "HTTPS://EXAMPLE.COM",
+            "file:///C:/art/cat.png",
+            "data:image/png;base64,iVBOR",
+            "blob:https://x.org/1",
+        ] {
+            assert!(is_address(a), "{a}");
+        }
+        for t in ["Pasted words", "see https://example.com", "https://a.org https://b.org", "https://", "example.com/cat.png", ""] {
+            assert!(!is_address(t), "{t}");
+        }
+    }
+
+    /// The image markup some browsers put as text next to a copied picture names it too (#1089);
+    /// markup with words in it is text.
+    #[test]
+    fn markup_of_only_images_names_a_picture() {
+        for m in [
+            r#"<img src="https://static.example.com/eagle.png" jsaction="" class="sFlh5c" style="max-width: 351px" alt="">"#,
+            r#"<meta http-equiv="content-type" content="text/html; charset=utf-8"><img src="a.png">"#,
+            "<html><body><!--StartFragment--><IMG SRC=\"a.png\"/><!--EndFragment--></body></html>",
+            r#"<a href="https://x.org"><img src="a.png"></a>"#,
+            "https://example.com/cat.png",
+        ] {
+            assert!(names_a_picture(m), "{m}");
+        }
+        for t in ["<p>Hello</p>", r#"<img src="a.png"> and a caption"#, "<b>bold</b>", "<imgx>", "<img", "plain words", "<br>", ""] {
+            assert!(!names_a_picture(t), "{t}");
+        }
+    }
+
     #[test]
     fn copy_exports_svg_that_round_trips_through_paste() {
         let mut s = session();
@@ -235,6 +284,26 @@ mod tests {
         let b = st.doc.bounds_of(&st.selection.in_paint_order(&st.doc), false).unwrap();
         assert!((b.center().x - 200.0).abs() < 1e-6 && (b.center().y - 150.0).abs() < 1e-6, "{b:?}");
         assert!((b.width() - 30.0).abs() < 1e-6 && (b.height() - 40.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pasted_type_gets_its_layout_bounds_cache() {
+        // Reported from Illustrator: pasted type kept no layout bounds, so its box (and alignment)
+        // fell back to the rough estimate until the file was saved and reopened.
+        let mut s = session();
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="500" height="120"><text x="0" y="80" font-family="Source Sans 3" font-size="40">WWWWWWWW</text></svg>"#;
+        s.execute("clipboard.importSvg", &json!({"svg": svg})).unwrap();
+        s.execute("edit.paste", &json!({})).unwrap();
+        let mut checked = 0;
+        s.doc().unwrap().doc.walk(|n| {
+            let vectorcraft_doc::NodeKind::Text(t) = &n.kind else { return };
+            let cached = t.cached_bounds.expect("pasted type computed its bounds");
+            let real = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t).bounds;
+            assert!((cached.width() - real.width()).abs() < 1e-6, "{cached:?} {real:?}");
+            assert!(cached.width() > t.estimate_bounds().width() + 1.0, "{cached:?} is just the estimate");
+            checked += 1;
+        });
+        assert_eq!(checked, 1, "one text object pasted");
     }
 
     #[test]

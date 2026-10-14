@@ -95,7 +95,7 @@ fn options_not_applied_yet_come_back_as_warnings() {
         json!({"output": {"outputIntent": vectorcraft_color::cms::GENERIC_CMYK, "outputCondition": "Press", "registry": "r", "trapped": true}}),
         json!({"output": {"outputConditionId": "CGATS TR 001"}}),
         json!({"advanced": {"outlineText": false}}),
-        json!({"advanced": {"fontSubsetPercent": 35}}),
+        json!({"advanced": {"outlineText": true, "fontSubsetPercent": 35}}),
         json!({"bleed": {"useDocument": true, "top": 9}}),
         json!({"bleed": {"top": 9}, "marks": {"trim": true, "registration": true, "colorBars": true, "pageInfo": true}}),
         json!({"includeNonPrinting": true}),

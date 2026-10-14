@@ -1,5 +1,7 @@
 //! The anchor-based editable path model.
 
+use std::collections::BTreeSet;
+
 use kurbo::{Affine, BezPath, CubicBez, ParamCurve, ParamCurveNearest, PathEl, Point, Rect, Shape};
 use serde::{Deserialize, Serialize};
 
@@ -250,6 +252,24 @@ impl SubPath {
             _ => a,
         }
     }
+    /// Bend segment `seg` so its point at `t` moves by `dv`: both inner control points move by
+    /// dv / 3t(1-t), since B(t) moves by 3t(1-t) times that. A smooth anchor stays smooth: its other
+    /// handle turns with the moved one. False when there is no such segment.
+    pub fn bend_segment(&mut self, seg: usize, t: f64, dv: kurbo::Vec2) -> bool {
+        let n = self.anchors.len();
+        if seg >= self.segment_count() || n == 0 {
+            return false;
+        }
+        let v = dv / (3.0 * t * (1.0 - t));
+        if let Some(a) = self.anchors.get_mut(seg % n) {
+            a.set_handle(true, a.h_out + v, false);
+        }
+        if let Some(b) = self.anchors.get_mut((seg + 1) % n) {
+            b.set_handle(false, b.h_in + v, false);
+        }
+        true
+    }
+
     /// Split segment `seg` at parameter `t`, inserting a new anchor. Returns the new anchor index.
     pub fn insert_anchor(&mut self, seg: usize, t: f64) -> usize {
         let n = self.anchors.len();
@@ -267,6 +287,77 @@ impl SubPath {
         };
         self.anchors.insert(seg + 1, mid);
         seg + 1
+    }
+    /// Make anchor `i` smooth: handles in line with its neighbours (its one neighbour at an open
+    /// end), each a third of the way to that side's neighbour. A smooth anchor with both handles
+    /// keeps them. False when there is no such anchor or no direction (the neighbours coincide).
+    pub fn smooth_anchor(&mut self, i: usize) -> bool {
+        let n = self.anchors.len();
+        let prev = if i > 0 {
+            Some(i - 1)
+        } else if self.closed {
+            n.checked_sub(1)
+        } else {
+            None
+        };
+        let next = if i + 1 < n {
+            Some(i + 1)
+        } else if self.closed {
+            Some(0)
+        } else {
+            None
+        };
+        let at = |j: Option<usize>| j.and_then(|j| self.anchors.get(j)).map(|a| a.p);
+        let (prev, next) = (at(prev), at(next));
+        let Some(a) = self.anchors.get_mut(i) else { return false };
+        if a.kind == AnchorKind::Smooth && a.has_in() && a.has_out() {
+            return true;
+        }
+        let (pp, nn) = (prev.unwrap_or(a.p), next.unwrap_or(a.p));
+        let dir = nn - pp;
+        let l = dir.hypot();
+        if l <= 1e-9 {
+            return false;
+        }
+        let u = dir / l;
+        a.h_in = a.p - u * (a.p.distance(pp) / 3.0);
+        a.h_out = a.p + u * (a.p.distance(nn) / 3.0);
+        a.kind = AnchorKind::Smooth;
+        true
+    }
+    /// Cut at the anchors `at`: each becomes the end of one open piece and the start of the next,
+    /// its handle off each piece retracted (the shape doesn't change). A closed subpath opens at
+    /// its first cut, so one cut leaves one piece whose ends coincide. The ends of an open subpath
+    /// and indices past the end don't cut; with no cut left, the subpath comes back as it is.
+    pub fn cut_at(&self, at: &BTreeSet<usize>) -> Vec<SubPath> {
+        let n = self.anchors.len();
+        let mut cuts = at.iter().copied().filter(|&i| i < n && (self.closed || (i > 0 && i + 1 < n))).peekable();
+        let Some(&first) = cuts.peek().filter(|_| n >= 2) else { return vec![self.clone()] };
+        // A closed subpath's anchors from the first cut round to it again; an open one's as they are.
+        let (run, cuts): (Vec<Anchor>, BTreeSet<usize>) = if self.closed {
+            (self.anchors.iter().cycle().skip(first).take(n + 1).copied().collect(), cuts.map(|c| (c + n - first) % n).chain([n]).collect())
+        } else {
+            (self.anchors.clone(), cuts.collect())
+        };
+        let mut pieces = vec![];
+        let mut cur: Vec<Anchor> = vec![];
+        for (i, a) in run.into_iter().enumerate() {
+            if !cuts.contains(&i) {
+                cur.push(a);
+                continue;
+            }
+            if !cur.is_empty() {
+                cur.push(Anchor { h_out: a.p, kind: AnchorKind::Corner, ..a });
+                pieces.push(SubPath::new(std::mem::take(&mut cur), false));
+            }
+            if i < n {
+                cur.push(Anchor { h_in: a.p, kind: AnchorKind::Corner, ..a });
+            }
+        }
+        if cur.len() > 1 {
+            pieces.push(SubPath::new(cur, false));
+        }
+        pieces
     }
     /// Signed area via the shoelace formula on the Bézier path (positive = clockwise in y-down).
     pub fn area(&self) -> f64 {

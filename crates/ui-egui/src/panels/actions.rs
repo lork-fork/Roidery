@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::{pstate, set_pstate};
 use crate::theme::Tokens;
 use crate::widgets::{self, dim_label};
 use crate::{VectorcraftApp, icons};
@@ -52,8 +53,10 @@ pub fn play(app: &mut VectorcraftApp, set: usize, idx: usize) -> Result<Value, S
 
 pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    let selected_id = egui::Id::new("actions-selected");
-    let mut selected: Option<(usize, usize)> = ui.data(|d| d.get_temp(selected_id));
+    // The selected action as (set, action). Read as the type it is stored as: egui keeps a
+    // value per type, so reading the bare pair never found it and no action stayed selected (#1629).
+    const SELECTED: &str = "actions-selected";
+    let mut selected: Option<(usize, usize)> = pstate(ui.ctx(), SELECTED);
     let mut play_req = None;
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
         for (si, set) in app.ui.action_sets.iter().enumerate() {
@@ -89,7 +92,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             }
         }
     });
-    ui.data_mut(|d| d.insert_temp(selected_id, selected));
+    set_pstate(ui.ctx(), SELECTED, selected);
     widgets::divider(ui);
     // Bottom bar: stop, record, play, new, delete.
     ui.horizontal(|ui| {
@@ -98,6 +101,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             && let Some((set, name, start)) = app.ui.recording.take()
         {
             let steps = app.session.journal_for_action(start);
+            app.session.journal.hold(None);
             if let Some(s) = app.ui.action_sets.get_mut(set) {
                 s.actions.push(Action { name, steps });
             }
@@ -110,7 +114,10 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                 app.ui.action_sets.push(ActionSet { name: "Set 1".into(), actions: vec![] });
             }
             let set = selected.map(|s| s.0).unwrap_or(0);
-            app.ui.recording = Some((set, format!("Action {n}"), app.session.journal.len()));
+            let start = app.session.journal.len();
+            // Keep every step from here on until recording stops, however long it runs.
+            app.session.journal.hold(Some(start));
+            app.ui.recording = Some((set, format!("Action {n}"), start));
         }
         if widgets::icon_button(ui, "dc-actions", tl!("Play Current Selection"), false, 24.0).clicked()
             && let Some(s) = selected
@@ -123,7 +130,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             && ai < s.actions.len()
         {
             s.actions.remove(ai);
-            ui.data_mut(|d| d.insert_temp::<Option<(usize, usize)>>(selected_id, None));
+            set_pstate::<Option<(usize, usize)>>(ui.ctx(), SELECTED, None);
         }
         if recording {
             ui.label(egui::RichText::new(tl!("● Recording")).color(egui::Color32::from_rgb(0xe0, 0x30, 0x30)));
@@ -143,6 +150,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vectorcraft_engine::Session;
 
     #[test]
     fn defaults_are_valid_commands() {
@@ -153,5 +161,77 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// #1629: a clicked action stays selected, so Play Current Selection plays it and Delete
+    /// Selection deletes it.
+    #[test]
+    fn a_clicked_action_stays_selected_for_play_and_delete() {
+        use super::super::tests_appearance::{click, frame_events, text_rect};
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 200, "height": 100})).unwrap();
+        let id = app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap()["id"].as_u64().unwrap();
+        let id = vectorcraft_doc::NodeId(id);
+        let ctx = egui::Context::default();
+        let texts = frame_events(&ctx, &mut app, vec![], show);
+        click(&ctx, &mut app, text_rect(&texts, "Reflect Horizontal").center(), show);
+        frame_events(&ctx, &mut app, vec![], show);
+        assert_eq!(pstate::<Option<(usize, usize)>>(&ctx, "actions-selected"), Some((0, 5)), "selected on the frames after the click");
+        // The bottom bar's 24-point buttons, left to right: stop, record, play, delete.
+        let mut bar = crate::toolbar::tests::widget_rects(&ctx, egui::vec2(24.0, 24.0));
+        bar.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        let [_, _, play, delete] = bar[..] else { panic!("the bottom bar: {bar:?}") };
+        click(&ctx, &mut app, text_rect(&texts, "Duplicate and Offset 10 pt").center(), show);
+        click(&ctx, &mut app, play.center(), show);
+        assert_eq!(app.session.active().unwrap().selection.len(), 1);
+        assert_ne!(app.session.active().unwrap().selection.objects, [id], "played: the copy is selected");
+        let names = |app: &VectorcraftApp| app.ui.action_sets[0].actions.iter().map(|a| a.name.clone()).collect::<Vec<_>>();
+        let before = names(&app);
+        click(&ctx, &mut app, delete.center(), show);
+        assert_eq!(names(&app), before[1..], "the selected action is deleted");
+        click(&ctx, &mut app, delete.center(), show);
+        assert_eq!(names(&app), before[1..], "nothing selected after a delete: nothing more goes");
+    }
+
+    /// Actions recorded with Align to Artboard and Paste in Place, and the default Center on
+    /// Artboard, play on the artboard active when they play, not on the one active when they were
+    /// recorded.
+    #[test]
+    fn actions_play_on_the_artboard_active_when_they_play() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 200, "height": 100, "artboards": 3})).unwrap();
+        let boards: Vec<_> = app.session.active().unwrap().doc.artboards.iter().map(|a| a.rect).collect();
+        let r = app.run("shape.rectangle", json!({"x": boards[1].x0 + 10.0, "y": boards[1].y0 + 15.0, "width": 20, "height": 20})).unwrap();
+        let rect = vectorcraft_doc::NodeId(r["id"].as_u64().unwrap());
+        let bounds = |app: &VectorcraftApp, ids: &[vectorcraft_doc::NodeId]| app.session.active().unwrap().doc.bounds_of(ids, false).unwrap();
+        // Each recorded as the panel records an action, with artboard 0 active.
+        let record = |app: &mut VectorcraftApp, name: &str, id: &str, params: Value| {
+            let start = app.session.journal.len();
+            app.run(id, params).unwrap();
+            let steps = app.session.journal_for_action(start);
+            app.ui.action_sets[0].actions.push(Action { name: name.into(), steps });
+            app.ui.action_sets[0].actions.len() - 1
+        };
+        app.run("edit.copy", json!({})).unwrap();
+        let align = record(&mut app, "Align Left", "object.align", json!({"horizontal": "left", "to": "artboard"}));
+        assert_eq!(bounds(&app, &[rect]).x0, boards[0].x0, "aligned to artboard 0 while recording");
+        let paste = record(&mut app, "Paste in Place", "edit.pasteInPlace", json!({}));
+        app.view_mut().unwrap().artboard = 2;
+        app.run("select.set", json!({"ids": [rect.0]})).unwrap();
+        play(&mut app, 0, align).unwrap();
+        assert_eq!(bounds(&app, &[rect]).x0, boards[2].x0, "aligned to artboard 2, active when the action plays");
+        let ids: Vec<vectorcraft_doc::NodeId> = play(&mut app, 0, paste).unwrap()["results"][0]["ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| vectorcraft_doc::NodeId(v.as_u64().unwrap()))
+            .collect();
+        let b = bounds(&app, &ids);
+        assert_eq!((b.x0, b.y0), (boards[2].x0 + 10.0, boards[2].y0 + 15.0), "pasted onto artboard 2, where it was on artboard 1");
+        app.view_mut().unwrap().artboard = 1;
+        app.run("select.set", json!({"ids": [rect.0]})).unwrap();
+        let center = app.ui.action_sets[0].actions.iter().position(|a| a.name == "Center on Artboard").unwrap();
+        play(&mut app, 0, center).unwrap();
+        assert_eq!(bounds(&app, &[rect]).center(), boards[1].center(), "centered on artboard 1, the active one");
     }
 }

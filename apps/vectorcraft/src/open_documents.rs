@@ -59,7 +59,7 @@ pub fn take() -> Vec<String> {
 fn add_open_urls_method() {
     let Some(mtm) = MainThreadMarker::new() else { return };
     let Some(delegate) = NSApplication::sharedApplication(mtm).delegate() else {
-        log::warn!("vectorcraft: no application delegate; files opened from Finder won't open");
+        log::warn!("no application delegate; files opened from Finder won't open");
         return;
     };
     let class = AsRef::<AnyObject>::as_ref(&*delegate).class();
@@ -72,13 +72,14 @@ fn add_open_urls_method() {
         objc2::ffi::class_addMethod(std::ptr::from_ref(class).cast_mut(), sel!(application:openURLs:), imp, c"v@:@@".as_ptr())
     };
     if !added.as_bool() {
-        log::warn!("vectorcraft: the application delegate already handles open-document events");
+        log::warn!("the application delegate already handles open-document events");
     }
 }
 
 /// Queue the files among `urls` and wake the UI. Never panics: it runs inside AppKit.
 extern "C-unwind" fn open_urls(_delegate: &AnyObject, _cmd: Sel, _app: &AnyObject, urls: &NSArray<NSURL>) {
-    let paths = urls.iter().filter_map(|u| u.to_file_path()).map(|p| p.to_string_lossy().into_owned());
+    // Only file URLs: macOS 27 turns an https URL's path into a file path too (#433).
+    let paths = urls.iter().filter(|u| u.isFileURL()).filter_map(|u| u.to_file_path()).map(|p| p.to_string_lossy().into_owned());
     PENDING.lock().unwrap_or_else(PoisonError::into_inner).extend(paths);
     if let Some(ctx) = UI.get() {
         ctx.request_repaint();

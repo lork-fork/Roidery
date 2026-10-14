@@ -66,6 +66,8 @@ pub(crate) struct Build<'d, 'a> {
 /// The unit of `$INSUNITS` code `code` in points (0, unitless: none).
 pub(crate) fn insunits_points(code: i64) -> Option<f64> {
     let m = 72.0 / 0.0254;
+    // The US survey foot: exactly 1200/3937 m.
+    let survey_ft = m * 1200.0 / 3937.0;
     Some(match code {
         1 => 72.0,
         2 => 864.0,
@@ -87,7 +89,10 @@ pub(crate) fn insunits_points(code: i64) -> Option<f64> {
         18 => m * 1.495_978_707e11,
         19 => m * 9.460_730_472_580_8e15,
         20 => m * 3.085_677_581e16,
-        21 => m * 1200.0 / 3937.0,
+        21 => survey_ft,
+        22 => survey_ft / 12.0,
+        23 => survey_ft * 3.0,
+        24 => survey_ft * 5280.0,
         _ => return None,
     })
 }
@@ -474,7 +479,7 @@ impl<'d, 'a> Build<'d, 'a> {
                 .into_iter()
                 .map(|sp| {
                     let mut c = Node::new(self.doc.alloc_id(), kind(PathData::single(sp)));
-                    c.appearance = appearance.clone();
+                    c.appearance = appearance.clone().into();
                     Arc::new(c)
                 })
                 .collect();
@@ -482,7 +487,7 @@ impl<'d, 'a> Build<'d, 'a> {
         } else {
             Node::new(self.doc.alloc_id(), kind(path))
         };
-        n.appearance = appearance;
+        n.appearance = appearance.into();
         Some(n)
     }
 

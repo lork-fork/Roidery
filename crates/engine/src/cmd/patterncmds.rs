@@ -18,6 +18,7 @@ use vectorcraft_doc::{Document, Node, NodeId, NodeKind, Selection};
 use vectorcraft_geom::Rect;
 
 use super::edit::selected_roots;
+use super::pathops::Beside;
 use super::*;
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -84,7 +85,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Transform Patterns",
             [],
             None,
-            "{ids?, matrix: [a,b,c,d,e,f]} transform only the pattern placement of the objects' pattern paints (Transform Patterns)",
+            "{ids?|id?, matrix: [a,b,c,d,e,f]} transform only the pattern placement of the objects' pattern paints (Transform Patterns)",
             has_selection_or_ids,
             pattern_transform
         ),
@@ -633,15 +634,12 @@ fn make_repeat(s: &mut Session, p: &Value, label: &str, make: impl Fn(Vec<Arc<No
         return Ok(json!({ "id": r.0 }));
     }
     let roots = roots(s, p)?;
-    let Some(&top) = roots.last() else { return Err(EngineError::Other("select the art to repeat".into())) };
+    if roots.is_empty() {
+        return Err(EngineError::Other("select the art to repeat".into()));
+    }
     let id = s.edit(label, |d, sel| {
-        let (par, idx, _) = d.position(top).ok_or(EngineError::NoNode(top))?;
-        let nodes: Vec<Arc<Node>> = roots.iter().filter_map(|id| d.node(*id).cloned()).map(Arc::new).collect();
         let id = d.alloc_id();
-        d.insert(par, idx + 1, Node::new(id, NodeKind::Repeat(make(nodes))))?;
-        for r in &roots {
-            d.remove(*r)?;
-        }
+        d.wrap(&roots, |nodes| Node::new(id, NodeKind::Repeat(make(nodes))))?;
         sel.set([id]);
         Ok(id)
     })?;
@@ -682,15 +680,14 @@ fn repeat_release(s: &mut Session, _: &Value) -> Result<Value> {
     let reps = selected_repeats(s);
     let ids = s.edit("Release Repeat", |d, sel| {
         let mut out = vec![];
+        let mut released = Beside::replacing(d, &reps);
         for r in &reps {
             let Some(n) = d.node(*r).cloned() else { continue };
-            let (par, idx, _) = d.position(*r).ok_or(EngineError::NoNode(*r))?;
-            d.remove(*r)?;
-            for (k, c) in n.children().into_iter().flatten().enumerate() {
-                out.push(c.id);
-                d.insert(par, idx + k, (**c).clone())?;
-            }
+            let art: Vec<Node> = n.children().into_iter().flatten().map(|c| (**c).clone()).collect();
+            out.extend(art.iter().map(|c| c.id));
+            released.put(d, *r, art)?;
         }
+        released.finish(d)?;
         sel.set(out.iter().copied());
         Ok(out)
     })?;
@@ -711,26 +708,48 @@ fn fix_ids(d: &mut Document, n: &mut Node) {
 fn repeat_expand(s: &mut Session, _: &Value) -> Result<Value> {
     let reps = selected_repeats(s);
     let ids = s.edit("Expand Repeat", |d, sel| {
-        let mut out = vec![];
         for r in &reps {
-            let Some(n) = d.node(*r).cloned() else { continue };
-            let mut g = vectorcraft_doc::live::expanded_group(&n, None);
-
-            // The group keeps the repeat's id; every generated instance node gets a fresh one.
-            if let Some(ch) = g.children_mut() {
-                for c in ch.iter_mut() {
-                    fix_ids(d, Arc::make_mut(c));
-                }
-            }
-            let (par, idx, _) = d.position(*r).ok_or(EngineError::NoNode(*r))?;
-            d.remove(*r)?;
-            d.insert(par, idx, g)?;
-            out.push(*r);
+            expand_repeat(d, *r)?;
         }
-        sel.set(out.iter().copied());
-        Ok(out)
+        sel.set(reps.iter().copied());
+        Ok(reps.clone())
     })?;
     Ok(ids_json(&ids))
+}
+
+/// Repeat `r` replaced by a group of its instances, keeping its id and place; every generated
+/// instance node gets a fresh id.
+fn expand_repeat(d: &mut Document, r: NodeId) -> Result<()> {
+    let Some(n) = d.node(r).cloned() else { return Ok(()) };
+    let mut g = vectorcraft_doc::live::expanded_group(&n, None);
+    if let Some(ch) = g.children_mut() {
+        for c in ch.iter_mut() {
+            fix_ids(d, Arc::make_mut(c));
+        }
+    }
+    let (par, idx, _) = d.position(r).ok_or(EngineError::NoNode(r))?;
+    d.remove(r)?;
+    d.insert(par, idx, g)?;
+    Ok(())
+}
+
+/// Object › Expand: every repeat in the subtrees of `roots` becomes a group of its instances
+/// ([`expand_repeat`]), inner ones first so an outer repeat repeats plain art. Returns how many.
+pub(crate) fn expand_repeats(d: &mut Document, roots: &[NodeId]) -> Result<usize> {
+    let mut reps = vec![];
+    for r in roots {
+        if let Some(n) = d.node(*r) {
+            n.walk(&mut |c| {
+                if pattern::is_repeat(c) {
+                    reps.push(c.id);
+                }
+            });
+        }
+    }
+    for r in reps.iter().rev() {
+        expand_repeat(d, *r)?;
+    }
+    Ok(reps.len())
 }
 
 fn repeat_options(s: &mut Session, p: &Value) -> Result<Value> {

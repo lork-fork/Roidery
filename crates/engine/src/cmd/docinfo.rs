@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use vectorcraft_color::Paint;
 use vectorcraft_doc::{ColorMode, Document, Node, NodeId, NodeKind};
 use vectorcraft_geom::{Affine, Rect};
+use vectorcraft_text::embed::Embedding;
 
 use super::*;
 
@@ -26,7 +27,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Make Pixel Perfect",
             ["Object"],
             None,
-            "{ids?} snap each object's edges to the pixel grid (odd stroke weights on half pixels) and round stroke weights",
+            "{ids?|id?} snap each object's edges to the pixel grid (odd stroke weights on half pixels) and round stroke weights",
             has_selection,
             pixel_perfect
         ),
@@ -49,13 +50,14 @@ pub const CATEGORIES: [(&str, &str); 11] = [
 ];
 
 /// The object counts of `document.info` and their labels.
-const OBJECT_LABELS: [(&str, &str); 16] = [
+const OBJECT_LABELS: [(&str, &str); 17] = [
     ("paths", "Paths"),
     ("compoundPaths", "Compound Paths"),
     ("groups", "Groups"),
     ("clipGroups", "Clipping Masks"),
     ("textObjects", "Text Objects"),
     ("images", "Images"),
+    ("placedDocuments", "Placed Documents"),
     ("symbolInstances", "Symbol Instances"),
     ("gradients", "Gradient Objects"),
     ("patterns", "Pattern Objects"),
@@ -76,13 +78,17 @@ pub struct Section {
     pub rows: Vec<(String, String)>,
 }
 
-/// What a font's `fsType` lets a copy of it do.
+/// What a font's `fsType` lets a copy of it do, read as exports read it ([`Embedding`]): the
+/// most permissive usage bit wins, and bitmap-only fonts may not be embedded.
 pub fn embedding_label(fs_type: u16) -> &'static str {
-    match fs_type & 0x000f {
-        0x0002 => "embedding not allowed",
-        0x0004 => "embedding for preview and print",
-        0x0008 => "embedding for editing",
-        _ => "embedding allowed",
+    if Embedding::from_fs_type(fs_type) == Embedding::Forbidden {
+        "embedding not allowed"
+    } else if fs_type & 0x0008 != 0 {
+        "embedding for editing"
+    } else if fs_type & 0x0004 != 0 {
+        "embedding for preview and print"
+    } else {
+        "embedding allowed"
     }
 }
 
@@ -91,7 +97,7 @@ type ImageRow = (String, u32, u32, Option<String>);
 
 /// The Document Info categories of `d` (only `category` when given) from `info` (what
 /// `document.info` reports), its fonts `(family, style)`, image objects and used patterns.
-fn sections(d: &Document, info: &Value, fonts: &BTreeSet<(String, String)>, images: &[ImageRow], category: Option<&str>) -> Vec<Section> {
+fn sections(d: &Document, info: &Value, fonts: &BTreeSet<super::fonts::UsedFont>, images: &[ImageRow], category: Option<&str>) -> Vec<Section> {
     let names = |k: &str| -> Vec<(String, String)> {
         info[k].as_array().into_iter().flatten().filter_map(Value::as_str).map(|n| (n.to_string(), String::new())).collect()
     };
@@ -129,22 +135,32 @@ fn sections(d: &Document, info: &Value, fonts: &BTreeSet<(String, String)>, imag
                 "patterns" => names("patternNames"),
                 "gradients" => d.swatches_iter().filter(|s| matches!(s.paint, Paint::Gradient(_))).map(|s| (s.name.clone(), String::new())).collect(),
                 "symbols" => names("symbols"),
-                "fonts" => fonts.iter().map(|(f, s)| (format!("{f} {s}"), String::new())).collect(),
+                "fonts" => fonts.iter().map(|f| (super::fonts::font_label(f), String::new())).collect(),
                 "fontDetails" => {
                     let db = vectorcraft_text::FontDb::global();
                     fonts
                         .iter()
-                        .map(|(family, style)| {
-                            let detail = match db.face(family, style) {
-                                Some(f) if f.family.eq_ignore_ascii_case(family) => {
+                        .map(|used| {
+                            let (family, style, version) = used;
+                            // Found by any of its names (in the version the type names); a style the
+                            // family lacks shows in another.
+                            let resolved =
+                                db.resolve(family, style).map(|(f, m)| (db.face_version(family, style, version.as_deref()).unwrap_or(f), m));
+                            let detail = match resolved {
+                                Some((f, m)) if m != vectorcraft_text::FontMatch::Missing => {
                                     let file =
                                         f.path().and_then(|p| p.file_name()).map_or_else(|| "built in".into(), |n| n.to_string_lossy().into_owned());
-                                    format!("{file}; {}", embedding_label(f.fs_type()))
+                                    let found = format!("{file}; {}", embedding_label(f.fs_type()));
+                                    if m == vectorcraft_text::FontMatch::Style {
+                                        format!("substituted: shown in {} {} ({found})", f.family, f.style)
+                                    } else {
+                                        found
+                                    }
                                 }
-                                Some(f) => format!("missing: shown in {} {}", f.family, f.style),
+                                Some((f, _)) => format!("missing: shown in {} {}", f.family, f.style),
                                 None => "missing".into(),
                             };
-                            (format!("{family} {style}"), detail)
+                            (super::fonts::font_label(used), detail)
                         })
                         .collect()
                 }
@@ -231,7 +247,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
                 NodeKind::Compound { .. } => Some("compoundPaths"),
                 NodeKind::Text(t) => {
                     for run in &t.runs {
-                        fonts.insert((run.style.font_family.clone(), run.style.font_style.clone()));
+                        fonts.insert((run.style.font_family.clone(), run.style.font_style.clone(), run.style.font_version.clone()));
                     }
                     Some("textObjects")
                 }
@@ -252,6 +268,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
                 NodeKind::Envelope { .. } => Some("envelopes"),
                 NodeKind::Mesh(_) => Some("meshes"),
                 NodeKind::Repeat(_) => Some("repeats"),
+                NodeKind::PlacedDocument(_) => Some("placedDocuments"),
             };
             if let Some(k) = k {
                 *counts.entry(k).or_default() += 1;
@@ -273,7 +290,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
                     spot.insert(name.clone());
                 }
             }
-            if n.mask.is_some() {
+            if n.extras().mask.is_some() {
                 *counts.entry("opacityMasks").or_default() += 1;
             }
             if !n.appearance.effects.is_empty() {
@@ -287,7 +304,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
             }
         });
     }
-    let font_names: Vec<String> = fonts.iter().map(|(f, s)| format!("{f} {s}")).collect();
+    let font_names: Vec<String> = fonts.iter().map(super::fonts::font_label).collect();
     let mut out = json!({
         "document": document_summary(d),
         "objects": counts,
@@ -394,6 +411,12 @@ mod tests {
         assert_eq!(embedding_label(0x0002), "embedding not allowed");
         assert_eq!(embedding_label(0x0004 | 0x0100), "embedding for preview and print");
         assert_eq!(embedding_label(0x0008), "embedding for editing");
+        // As exports read it: bitmap embedding only, the restricted bit with reserved bit 0, the
+        // most permissive of several usage bits.
+        assert_eq!(embedding_label(0x0200), "embedding not allowed");
+        assert_eq!(embedding_label(0x0003), "embedding not allowed");
+        assert_eq!(embedding_label(0x0006), "embedding for preview and print");
+        assert_eq!(embedding_label(0x000c), "embedding for editing");
     }
 
     #[test]

@@ -30,6 +30,51 @@ fn dark(s: &Session, x: u32, y: u32) -> bool {
     vectorcraft_render::Renderer::new().render(&doc, 200, 200, vectorcraft_geom::Affine::IDENTITY, &opts).pixel(x, y)[0] < 128
 }
 
+/// Invalid entries in an explicit multi-point delete must not delete the valid entries.
+#[test]
+fn invalid_width_point_indices_leave_the_entire_profile_unchanged() {
+    let (mut s, id) = line_session();
+    set(&mut s, json!({"id": id.0, "t": 0.5, "left": 10, "right": 10}));
+    let before = points(&s, id);
+    let history = s.doc().unwrap().history.undo.len();
+    for bad in [
+        json!({"indices": [1, "bad"]}),
+        json!({"indices": [-1, 1]}),
+        json!({"indices": [1.5, 1]}),
+        json!({"indices": {"point": 1}}),
+        json!({"index": "bad"}),
+    ] {
+        let mut params = bad.as_object().unwrap().clone();
+        params.insert("id".into(), json!(id.0));
+        let err = s.execute("stroke.widthPoint.remove", &serde_json::Value::Object(params));
+        assert!(err.is_err(), "accepted malformed width point indices");
+        assert_eq!(points(&s, id), before);
+        assert_eq!(s.doc().unwrap().history.undo.len(), history);
+    }
+    s.execute("stroke.widthPoint.remove", &json!({"id": id.0, "indices": [1]})).unwrap();
+    assert_eq!(points(&s, id).len(), before.len() - 1);
+}
+
+/// Setting or copying a width point with a malformed `index` is refused like one out of range: it
+/// never adds a point instead, or wraps a huge index round. A null `index` is no index (a new point).
+#[test]
+fn a_malformed_width_point_index_is_refused_by_set_and_copy() {
+    let (mut s, id) = line_session();
+    set(&mut s, json!({"id": id.0, "t": 0.5, "left": 10, "right": 10}));
+    let before = points(&s, id);
+    let history = s.doc().unwrap().history.undo.len();
+    for index in [json!("bad"), json!(-1), json!(1.5), json!([1]), json!(u64::MAX), json!(before.len())] {
+        for cmd in ["stroke.widthPoint.set", "stroke.widthPoint.copy"] {
+            let r = s.execute(cmd, &json!({"id": id.0, "index": index, "t": 0.3, "left": 4, "right": 4}));
+            assert!(r.is_err(), "{cmd} took index {index}");
+            assert_eq!(points(&s, id), before, "{cmd} with index {index}");
+        }
+    }
+    assert_eq!(s.doc().unwrap().history.undo.len(), history);
+    set(&mut s, json!({"id": id.0, "index": null, "t": 0.3, "left": 4, "right": 4}));
+    assert_eq!(points(&s, id).len(), before.len() + 1, "a null index adds a point");
+}
+
 #[test]
 fn a_point_moved_onto_another_makes_a_discontinuous_point_that_renders_a_step() {
     let (mut s, id) = line_session();
@@ -129,4 +174,59 @@ fn flipping_along_swaps_the_sides_of_a_discontinuous_point() {
     s.execute("select.set", &json!({"ids": [id.0]})).unwrap();
     s.execute("stroke.setAdvanced", &json!({"flipProfile": "along"})).unwrap();
     assert_eq!(points(&s, id), vec![(0.0, 2.0, 2.0), (0.75, 2.0, 2.0), (0.75, 1.0, 1.0), (1.0, 1.0, 1.0)]);
+}
+
+fn new_point_adjoining(adjust: bool) {
+    let (mut s, id) = line_session();
+    s.execute("stroke.widthProfile.set", &json!({"ids": [id.0], "points": [[0, 1, 1], [1, 1, 1]]})).unwrap();
+    s.doc_mut().unwrap().mark_saved();
+    let before = s.doc().unwrap().doc.clone();
+    let selection = s.doc().unwrap().selection.clone();
+    let undo = s.doc().unwrap().history.undo.len();
+    let i = set(&mut s, json!({"id": id.0, "index": null, "t": 0.5, "left": 10, "right": 10, "adjustAdjoining": adjust}));
+    assert_eq!(i, 1);
+    let end = if adjust { 2.0 } else { 1.0 };
+    assert_eq!(points(&s, id), vec![(0.0, end, end), (0.5, 2.0, 2.0), (1.0, end, end)], "new-point adjoining choice must affect neighbours");
+    let after = s.doc().unwrap().doc.clone();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection, selection);
+    assert_eq!((st.history.undo.len(), st.history.redo.len(), st.is_dirty()), (undo + 1, 0, true));
+    assert_eq!(st.history.undo.last().unwrap().label, "Width Point");
+    s.execute("edit.undo", &json!({})).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.doc, before);
+    assert_eq!(st.selection, selection);
+    assert_eq!((st.history.undo.len(), st.history.redo.len(), st.is_dirty()), (undo, 1, false));
+    s.execute("edit.redo", &json!({})).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.doc, after);
+    assert_eq!(st.selection, selection);
+    assert_eq!((st.history.undo.len(), st.history.redo.len(), st.is_dirty()), (undo + 1, 0, true));
+}
+
+#[test]
+fn new_width_point_adjust_adjoining_scales_neighbours() {
+    new_point_adjoining(true);
+}
+
+#[test]
+fn new_width_point_without_adjoining_preserves_neighbours() {
+    new_point_adjoining(false);
+}
+
+#[test]
+fn new_width_point_adjust_adjoining_uses_sampled_widths() {
+    for indexed in [false, true] {
+        let (mut s, id) = line_session();
+        s.execute("stroke.widthProfile.set", &json!({"ids": [id.0], "points": [[0, 9, 9], [0.25, 1, 0], [0.75, 3, 0], [1, 7, 7]]})).unwrap();
+        // At t=0.5 the old sides are 10pt and 0pt. Indexed editing of that sampled
+        // point is the existing convention: scale the nonzero side, add from zero.
+        let index = if indexed { Some(set(&mut s, json!({"id": id.0, "t": 0.5, "left": 10, "right": 0}))) } else { None };
+        set(&mut s, json!({"id": id.0, "index": index, "t": 0.5, "left": 20, "right": 5, "adjustAdjoining": true}));
+        assert_eq!(
+            points(&s, id),
+            vec![(0.0, 9.0, 9.0), (0.25, 2.0, 1.0), (0.5, 4.0, 1.0), (0.75, 6.0, 1.0), (1.0, 7.0, 7.0)],
+            "only nearest neighbours change, using the sampled sides; indexed={indexed}"
+        );
+    }
 }

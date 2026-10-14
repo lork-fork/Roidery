@@ -86,7 +86,10 @@ fn the_web_save_as_dialog_shows_the_native_options() {
     let written = crate::tests_svg::Written::default();
     let w = written.clone();
     let services = crate::Services {
-        download: Some(Box::new(move |name: &str, b: &[u8]| w.borrow_mut().push((name.to_string(), b.to_vec())))),
+        download: Some(Box::new(move |name: &str, b: &[u8]| {
+            w.borrow_mut().push((name.to_string(), b.to_vec()));
+            Ok(())
+        })),
         ..Default::default()
     };
     let mut app = crate::VectorcraftApp::new(vectorcraft_engine::Session::new(), services);

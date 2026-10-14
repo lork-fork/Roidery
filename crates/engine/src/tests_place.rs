@@ -58,6 +58,37 @@ fn serialize(s: &mut Session, format: &str) -> Vec<u8> {
 }
 
 #[test]
+fn malformed_place_coordinates_are_rejected_instead_of_silently_changed() {
+    let mut s = session();
+    let png = png(4, 2, [20, 40, 60, 255], None);
+    let original = s.doc().unwrap().doc.layers.clone();
+    // Previously filter_map dropped the string from a five-element rectangle and
+    // treated the remaining four values as a different, valid placement.
+    for rect in [json!([0, "ignored", 10, 40, 50]), json!([10, 20, 40, null, 50]), json!([10, 20, 40, 50, 60])] {
+        let mut params = file("tiny.png", &png);
+        params["rect"] = rect;
+        assert!(s.execute("file.place", &params).is_err(), "{params}");
+        assert_eq!(s.doc().unwrap().doc.layers, original, "failed Place must not add art");
+    }
+    // An explicitly supplied invalid position formerly behaved as though no
+    // position were supplied and centred the image on the artboard.
+    for at in [json!(["not-a-number", 20]), json!([10, null]), json!([10, 20, 30]), json!("invalid")] {
+        let mut params = file("tiny.png", &png);
+        params["at"] = at;
+        assert!(s.execute("file.place", &params).is_err(), "{params}");
+        assert_eq!(s.doc().unwrap().doc.layers, original);
+    }
+    let mut params = file("tiny.png", &png);
+    params["rect"] = json!([10, 20, 80, 60]);
+    let placed = s.execute("file.place", &params).unwrap();
+    assert_eq!(placed["ids"].as_array().unwrap().len(), 1);
+    // A null position is no position, as for the other optional params.
+    let mut params = file("tiny.png", &png);
+    params["at"] = Value::Null;
+    assert_eq!(s.execute("file.place", &params).unwrap()["ids"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn a_300_px_png_at_300_ppi_places_as_72_pt_centred_selected_and_undoable() {
     let mut s = session();
     let r = place(&mut s, "photo.png", &png(300, 150, [255, 0, 0, 255], Some(300.0)), json!({}));
@@ -314,4 +345,33 @@ fn bad_place_params_are_errors() {
     assert!(s.execute("file.place.queue", &json!({"files": [{"name": "notes.txt", "dataBase64": ""}]})).is_err());
     assert_eq!(s.tool_id(), "selection", "a failed queue leaves the tool alone");
     assert!(top_children(&s).is_empty());
+}
+
+/// An SVG placed with `crop: "crop"` given is framed and clipped by its viewBox, as a PDF by its
+/// page, so art drawn on a shared canvas keeps its place and scale; by default (and with
+/// "bounding") it is fitted by its art's bounds (#788).
+#[test]
+fn an_svg_placed_with_crop_is_framed_by_its_viewbox() {
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000"><path d="M200 300 L600 300 L600 800 L200 800 Z"/></svg>"#;
+    let path_bounds = |s: &Session, id: &Value| {
+        let mut b = None;
+        node(s, id).walk(&mut |n| {
+            if let NodeKind::Path { clipping: false, .. } = n.kind {
+                b = n.visual_bounds();
+            }
+        });
+        b.unwrap()
+    };
+    let near = |a: Rect, b: Rect| [a.x0 - b.x0, a.y0 - b.y0, a.x1 - b.x1, a.y1 - b.y1].iter().all(|d| d.abs() < 1e-6);
+    let mut s = session();
+    let r = place(&mut s, "glyph.svg", svg, json!({"rect": [100, 100, 200, 200], "crop": "crop"}));
+    assert_eq!((r["width"].as_f64(), r["height"].as_f64()), (Some(200.0), Some(200.0)), "{r}");
+    let id = &r["ids"][0];
+    assert!(near(path_bounds(&s, id), Rect::new(140.0, 160.0, 220.0, 260.0)), "{:?}", path_bounds(&s, id));
+    assert!(matches!(node(&s, id).kind, NodeKind::Group { clip: true, .. }), "clipped to the viewBox");
+    for extra in [json!({"rect": [100, 100, 200, 200]}), json!({"rect": [100, 100, 200, 200], "crop": "bounding"})] {
+        let mut s = session();
+        let r = place(&mut s, "glyph.svg", svg, extra);
+        assert!(near(path_bounds(&s, &r["ids"][0]), Rect::new(120.0, 100.0, 280.0, 300.0)), "{r}");
+    }
 }

@@ -135,9 +135,7 @@ impl Renderer {
     /// Render what `ctx` holds so far, and start it again from that picture (so later drawing sees
     /// it unchanged). Returns the pixels of `r`.
     fn flatten(&mut self, ctx: &mut RenderContext, r: Region) -> Arc<Pixmap> {
-        ctx.flush();
-        let mut all = Pixmap::new(ctx.width(), ctx.height());
-        ctx.render(&mut all, &mut self.resources);
+        let all = self.finish(ctx, self.raster);
         ctx.reset();
         let crop = if (r.x, r.y, r.w, r.h) == (0, 0, all.width(), all.height()) {
             None
@@ -151,7 +149,14 @@ impl Renderer {
             Some(Arc::new(out))
         };
         let all = Arc::new(all);
-        draw_pixmap(ctx, all.clone(), (0.0, 0.0));
+        // With 8-bit compositing, rendering over the picture gives the pixels that drawing it back
+        // as an image gives: the context starts again empty, and `finish` renders what it draws
+        // next over the picture. With floating-point compositing the picture is drawn back.
+        if self.raster.render_mode == vello_cpu::RenderMode::OptimizeSpeed {
+            self.picture = Some(all.clone());
+        } else {
+            draw_pixmap(ctx, all.clone(), (0.0, 0.0));
+        }
         for (path, rule, xf) in &self.clip_paths {
             ctx.set_transform(*xf);
             ctx.set_fill_rule(fill_rule(*rule));
@@ -160,18 +165,36 @@ impl Renderer {
         crop.unwrap_or(all)
     }
 
+    /// Render what `ctx` holds into a pixmap of its size: over the picture [`Self::flatten`]
+    /// started it again from, if any, else over transparency.
+    pub(crate) fn finish(&mut self, ctx: &mut RenderContext, settings: vello_cpu::RasterizerSettings) -> Pixmap {
+        ctx.flush();
+        let Some(below) = self.picture.take() else {
+            let mut pm = Pixmap::new(ctx.width(), ctx.height());
+            ctx.render_with(&mut pm, &mut self.resources, settings);
+            return pm;
+        };
+        let mut pm = Arc::unwrap_or_clone(below);
+        let over = vello_cpu::RasterizerSettings { composite_mode: vello_cpu::CompositeMode::SrcOver, ..settings };
+        ctx.render_with(&mut pm, &mut self.resources, over);
+        pm
+    }
+
     /// `draw` rendered into a new context of region `r` (frame `sub`), over `backdrop` if any.
     fn offscreen(&mut self, r: Region, sub: &Frame, backdrop: Option<Arc<Pixmap>>, draw: &mut Content) -> Pixmap {
         let mut ctx = sub.offscreen_context(r.w, r.h);
         if let Some(b) = &backdrop {
             draw_pixmap(&mut ctx, b.clone(), (0.0, 0.0));
         }
-        let outer = (std::mem::replace(&mut self.nested, 0), std::mem::replace(&mut self.backdrop, backdrop), std::mem::take(&mut self.clip_paths));
+        let outer = (
+            std::mem::replace(&mut self.nested, 0),
+            std::mem::replace(&mut self.backdrop, backdrop),
+            std::mem::take(&mut self.clip_paths),
+            self.picture.take(),
+        );
         draw(self, &mut ctx, sub);
-        (self.nested, self.backdrop, self.clip_paths) = outer;
-        ctx.flush();
-        let mut pm = Pixmap::new(r.w, r.h);
-        ctx.render(&mut pm, &mut self.resources);
+        let pm = self.finish(&mut ctx, self.raster);
+        (self.nested, self.backdrop, self.clip_paths, self.picture) = outer;
         pm
     }
 
@@ -244,10 +267,18 @@ impl Renderer {
 /// Draw `pm` with its top-left corner at pixel `at` (whole pixels: copied exactly).
 pub(crate) fn draw_pixmap(ctx: &mut RenderContext, pm: Arc<Pixmap>, at: (f64, f64)) {
     let (w, h) = (pm.width() as f64, pm.height() as f64);
+    #[cfg(test)]
+    PIXELS_DRAWN.with(|n| n.set(n.get() + u64::from(pm.width()) * u64::from(pm.height())));
     ctx.set_transform(Affine::translate(at));
     ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(pm), sampler: peniko::ImageSampler::default() });
     ctx.fill_rect(&Rect::new(0.0, 0.0, w, h));
     ctx.set_transform(Affine::IDENTITY);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The pixels [`draw_pixmap`] has drawn on this thread.
+    pub(crate) static PIXELS_DRAWN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// The pixel region of `ctx` that `bounds` (document space) covers, with a margin for

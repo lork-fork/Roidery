@@ -2,9 +2,9 @@
 //!
 //! [`export`] writes the visible art of a document into one DXF drawing: each layer becomes a DXF
 //! layer (hidden ones switched off, locked ones locked, non-printing ones not plotted), paths
-//! become polylines (straight segments) or cubic splines (curves), fills solid hatches, type text
-//! entities or glyph outlines, and placed images image entities linked to PNG or JPEG files the
-//! caller writes next to the drawing. Coordinates are y-up, in drawing units: `scale` units per
+//! become polylines (straight segments) or cubic splines (curves), fills their outlines and solid
+//! hatches, type text entities or glyph outlines, and placed images image entities linked to PNG
+//! or JPEG files the caller writes next to the drawing. Coordinates are y-up, in drawing units: `scale` units per
 //! `unit` of the art, with the origin at the bottom-left corner of [`DxfOptions::region`].
 //!
 //! What DXF can't hold (blending modes, opacity masks, raster effects, gradients, patterns,

@@ -40,6 +40,103 @@ fn lum(p: [u8; 4]) -> u32 {
 
 const WHITE: u32 = 765;
 
+#[test]
+fn revolve_canvas_matches_baked_art_and_shades_its_surface() {
+    let mut bp = vectorcraft_geom::BezPath::new();
+    bp.move_to((50.0, 15.0));
+    bp.line_to((75.0, 30.0));
+    bp.line_to((75.0, 75.0));
+    bp.line_to((50.0, 90.0));
+    let mut n = Node::path(
+        NodeId(0),
+        vectorcraft_geom::PathData::from_bezpath(&bp),
+        Appearance::basic(Paint::solid(Color::rgb(0.9, 0.2, 0.1)), Paint::None, 0.0),
+    );
+    n.appearance.effects.push(fx("threeD.revolve", json!({"rotationX":0,"rotationY":0})));
+    let d = doc_with(Document::new(100.0, 100.0), n);
+    let live = render(&d);
+    let baked = vectorcraft_effects::bake_document(&d).unwrap();
+    let exported = render(&baked);
+    assert_eq!(live.pixels, exported.pixels, "canvas and baked/exported faces agree");
+    let reds: Vec<_> =
+        live.pixels.as_chunks::<4>().0.iter().filter(|p| p[0] as u16 > p[1] as u16 * 2 && p[0] as u16 > p[2] as u16 * 2).map(|p| p[0]).collect();
+    assert!(reds.len() > 1500, "a filled surface, rather than the open source path");
+    assert!(reds.iter().max().unwrap() - reds.iter().min().unwrap() > 80, "lighting varies across the surface");
+    assert_eq!(live.pixels, render_threads(&d, 4).pixels);
+}
+
+/// Extrude & Bevel, Inflate (also twisted, tapered and hollow) and Rotate draw on the canvas exactly
+/// as they export, filling more than the flat square with faces of differing shades (Rotate: one
+/// shade, narrower).
+#[test]
+fn solid_effects_canvas_matches_baked_art_and_shades_their_faces() {
+    for (effect, params) in [
+        ("threeD.extrude", json!({"depth": 30, "bevel": "rounded"})),
+        ("threeD.inflate", json!({"depth": 10})),
+        ("threeD.inflate", json!({"depth": 10, "twist": 90, "taper": 60, "cap": false, "rotationX": -20, "rotationY": 35})),
+        ("threeD.rotate", json!({"rotationX": 0, "rotationY": 55, "rotationZ": 0})),
+    ] {
+        let mut n = Node::path(
+            NodeId(0),
+            shapes::rectangle(vectorcraft_geom::Rect::new(30.0, 30.0, 70.0, 70.0)),
+            Appearance::basic(Paint::solid(Color::rgb(0.9, 0.2, 0.1)), Paint::None, 0.0),
+        );
+        n.appearance.effects.push(fx(effect, params));
+        let d = doc_with(Document::new(100.0, 100.0), n);
+        let live = render(&d);
+        let exported = render(&vectorcraft_effects::bake_document(&d).unwrap());
+        assert_eq!(live.pixels, exported.pixels, "{effect}: canvas and baked/exported faces agree");
+        assert_eq!(live.pixels, render_threads(&d, 4).pixels, "{effect}");
+        let reds: Vec<_> =
+            live.pixels.as_chunks::<4>().0.iter().filter(|p| p[0] as u16 > p[1] as u16 * 2 && p[0] as u16 > p[2] as u16 * 2).map(|p| p[0]).collect();
+        let shades = reds.iter().max().unwrap() - reds.iter().min().unwrap();
+        if effect == "threeD.rotate" {
+            assert!(reds.len() < 40 * 40 && reds.len() > 600, "{effect}: the square foreshortened, {} px", reds.len());
+        } else {
+            assert!(reds.len() > 40 * 40, "{effect}: a solid larger than its front, {} px", reds.len());
+            assert!(shades > 60, "{effect}: lighting varies across the faces ({shades})");
+        }
+    }
+}
+
+#[test]
+fn revolve_visible_surface_expansion_preserves_the_view_and_transparent_art() {
+    let mut bp = vectorcraft_geom::BezPath::new();
+    bp.move_to((50.0, 15.0));
+    bp.curve_to((80.0, 25.0), (80.0, 75.0), (50.0, 90.0));
+    let mut n = Node::path(
+        NodeId(0),
+        vectorcraft_geom::PathData::from_bezpath(&bp),
+        Appearance::basic(Paint::solid(Color::rgb(0.2, 0.55, 0.9)), Paint::None, 0.0),
+    );
+    for (angle, rotation, perspective, opacity) in
+        [(360.0, 0.0, 0.0, 1.0), (360.0, -35.0, 55.0, 1.0), (150.0, -28.0, 40.0, 1.0), (360.0, -35.0, 55.0, 0.5)]
+    {
+        n.opacity = opacity;
+        n.appearance.effects = vec![fx(
+            "threeD.revolve",
+            json!({"angle":angle,"rotationX":rotation,"rotationY":25,"perspective":perspective,"segments":32,"expandVisibleOnly":true}),
+        )];
+        let d = doc_with(Document::new(100.0, 100.0), n.clone());
+        let live = render(&d);
+        let mut expanded = d.clone();
+        let id = expanded.layers[0].children().unwrap()[0].id;
+        let source = expanded.node(id).unwrap().clone();
+        let mut stroke = |_: &mut Document, _: &vectorcraft_geom::PathData, _: vectorcraft_geom::FillRule, _: &vectorcraft_doc::StrokeLayer| None;
+        let art = vectorcraft_effects::expand_leaf(&mut expanded, &source, &mut stroke).unwrap();
+        *expanded.node_mut(id).unwrap() = art;
+        let flat = render(&expanded);
+        let difference: u64 = live.pixels.iter().zip(&flat.pixels).map(|(a, b)| a.abs_diff(*b) as u64).sum();
+        let average = difference as f64 / live.pixels.len() as f64;
+        assert!(average < 1.0, "appearance differs by {average} channel levels: angle {angle}, rotation {rotation}, opacity {opacity}");
+        if opacity < 1.0 {
+            assert_eq!(live.pixels, flat.pixels);
+        }
+        // Export baking keeps every face, even when the expansion checkbox is checked.
+        assert_eq!(live.pixels, render(&vectorcraft_effects::bake_document(&d).unwrap()).pixels);
+    }
+}
+
 /// A 30×30 red image placed at (20, 20).
 fn image_doc(effects: Vec<Effect>) -> Document {
     let mut d = Document::new(100.0, 100.0);
@@ -49,14 +146,14 @@ fn image_doc(effects: Vec<Effect>) -> Document {
     d.images.insert("red".into(), ImageBlob::new("image/png", png));
     let mut n = Node::new(
         NodeId(0),
-        NodeKind::Image(ImageObject {
+        NodeKind::Image(Box::new(ImageObject {
             key: "red".into(),
             width: 30,
             height: 30,
             xf: Affine::translate((20.0, 20.0)),
             link: None,
             placement: Default::default(),
-        }),
+        })),
     );
     n.appearance.effects = effects;
     doc_with(d, n)

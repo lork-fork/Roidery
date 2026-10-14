@@ -1,0 +1,81 @@
+# Type parity
+
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (tab leaders are drawn in the tab's gap, #1877; type in symbols, pattern tiles, graph designs and opacity masks gets its layout bounds back on opening a native file, #1738; score unchanged; Escape while typing ends the edit, #1686; Select › Same on type, #1737; `justify` when creating point type, #1748; scores unchanged; OpenType stylistic sets, alternates, figure styles, superscript and subscript as character features, #1607; a wide word in non-rectangular area type moves down, #1615; scores unchanged; Character Styles New/Redefine capture the first selected character at run boundaries and end prior typing before capture; boundary and typing-history input tests and full workspace CI pass; scores and hours unchanged; Character styles retain explicit Auto leading, propagate resets and preserve local leading overrides; scores and hours unchanged; Linux font folders from fontconfig, #1529; commands and MCP `add_text` report area type that does not fit its frame, #1471; Tabs panel stop drags, #1458; Fit Headline in a frame one line tall, #1444; frames and paths beyond a billion points hold no text, #1451; scores unchanged; missing glyphs are looked for again after a font rescan, #1376; scores unchanged; Full-name font matching (#1258); Windows font-service QA pending; scores unchanged; Middle Eastern digit types: Character panel menu › Digits, `{digits}`; the font menu's script filter lists Thai fonts; Thai, Lao, Khmer and Myanmar lines break between words; the caret steps over whole clusters such as Thai consonants with their marks; Thai typed in a font without Thai falls back to a font made for Thai; earlier: Proportional Metrics in vertical type, `vpal`, #966) · **Target:** Adobe Illustrator 2026 (30.x)
+
+Type is Illustrator's largest single area by use (weight 13 of 105 across "Type core" and "Type advanced" in
+[target-app-parity.md](target-app-parity.md)). This checklist lists the features one by one. Status is from the
+code and tests (`crates/text`, `crates/engine/src/cmd/type*.rs`, `textstyles.rs`, `crates/tools/src/text.rs`)
+against Illustrator's public documentation; **estimated** unless noted.
+
+## Summary
+
+| Part | % | Remaining (h) |
+|---|---:|---:|
+| Type core (point, area, path type, Character/Paragraph, styles, threading, OpenType, fonts) | 80% | 14–19 |
+| Type advanced (CJK composition, Middle Eastern, spelling, Touch Type, Retype, variable fonts) | 50% | 20–28 |
+
+## Checklist
+
+| Feature | Status | Notes |
+|---|---|---|
+| Point, area and type-on-a-path type; vertical variants | done / partial | vertical point, area and path type have initial support; in a non-rectangular area a word too wide for the top lines moves down to the first line that holds it (#1615); Escape while typing ends the edit, keeps the type selected and switches to the Selection tool (#1802); `text.create` and `text.createInPath` take `justify` (#1752) |
+| Area Type Options (rows, columns, inset, first baseline, Auto Size, Shrink Text to Fit) | done | the commands that make or restyle type say when it does not fit its frame; MCP `add_text` takes Auto Size and Shrink Text to Fit (#1471) |
+| Threaded text, Fit Headline, Text Wrap | done | Fit Headline sees wrapping in a frame one line tall (#1444) |
+| Type on a Path effects and options; brackets | done | #429 |
+| Character and Paragraph panels, styles with overrides | done | Character-style Auto-leading resets, partial definitions, local leading overrides, override markers, Undo/Redo and native serialization have regression coverage; differing paragraph alignments leave the shared alignment buttons unselected (headless regressions, full integration CI and visual review pass); mixed-value display for other paragraph fields remains missing |
+| Character size and horizontal scale after object/group scaling | done | #1034: fields and setters compensate the stored affine; point size follows the transformed em-height axis, not the glyph ink bounds. Range edits, keyboard increments, leading and baseline shift use document points; rotation, reflection and shear remain editable. |
+| Preserve font sizes while scaling a group | missing | Separate enhancement; scaling still scales text with the other artwork. |
+| OpenType panel, Glyphs panel, alternates | done | Highlight Alternate Glyphs preference unused (#394); stylistic sets ss01–ss20, stylistic and titling alternates, proportional and lining figures, superscript and subscript are character-style features (`text.setStyle {features}`, #1607) |
+| Font menu: samples, live preview, filters, favourites; font matching by any name; Find Font | done | #339; script filter: Japanese, Latin, Thai; the font scan on Linux also reads the folders fontconfig's configuration lists, such as TeX fonts under `/usr/share/texmf/fonts` (#1548, fixes #1529; not verified on Linux) |
+| Missing glyphs set in an installed font made for their script (Thai, Lao, Khmer, Myanmar first; then any font that has them) | done | Thai: Leelawadee UI, Tahoma, Thonburi, Sukhumvit Set, Noto Sans Thai, TLWG |
+| Full font-name matching (OpenType name ID 4) | done | #1258: loaded/cataloged faces and Missing Fonts searches; localized names and variable default faces; Windows font-service QA pending |
+| Variable fonts | partial | named instances as styles; axis sliders missing |
+| Colour fonts (OpenType SVG / COLR) | partial | |
+| Every-line and Single-line composers | done | tuned by eye, never compared side by side |
+| Hyphenation… and Justification… options | missing | |
+| Optical Margin Alignment | missing | menu stub |
+| Tab stops and leaders; Tabs panel | partial | Tabs panel and stops with leaders in the model (`text.tabs.set`); a stop drags from where the press landed (#1458); leaders fill the tab's gap, repeated on a grid so they line up from line to line (#1877) |
+| Hidden characters (Show Hidden Characters) | done | `type.hiddenCharacters` |
+| Spell check (Check Spelling, Auto Spell Check, custom dictionary) | missing | menu stubs; needs an openly licensed dictionary |
+| Smart Punctuation, Change Case, Find & Replace | done | |
+| Caret: the arrows and Delete step over whole clusters (Thai consonant with its marks, combining accents, emoji); Backspace removes one character | done | |
+| Touch Type tool | missing | listed in the toolbar, not implemented |
+| Retype (identify fonts in outlines/images) | missing | Illustrator's uses a cloud model |
+| Snap to Glyph | missing | menu stub |
+| Thai, Lao, Khmer, Myanmar: shaping (marks, reordering), lines broken between words, word-by-word caret and double-click | done | words found by ICU4X's line segmenter: dictionaries on the desktop, LSTM models on the web |
+| Middle Eastern: bidirectional layout, Paragraph Direction | done | |
+| Middle Eastern: digit types (Character panel menu › Digits: Default, Arabic, Hindi, Farsi) | done | `text.setFormat` / `text.setRangeStyle {digits}`; the text keeps the typed digits, the glyphs and SVG export follow the style |
+| Middle Eastern: Character Direction, kashidas, Middle Eastern composers, split caret | missing | |
+| CJK: input methods (marked text, candidate window) | done | |
+| CJK: kinsoku (Hard, Soft, None), Line-end Punctuation Half Width, tate-chu-yoko (auto) | done / partial | custom kinsoku sets, the Mojikumi Settings dialog and the other mojikumi sets missing |
+| CJK: Proportional Metrics (`palt` in horizontal type, `vpal` in vertical type) | done | #966 |
+| CJK: ruby, manual tate-chu-yoko | missing | #633 |
+| Inline symbols in text | beyond Illustrator | not scored |
+
+Character Styles menu New/Redefine and footer New capture the first selected character of a nonempty Type selection, including exact style-run and UTF-8 boundaries; New adds a definition without applying it. New/Redefine commands accept optional `end` for range capture. Start-only command affinity, existing UI caret/object behavior and paragraph capture at `start` remain unchanged. Pointer regressions assert captured definitions, linked-text updates and local overrides, complete-document Undo/Redo and saved state, with whole-object, collapsed-caret and range-Apply controls. Capture closes prior typing while preserving the Type selection. Live text and Select All regressions exercise menu New/Redefine and footer New, asserting that further typing retains the captured definition and that typing, capture and further typing have separate Undo/Redo steps. Focused engine and egui input tests pass for boundary capture, all three live-typing capture routes and the existing compatibility controls. Full workspace CI passes.
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-14 | minor | Tab leaders are drawn: the leader's characters fill the tab's gap in the tab's font and size, whole copies on a grid from the frame's edge so leaders line up across lines (fixes #1877); scores and hours unchanged |
+| 2026-10-14 | minor | Type inside symbols, pattern tiles, graph designs and opacity masks gets its layout bounds back on opening a native file, so warped type in a symbol looks the same after save and reopen (#1833, #1738). Score unchanged (estimated) |
+| 2026-10-14 | minor | Escape while typing ends the edit, keeps the type selected and switches to the Selection tool (#1802, #1686, #1656); Select › Same matches type on its characters' fill and stroke (#1746, #1737); `text.create`, `text.createInPath` and the MCP `add_text` tool take `justify`, so point type can be centred on or end at its point (#1752, #1748); scores and hours unchanged |
+| 2026-10-13 | minor | Area type in a non-rectangular shape moves a word too wide for the top lines down to the first line that holds it instead of breaking it (#1617, fixes #1615); Stylistic sets (ss01–ss20), stylistic and titling alternates, proportional and lining figures, and superscript and subscript glyphs can be turned on as OpenType features of a character style (`text.setStyle {features}`), and the OpenType panel keeps them (#1611, fixes #1607); scores and hours unchanged |
+| 2026-10-13 | minor | Paragraph/Properties alignment buttons show mixed alignment without changing range commands; headless regressions, full integration CI and visual review pass; other mixed paragraph fields, scores and hours unchanged |
+| 2026-10-13 | minor | The font scan on Linux also reads the folders fontconfig's configuration lists, such as TeX fonts under `/usr/share/texmf/fonts` (#1548, fixes #1529; not verified on Linux); scores and hours unchanged |
+| 2026-10-13 | minor | Character Styles range capture samples the first selected character at run boundaries and closes prior typing; boundary and typing-history input tests and full workspace CI pass; lifecycle and range controls retained; scores and hours unchanged |
+| 2026-10-13 | minor | The commands that make or restyle type, and MCP `add_text`, report area type that does not fit its frame, and `add_text` takes Auto Size and Shrink Text to Fit (#1500, fixes #1471); a tab stop in the Tabs panel drags from where the press landed, a stop just added included (#1487, fixes #1458); scores and hours unchanged |
+| 2026-10-13 | minor | Fit Headline no longer pushes the tracking to its ceiling and loses glyphs when the frame holds one line (#1445, fixes #1444); text frames, wrap shapes and type paths with coordinates beyond a billion points hold no text, and layout limits its search for room, instead of hanging (#1451); scores and hours unchanged |
+| 2026-10-12 | minor | Character styles retain explicit Auto leading, propagate resets and preserve local leading overrides; scores and hours unchanged |
+| 2026-10-12 | minor | A character no installed font had is looked for again after the fonts are rescanned, so installing a font fixes it without a restart (#1376, from #992); scores and hours unchanged |
+| 2026-10-12 | minor | Full-name font matching and Missing Fonts searches (#1258): synthetic static/variable font regressions; Windows font-service QA pending; scores and hours unchanged |
+| 2026-10-11 | minor | Middle Eastern: digit types done (Character panel menu › Digits: Default, Arabic, Hindi, Farsi; `text.setFormat` / `text.setRangeStyle {digits}`); Character Direction, kashidas, composers and the split caret still missing; scores unchanged at this rounding |
+| 2026-10-11 | minor | Thai, Lao, Khmer and Myanmar words for the caret (Ctrl/Alt+arrows) and double-click; combining marks count as part of a word; score unchanged (estimated) |
+| 2026-10-11 | minor | Font menu: a Thai script filter beside Japanese and Latin; score unchanged (estimated) |
+| 2026-10-11 | minor | Thai, Lao, Khmer and Myanmar text breaks its lines between words (ICU4X line segmenter) instead of only at spaces; score unchanged (estimated) |
+| 2026-10-11 | minor | The Type tool's arrows and Delete move by grapheme cluster, never between a Thai consonant and its vowel or tone marks; score unchanged (estimated) |
+| 2026-10-11 | minor | Thai (Lao, Khmer, Myanmar) missing from the font in use falls back to an installed font made for the script instead of whichever face covering it loaded first; score unchanged (estimated) |
+| 2026-10-11 | minor | Proportional Metrics done: `palt` in horizontal type, `vpal` in vertical type (#966, #1082); ruby and manual tate-chu-yoko still missing |
+| 2026-10-10 | minor | #1034: transformed character controls and regression coverage; preserving group font sizes remains a separate enhancement. Scores/hours unchanged at this rounding. |
+| 2026-10-10 | major | First checklist, split out of the parity table's Type core and Type advanced rows |

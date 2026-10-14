@@ -223,9 +223,29 @@ pub fn hides_panel(app: &VectorcraftApp, id: &str) -> bool {
     app.ui.embroidery && (TRIMMED_PANELS.contains(&id) || DOCK_ONLY.contains(&id))
 }
 
+/// The icon column's groups in the order drawn: the Embroidery workspace puts Roidery's
+/// Stitch Settings and Threads group (the last of [`crate::state::ICON_PANEL_GROUPS`]) first.
+pub fn icon_groups(ui: &crate::UiState) -> Vec<&'static [&'static str]> {
+    let groups = crate::state::ICON_PANEL_GROUPS;
+    match groups.split_last() {
+        Some((ours, rest)) if ui.embroidery => std::iter::once(*ours).chain(rest.iter().copied()).collect(),
+        _ => groups.to_vec(),
+    }
+}
+
 /// The dock's tabs, without those the Embroidery workspace hides (unless Window opened one).
 pub fn dock_tabs(app: &VectorcraftApp) -> Vec<DockTab> {
-    DockTab::ALL.into_iter().filter(|t| app.ui.dock_tab == *t || !hides_panel(app, t.info().0)).collect()
+    DockTab::ALL.into_iter().filter(|t| !hides_dock_tab(&app.ui, *t)).collect()
+}
+
+/// Whether the dock leaves `tab` out (never the one shown): the Embroidery workspace the panels
+/// it hides, the other workspaces the Sequencer.
+pub fn hides_dock_tab(ui: &crate::UiState, tab: DockTab) -> bool {
+    let id = tab.info().0;
+    if ui.dock_tab == tab {
+        return false;
+    }
+    if ui.embroidery { TRIMMED_PANELS.contains(&id) || DOCK_ONLY.contains(&id) } else { tab == DockTab::Sequencer }
 }
 
 /// `items` without what the Embroidery workspace hides (unchanged in other workspaces).

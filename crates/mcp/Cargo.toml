@@ -19,8 +19,9 @@ vectorcraft-doc = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 
+image = { workspace = true }
+
 [dev-dependencies]
 vectorcraft-testkit = { workspace = true }
 proptest = { workspace = true }
-image = { workspace = true }
 socket2 = { workspace = true }

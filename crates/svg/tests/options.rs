@@ -18,15 +18,42 @@ fn doc() -> Document {
     d.insert(Some(l), usize::MAX, a).unwrap();
     let st = CharStyle { size: 12.0, font_family: "Source Sans 3".into(), fill: Paint::solid(Color::BLACK), ..CharStyle::default() };
     let mut t = TextObject::point(Point::new(20.0, 120.0), "", st.clone());
-    t.runs = vec![TextRun { text: "one two\nthree".into(), style: st.clone() }];
+    t.runs = vec![TextRun { text: "one two\nthree".into(), style: st.clone(), inline: None }];
     let i = d.alloc_id();
     d.insert(Some(l), usize::MAX, Node::new(i, NodeKind::Text(Box::new(t.clone())))).unwrap();
     t.kind = TextKind::Area { frame: shapes::rectangle(Rect::new(0.0, 0.0, 200.0, 60.0)) };
     t.xf = Affine::translate((20.0, 140.0));
-    t.runs = vec![TextRun { text: "para one\npara two".into(), style: st }];
+    t.runs = vec![TextRun { text: "para one\npara two".into(), style: st, inline: None }];
     let i = d.alloc_id();
     d.insert(Some(l), usize::MAX, Node::new(i, NodeKind::Text(Box::new(t)))).unwrap();
     d
+}
+
+/// A large palette should create one class per distinct declaration, preserving first-use
+/// numbers even when earlier styles recur after hundreds of others.
+#[test]
+fn many_css_styles_preserve_first_use_numbers() {
+    let mut d = Document::new(300.0, 10.0);
+    let layer = d.layers[0].id;
+    let colors = (0u16..256).chain([0, 128, 255]);
+    for (x, color) in colors.enumerate() {
+        let x = x as f64;
+        let appearance = Appearance::basic(Paint::solid(Color::rgb8(color as u8, 31, 63)), Paint::None, 0.0);
+        let n = Node::path(d.alloc_id(), shapes::rectangle(Rect::new(x, 0.0, x + 0.5, 1.0)), appearance);
+        d.insert(Some(layer), usize::MAX, n).unwrap();
+    }
+
+    for (styling, definition_marker) in [(Styling::InternalCss, ".cls-"), (Styling::StyleEntities, "<!ENTITY st")] {
+        let svg = export(&d, &ExportOptions { styling, ..Default::default() });
+        let paths: Vec<_> = svg.lines().filter(|line| line.contains("<path ")).collect();
+        assert_eq!(paths.len(), 259, "{styling:?}");
+        for (i, path) in paths.iter().enumerate() {
+            let number = if i < 256 { i + 1 } else { [1, 129, 256][i - 256] };
+            let expected = if styling == Styling::InternalCss { format!("class=\"cls-{number}\"") } else { format!("style=\"&st{number};\"") };
+            assert!(path.contains(&expected), "path {i} should reference {expected}: {path}");
+        }
+        assert_eq!(svg.matches(definition_marker).count(), 256, "{styling:?}");
+    }
 }
 
 #[test]
@@ -56,7 +83,7 @@ fn image_doc(key: &str, bytes: Vec<u8>) -> Document {
     d.images.insert(key.into(), ImageBlob::new("image/png", bytes));
     let l = d.layers[0].id;
     let im = ImageObject { key: key.into(), width: 2, height: 2, xf: Affine::IDENTITY, link: None, placement: Default::default() };
-    let n = Node::new(d.alloc_id(), NodeKind::Image(im));
+    let n = Node::new(d.alloc_id(), NodeKind::Image(Box::new(im)));
     d.insert(Some(l), usize::MAX, n).unwrap();
     d
 }

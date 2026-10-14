@@ -180,6 +180,51 @@ fn artboard_range_skip_blank_and_ignore() {
 }
 
 #[test]
+fn a_symbol_instance_prints_by_its_art() {
+    // The symbol's red rectangle, (100, 100) to (140, 140), drawn from (-50, -50): on the artboard,
+    // while the 20 × 20 square around the origin, moved to (-60, -60) to (-40, -40), is off it.
+    let mut d = doc(100.0, 100.0, &[]);
+    let red = Appearance::basic(rgb(1.0, 0.0, 0.0), Paint::None, 0.0);
+    let art = Node::path(d.alloc_id(), shapes::rectangle(Rect::new(100.0, 100.0, 140.0, 140.0)), red);
+    d.symbols.push(vectorcraft_doc::Symbol { name: "Far".into(), art: Arc::new(art) });
+    let (layer, id) = (d.default_layer().unwrap(), d.alloc_id());
+    let xf = vectorcraft_geom::Affine::translate((-50.0, -50.0));
+    d.insert(Some(layer), 0, Node::new(id, NodeKind::SymbolInstance { symbol: "Far".into(), xf })).unwrap();
+    // Skip Blank Artboards keeps the artboard.
+    assert_eq!(preview(&d, &settings(json!({"skipBlank": true}))).unwrap().sheets.len(), 1);
+    // Ignoring artboards, the page holds the art.
+    let p = pages(&job(&d, json!({"artboards": "ignore"})).bytes);
+    assert_eq!(p.len(), 1);
+    let printed: Vec<_> = p[0].1.iter().map(|(r, paint)| (r.width().round(), r.height().round(), rgb8(paint))).collect();
+    assert_eq!(printed, [(40.0, 40.0, [255, 0, 0])], "{p:?}");
+}
+
+#[test]
+fn a_symbol_instances_brush_art_keeps_its_artboard_printed() {
+    // The symbol's art: a line from (0, 40) to (0, 60) with a 1 pt red stroke painted by a 20 pt
+    // round nib. Drawn from (-5, 0), the line lies left of the artboard, and the nib paints 10 pt
+    // either side of it, onto the artboard.
+    let mut d = doc(100.0, 100.0, &[]);
+    let mut lib = vectorcraft_brush::library(&d);
+    let Some(vectorcraft_brush::BrushKind::Calligraphic(c)) = lib.iter_mut().find(|b| b.name == "3 pt. Round").map(|b| &mut b.kind) else {
+        panic!("the 3 pt. Round brush")
+    };
+    c.size = 20.0;
+    vectorcraft_brush::store(&mut d, &lib);
+    let mut stroke = Appearance::basic(Paint::None, rgb(1.0, 0.0, 0.0), 1.0);
+    stroke.stroke_mut().unwrap().brush = Some("3 pt. Round".into());
+    let art = Node::path(d.alloc_id(), shapes::line((0.0, 40.0).into(), (0.0, 60.0).into()), stroke);
+    d.symbols.push(vectorcraft_doc::Symbol { name: "Nib".into(), art: Arc::new(art) });
+    let (layer, id) = (d.default_layer().unwrap(), d.alloc_id());
+    let xf = vectorcraft_geom::Affine::translate((-5.0, 0.0));
+    d.insert(Some(layer), 0, Node::new(id, NodeKind::SymbolInstance { symbol: "Nib".into(), xf })).unwrap();
+    // Skip Blank Artboards keeps the artboard, and its page holds the nib's art.
+    let p = pages(&job(&d, json!({"skipBlank": true})).bytes);
+    assert_eq!(p.len(), 1);
+    assert!(p[0].1.iter().any(|(_, paint)| rgb8(paint) == [255, 0, 0]), "{p:?}");
+}
+
+#[test]
 fn copies_collate_and_reverse() {
     let mut d =
         doc(100.0, 100.0, &[(Rect::new(10.0, 10.0, 20.0, 20.0), rgb(1.0, 0.0, 0.0)), (Rect::new(210.0, 10.0, 220.0, 20.0), rgb(0.0, 0.0, 1.0))]);

@@ -215,3 +215,50 @@ fn colour_spaces_are_read_from_the_interpreters_debug_form() {
     assert_eq!((space, comps), ("ColorSpace(DeviceCmyk)", vec![0.101960786, 0.2, 0.3, 0.4]));
     assert_eq!(crate::import_color::split_color("Color { color_space: X, components: [NaN], opacity: 1.0 }"), None);
 }
+
+/// Spot colours defined in Lab can have an ICC Lab profile as their alternate space, `[/ICCBased
+/// profile]` with 3 components: the tint transform gives Lab values, which are not RGB (#1032). The
+/// profile is told by its `Alternate` (`[/Lab …]`), else by its header's data colour space.
+#[test]
+fn spot_colours_with_an_icc_lab_alternate_keep_their_lab_values() {
+    let f = first_extra(1);
+    // A profile's first 20 bytes: size, CMM, version, class, then the data colour space.
+    let profile = |head: &str, alternate: &str| format!("<< /N 3 {alternate} /Length {} >>\nstream\n{head}\nendstream", head.len());
+    let lab_header = profile("0000none0000spacLab XYZ ", "");
+    let lab_alternate = profile("0000none0000spacXYZ XYZ ", "/Alternate [/Lab << /WhitePoint [0.9642 1 0.8249] /Range [-128 127 -128 127] >>]");
+    let rgb = profile("0000none0000mntrRGB XYZ ", "");
+    let tint = |c1: &str| format!("<< /FunctionType 2 /Domain [0 1] /C0 [100 0 0] /C1 [{c1}] /N 1 >>");
+    let spaces = format!(
+        "/CS0 [/Separation /Plum [/ICCBased {f} 0 R] {}] /CS1 [/Separation /Sky [/ICCBased {} 0 R] {}] /CS2 [/Separation /Leafy [/ICCBased {} 0 R] << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0.5 0.9 0.1] /N 1 >>]",
+        tint("32.9412 45 -18"),
+        f + 1,
+        tint("51 -26 -45"),
+        f + 2
+    );
+    let page = page_with(&spaces, &[("CS0", "1"), ("CS1", "0.5"), ("CS2", "1")]);
+    let d = import(&pdf_with(&[page], &[&lab_header, &lab_alternate, &rgb], None)).unwrap();
+    let f = fills(&d);
+    assert_eq!(solid(&f[0]).1, Some("Plum"));
+    assert!(near(d.swatch("Plum").unwrap().paint.color().unwrap(), Color::lab(32.941, 45.0, -18.0)), "{:?}", d.swatch("Plum"));
+    assert_eq!((solid(&f[1]).1, solid(&f[1]).2), (Some("Sky"), 0.5));
+    assert!(near(d.swatch("Sky").unwrap().paint.color().unwrap(), Color::lab(51.0, -26.0, -45.0)), "{:?}", d.swatch("Sky"));
+    // An RGB profile stays RGB.
+    assert!(near(d.swatch("Leafy").unwrap().paint.color().unwrap(), Color::rgb(0.5, 0.9, 0.1)), "{:?}", d.swatch("Leafy"));
+}
+
+#[test]
+fn rgb_numbers_stand_in_editor_documents_only() {
+    // GUARDS: an editor's document keeps its `ICCBased` RGB numbers; a PDF's profile stands.
+    let f = first_extra(1);
+    let icc = vectorcraft_color::cms::icc_bytes(vectorcraft_color::cms::PROPHOTO_RGB).unwrap();
+    let hex: String = icc.iter().map(|b| format!("{b:02x}")).collect();
+    let profile = format!("<< /N 3 /Filter /ASCIIHexDecode /Length {} >>\nstream\n{hex}>\nendstream", hex.len() + 1);
+    let mut page = page_with(&format!("/CS0 [/ICCBased {f} 0 R]"), &[("CS0", "0.2 0.6 0.4")]);
+    page.entries = "/PieceInfo << /Illustrator << /Private << /AIPrivateData1 7 /NumBlock 1 >> >> >>".into();
+    let bytes = pdf_with(&[page], &[&profile], None);
+    let color = |uncalibrated_rgb| {
+        solid(&fills(&import_with_report(&bytes, &ImportOptions { uncalibrated_rgb, ..Default::default() }).unwrap().document)[0]).0
+    };
+    assert!(near(color(true), Color::rgb(0.2, 0.6, 0.4)), "{:?}", color(true));
+    assert!(!near(color(false), Color::rgb(0.2, 0.6, 0.4)), "{:?}", color(false));
+}

@@ -632,7 +632,7 @@ fn slider_row(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, suffix:
     widgets::label_row(ui, label, LABEL_W, |ui| {
         let mut v = d.f64(key, 0.0).round().clamp(0.0, 100.0) as u8;
         ui.spacing_mut().slider_width = FIELD_W - 60.0;
-        if ui.add(egui::Slider::new(&mut v, 0..=100).suffix(suffix)).changed() {
+        if widgets::slider(ui, egui::Slider::new(&mut v, 0..=100).suffix(suffix)).changed() {
             d.fields.insert(key.into(), json!(v));
         }
     });
@@ -646,8 +646,8 @@ fn colors_row(ui: &mut egui::Ui, d: &mut Dialog) {
             n = c.parse().unwrap_or(n);
             d.fields.insert("colors".into(), json!(n));
         }
-        if ui.add(egui::DragValue::new(&mut n).range(2..=256)).changed() {
-            d.fields.insert("colors".into(), json!(n));
+        if let Some(n) = widgets::range_field(ui, "sfw-colors-n", f64::from(n), 2.0..=256.0, "", 0, 52.0) {
+            d.fields.insert("colors".into(), json!(n as u16));
         }
     });
 }

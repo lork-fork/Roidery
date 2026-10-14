@@ -1,7 +1,8 @@
 //! Agent-friendly document summaries and view-models for panels.
 
 use serde_json::{Value, json};
-use vectorcraft_doc::{ArrowAlign, Document, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, WidthProfile};
+use vectorcraft_color::BlendMode;
+use vectorcraft_doc::{ArrowAlign, Document, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, SymbolBoxes, WidthProfile};
 
 use crate::Session;
 
@@ -20,25 +21,32 @@ pub struct SummaryOpts {
     /// Children shown per node (`None`: all, top of the stack first). A level that shows
     /// fewer children than it has reports `childCount`, so truncation is never silent.
     pub child_limit: Option<u64>,
+    /// The node is a member of a compound path, which paints it: it has no paint of its own
+    /// to report.
+    pub compound_member: bool,
 }
 
-/// Compact tree summary of a node (for `document.inspect`): the whole subtree.
-pub fn node_summary(n: &Node) -> Value {
-    node_summary_opts(n, SummaryOpts::default())
+/// Compact tree summary of a node (for `document.inspect`): the whole subtree, symbol instances
+/// measured by their art from `symbols`.
+pub fn node_summary(n: &Node, symbols: &SymbolBoxes) -> Value {
+    node_summary_opts(n, SummaryOpts::default(), symbols)
 }
 
 /// The same summary with [`SummaryOpts`] applied.
-pub fn node_summary_opts(n: &Node, opts: SummaryOpts) -> Value {
+pub fn node_summary_opts(n: &Node, opts: SummaryOpts, symbols: &SymbolBoxes) -> Value {
     let mut v = json!({
         "id": n.id.0,
         "name": n.display_name(),
         "kind": n.kind_label(),
         "visible": n.visible,
         "locked": n.locked,
-        "bounds": rect_json(n.geometric_bounds()),
+        "bounds": rect_json(n.geometric_bounds_with(symbols)),
     });
     if n.opacity < 1.0 {
         v["opacity"] = json!(n.opacity);
+    }
+    if n.blend != BlendMode::Normal {
+        v["blend"] = json!(n.blend.label());
     }
     // The angle of its rotated bounding box (counter-clockwise degrees).
     if n.bbox_angle != 0.0 {
@@ -58,12 +66,15 @@ pub fn node_summary_opts(n: &Node, opts: SummaryOpts) -> Value {
             v["objectStroke"] = json!(n.appearance.stroke_paint().label());
             v["objectStrokeWidth"] = json!(n.appearance.stroke_width());
         }
-    } else if !n.is_container() {
+    } else if opts.compound_member {
+        v["compoundMember"] = json!(true);
+    } else if !n.is_container() || matches!(n.kind, NodeKind::Compound { .. }) {
+        // A compound path is a container, but its fill and stroke live on it, not on its members.
         v["fill"] = json!(n.appearance.fill_paint().label());
         v["stroke"] = json!(n.appearance.stroke_paint().label());
         v["strokeWidth"] = json!(n.appearance.stroke_width());
     }
-    if let Some(st) = node_stroke(n) {
+    if let Some(st) = node_stroke(n).filter(|_| !opts.compound_member) {
         v["strokeOptions"] = stroke_options(&st);
     }
     match &n.kind {
@@ -80,15 +91,31 @@ pub fn node_summary_opts(n: &Node, opts: SummaryOpts) -> Value {
             v["anchors"] = json!(path.anchor_count());
             v["closed"] = json!(path.is_closed());
         }
-        NodeKind::Text(t) => v["text"] = json!(t.plain_text()),
+        NodeKind::Text(t) => {
+            v["text"] = json!(t.plain_text());
+            // Area type and type on a path: does the text fit (the red overflow "+")? Area type
+            // also reports its fit and Shrink Text's factor (1 unshrunk).
+            if !matches!(t.kind, vectorcraft_doc::TextKind::Point) {
+                let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
+                v["overflow"] = json!(lay.overflow);
+                if matches!(t.kind, vectorcraft_doc::TextKind::Area { .. }) {
+                    v["fit"] = json!(t.area.fit.id());
+                    v["fitScale"] = json!(lay.fit_scale);
+                }
+            }
+        }
         _ => {}
     }
     if let Some(ch) = n.children() {
         let total = ch.len();
         let take_n = opts.child_limit.map_or(total, |l| l.min(total as u64) as usize);
         if opts.depth.is_none_or(|d| d > 0) {
-            let next = SummaryOpts { depth: opts.depth.map(|d| d.saturating_sub(1)), child_limit: opts.child_limit };
-            v["children"] = Value::Array(ch.iter().rev().take(take_n).map(|c| node_summary_opts(c, next)).collect());
+            let next = SummaryOpts {
+                depth: opts.depth.map(|d| d.saturating_sub(1)),
+                child_limit: opts.child_limit,
+                compound_member: matches!(n.kind, NodeKind::Compound { .. }),
+            };
+            v["children"] = Value::Array(ch.iter().rev().take(take_n).map(|c| node_summary_opts(c, next, symbols)).collect());
         }
         if take_n < total || v.get("children").is_none() {
             v["childCount"] = json!(total);
@@ -106,6 +133,7 @@ pub fn document(s: &Session) -> Value {
 pub fn document_opts(s: &Session, opts: SummaryOpts) -> Value {
     let Some(st) = s.active() else { return Value::Null };
     let d = &st.doc;
+    let symbols = d.symbol_boxes();
     json!({
         "title": st.title(),
         "path": st.path,
@@ -115,7 +143,7 @@ pub fn document_opts(s: &Session, opts: SummaryOpts) -> Value {
         "colorMode": format!("{:?}", d.color_mode),
         "artboards": d.artboards.iter().map(|a| json!({"name": a.name, "x": a.rect.x0, "y": a.rect.y0, "width": a.rect.width(), "height": a.rect.height()})).collect::<Vec<_>>(),
         // Top of the stack first, like the Layers panel.
-        "layers": d.layers.iter().rev().map(|l| node_summary_opts(l, opts)).collect::<Vec<_>>(),
+        "layers": d.layers.iter().rev().map(|l| node_summary_opts(l, opts, &symbols)).collect::<Vec<_>>(),
         "currentLayer": st.active_layer.map(|l| l.0),
         // The rows highlighted in the Layers panel (`layer.setCurrent`, `layer.highlight`).
         "layerRows": st.highlighted_rows().iter().map(|i| i.0).collect::<Vec<_>>(),
@@ -126,6 +154,8 @@ pub fn document_opts(s: &Session, opts: SummaryOpts) -> Value {
         "selectionRotation": d.bbox_angle(&st.selection.objects),
         // The layer, group or object targeted through the Layers panel (`layer.target`).
         "target": st.selection.target.map(|t| t.0),
+        // The key object Align aligns to and Distribute Spacing spaces from (`select.key`).
+        "key": st.selection.key.map(|k| k.0),
         "history": st.history.undo.iter().map(|h| h.label.clone()).collect::<Vec<_>>(),
         "redo": st.history.redo.iter().rev().map(|h| h.label.clone()).collect::<Vec<_>>(),
         "objects": d.node_count(),

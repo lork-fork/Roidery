@@ -16,7 +16,7 @@ use super::unique_name;
 /// Visit `n` and every descendant (children and opacity-mask art) mutably.
 pub(super) fn each_mut(n: &mut Node, f: &mut impl FnMut(&mut Node)) {
     f(n);
-    if let Some(m) = &mut n.mask {
+    if let Some(m) = n.extras_if_any().and_then(|e| e.mask.as_mut()) {
         each_mut(Arc::make_mut(&mut m.art), f);
     }
     if let Some(ch) = n.children_mut() {
@@ -67,6 +67,7 @@ fn refs(n: &mut Node, f: &mut impl FnMut(Ref)) {
                 }
             }
             NodeKind::Image(im) => f(Ref::Image(&mut im.key)),
+            NodeKind::PlacedDocument(pl) => f(Ref::Image(&mut pl.key)),
             NodeKind::SymbolInstance { symbol, .. } => f(Ref::Symbol(symbol)),
             _ => {}
         }
@@ -129,7 +130,7 @@ fn copies(m: &Renames) -> Vec<(&str, &str)> {
 
 /// Bring the resources `nodes` (art from `src`) use into `dst`, renaming on conflict, and point
 /// `nodes` at the names they got.
-pub(super) fn adopt(dst: &mut Document, src: &Document, nodes: &mut [Node]) {
+pub(crate) fn adopt(dst: &mut Document, src: &Document, nodes: &mut [Node]) {
     let mut used = Used::default();
     for n in nodes.iter_mut() {
         refs(n, &mut |r| used.note(r));

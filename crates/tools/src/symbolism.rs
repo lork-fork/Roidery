@@ -138,6 +138,9 @@ impl Tool for SymbolismTool {
             _ => vec![],
         }
     }
+    fn claims_key(&self, _cx: &ToolContext, key: ToolKey) -> bool {
+        matches!(key, ToolKey::BracketLeft | ToolKey::BracketRight)
+    }
     fn key(&mut self, _cx: &ToolContext, key: ToolKey, m: Mods) -> Vec<Action> {
         match key {
             ToolKey::BracketLeft if m.shift => self.intensity = (self.intensity - 1.0).max(1.0),
@@ -222,6 +225,9 @@ impl Tool for BrushPaintTool {
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
         let acts = self.inner.pointer(cx, ev);
         self.map(cx, acts)
+    }
+    fn claims_key(&self, cx: &ToolContext, key: ToolKey) -> bool {
+        self.inner.claims_key(cx, key)
     }
     fn key(&mut self, cx: &ToolContext, key: ToolKey, m: Mods) -> Vec<Action> {
         let acts = self.inner.key(cx, key, m);

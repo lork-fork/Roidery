@@ -97,6 +97,50 @@ fn prompt_argument_errors_are_invalid_params() {
     assert_eq!(err_code(&mut s, 3, "prompts/get", json!({})), -32602);
 }
 
+// ---------- envelope ----------
+
+/// Requests and notifications outside a `"jsonrpc": "2.0"` envelope are never dispatched (#1728).
+#[test]
+fn envelopes_without_version_20_are_not_dispatched() {
+    let mut s = server();
+    // A request in no envelope: invalid, and nothing ran.
+    let line = json!({"id": 1, "method": "ping", "params": {}}).to_string();
+    let v: Value = serde_json::from_str(&s.handle_line(&line).unwrap()).unwrap();
+    assert_eq!(v["error"]["code"], -32600, "{v}");
+    assert!(v["error"]["message"].as_str().unwrap_or_default().contains("2.0"), "{v}");
+    // A wrong version is the same.
+    let line = json!({"jsonrpc": "1.0", "id": 2, "method": "ping", "params": {}}).to_string();
+    let v: Value = serde_json::from_str(&s.handle_line(&line).unwrap()).unwrap();
+    assert_eq!(v["error"]["code"], -32600, "{v}");
+    // In a batch the unversioned message is an error entry, not a dispatch; the 2.0 one answers.
+    let batch = json!([
+        {"jsonrpc": "2.0", "id": 3, "method": "ping", "params": {}},
+        {"id": 4, "method": "ping", "params": {}},
+    ])
+    .to_string();
+    let v: Value = serde_json::from_str(&s.handle_line(&batch).unwrap()).unwrap();
+    assert_eq!(v.as_array().map(Vec::len), Some(2), "{v}");
+    assert!(v[0].get("result").is_some(), "{v}");
+    assert_eq!(v[1]["error"]["code"], -32600, "{v}");
+    // The 2.0 request still works.
+    assert_eq!(result(&mut s, 5, "ping", json!({})), json!({}));
+}
+
+#[test]
+fn notification_without_version_20_changes_nothing() {
+    let mut s = server();
+    assert!(!s.is_initialized());
+    // No envelope, no id: there is no address for a reply, so it is ignored — and it must not
+    // flip the server into its initialised state.
+    let line = json!({"method": "notifications/initialized", "params": {}}).to_string();
+    assert!(s.handle_line(&line).is_none());
+    assert!(!s.is_initialized(), "an unversioned notification changed state");
+    // The 2.0 notification still works.
+    let line = json!({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}).to_string();
+    assert!(s.handle_line(&line).is_none());
+    assert!(s.is_initialized());
+}
+
 // ---------- completions ----------
 
 #[test]

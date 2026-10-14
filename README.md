@@ -35,6 +35,8 @@ drawing tools are the real thing.
 - Running stitch (single, double, triple), E-stitch for appliqué, rope, and manual stitches
 - **Convert to Satin** turns a filled shape into satin columns along its centre line
 - **Fill Angle tool**: drag across a fill and its rows follow the line
+- **Image Trace** on the Embroidery bar turns a placed picture into tatami-filled shapes in one
+  click
 
 **Lettering**
 - Roidery Sans, an original satin font, plus the digitized community fonts from

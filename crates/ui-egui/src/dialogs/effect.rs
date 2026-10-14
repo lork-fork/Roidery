@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use vectorcraft_color::Color;
 
-use super::{DialogSpec, form};
+use super::{DialogSpec, form, transform_each};
 use crate::panels::c32;
 use crate::state::Dialog;
 use crate::theme::Tokens;
@@ -127,15 +127,28 @@ fn confirm_exists(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String>
 
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let (id, relative) = (d.str("__effect"), d.bool("relative"));
+    if vectorcraft_effects::is_three_d(&id) {
+        super::revolve::body(app, ui, d);
+        let (cmd, params) = command(d);
+        form::preview(app, ui, d, &d.str("__label"), cmd, params);
+        return false;
+    }
     // Plug-in effects get fields from their parameter schema; colour adjustments their sliders.
     let changed = match vectorcraft_plugins::effect::installed(&id) {
         Some(plugin) => form::schema_fields(ui, d, &plugin.manifest().params),
         None if vectorcraft_effects::is_adjustment(&id) => adjust_fields(ui, d),
-        None => form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(&id, k, relative), &|_| None, app.session.general_unit()),
+        None if id == TRANSFORM => transform_fields(ui, d, app.session.general_unit()),
+        None if id == ZIG_ZAG => zig_zag_fields(ui, d, app.session.general_unit()),
+        None if id == "artistic.filmGrain" => film_grain_fields(ui, d),
+        None => {
+            let doc = vectorcraft_effects::effect_info(&id).map(|e| e.params).unwrap_or_default();
+            let unit = app.session.general_unit();
+            form::param_fields(ui, d, &|k| vectorcraft_effects::is_length(&id, k, relative), &|k| choices(&id, k), &|k| doc_rank(doc, k), unit)
+        }
     };
     ui.add_space(6.0);
-    let mut pv = d.bool("preview");
-    let pv_changed = ui.checkbox(&mut pv, tl!("Preview")).changed();
+    let pv_changed = widgets::check(ui, tl!("Preview"), d.bool("preview"), true);
+    let pv = d.bool("preview") != pv_changed;
     d.fields.insert("preview".into(), json!(pv));
     if pv && (changed || pv_changed || !app.session.in_interaction()) {
         let label = d.str("__label");
@@ -146,6 +159,58 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         let _ = app.session.cancel_interaction();
     }
     false
+}
+
+/// Film Grain's bounded, whole-number controls, in the same order as its parameter docs.
+pub(crate) const FILM_GRAIN_FIELDS: [(&str, &str, f64); 3] =
+    [("grain", "Grain", 20.0), ("highlightArea", "Highlight Area", 20.0), ("intensity", "Intensity", 10.0)];
+
+fn film_grain_fields(ui: &mut egui::Ui, d: &mut Dialog) -> bool {
+    let before = d.fields.clone();
+    // Use one column wide enough for this language's longest label, keeping every rail aligned.
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let text = Tokens::get(ui.ctx()).text;
+    let label_w = FILM_GRAIN_FIELDS
+        .iter()
+        .map(|(_, label, _)| ui.painter().layout_no_wrap(tl!(label).to_string(), font.clone(), text).size().x)
+        .fold(form::SLIDER_LABEL, f32::max)
+        .ceil()
+        + 4.0;
+    for (key, label, max) in FILM_GRAIN_FIELDS {
+        form::slider_w(ui, d, (key, label, label_w), 0.0..=max, "", &grey_rail);
+    }
+    before != d.fields
+}
+
+/// The parameters of the effect dialogs that pick one of some values, as (label, value).
+fn choices(effect: &str, key: &str) -> Option<form::Choices> {
+    match (effect, key) {
+        ("blur.radial", "method") => Some(&[("Spin", "spin"), ("Zoom", "zoom")]),
+        ("blur.radial", "quality") => Some(&[("Draft", "draft"), ("Good", "good"), ("Best", "best")]),
+        ("blur.smart", "quality") => Some(&[("Low", "low"), ("Medium", "medium"), ("High", "high")]),
+        ("brushStrokes.sprayedStrokes", "strokeDirection") => Some(&vectorcraft_effects::pixel::STROKE_DIRECTIONS),
+        ("distort.glass", "texture") => Some(&vectorcraft_effects::pixel::GLASS_TEXTURES),
+        ("pixelate.mezzotint", "type") => Some(&vectorcraft_effects::pixel::MEZZOTINT_TYPES),
+        ("texture.grain", "grainType") => Some(&vectorcraft_effects::pixel::GRAIN_TYPES),
+        ("texture.texturizer", "texture") => Some(&vectorcraft_effects::pixel::TEXTURES),
+        ("texture.texturizer", "lightDirection") => Some(&vectorcraft_effects::pixel::LIGHT_DIRECTIONS),
+        ("video.deinterlace", "eliminate") => Some(&[("Odd Fields", "odd"), ("Even Fields", "even")]),
+        ("video.deinterlace", "create") => Some(&[("Duplication", "duplication"), ("Interpolation", "interpolation")]),
+        ("stylize.innerGlow", "source") => Some(&[("Center", "center"), ("Edge", "edge")]),
+        ("path.offsetPath", "joins") => Some(&[("Miter", "miter"), ("Round", "round"), ("Bevel", "bevel")]),
+        ("distort.roughen" | "distort.zigZag", "points") => Some(&[("Smooth", "smooth"), ("Corner", "corner")]),
+        _ => None,
+    }
+}
+
+/// Where parameter `key` comes in the effect's parameter documentation `doc` (`{radius: …,
+/// threshold: …}`), which lists them in its dialog's order; the end when it isn't there.
+pub(super) fn doc_rank(doc: &str, key: &str) -> usize {
+    let starts = |at: usize| doc.get(..at).and_then(|s| s.chars().last()).is_some_and(|c| c == '{' || c == ' ');
+    doc.match_indices(key)
+        .map(|(at, _)| at)
+        .find(|at| starts(*at) && doc.get(at + key.len()..).is_some_and(|rest| rest.starts_with(':') || rest.starts_with("?:")))
+        .unwrap_or(usize::MAX)
 }
 
 /// A slider of a colour adjustment dialog: (effect, field, label, range, rail colour at 0..1).
@@ -225,8 +290,7 @@ fn adjust_fields(ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     }
     if d.fields.contains_key("gamma") {
         widgets::label_row(ui, tl!("Gamma"), LABEL_W, |ui| {
-            let mut g = d.f64("gamma", 1.0);
-            if ui.add(egui::DragValue::new(&mut g).speed(0.01).range(0.1..=10.0).max_decimals(2)).changed() {
+            if let Some(g) = widgets::range_field(ui, "gamma", d.f64("gamma", 1.0), 0.1..=10.0, "", 2, 60.0) {
                 d.fields.insert("gamma".into(), json!(g));
             }
         });
@@ -236,10 +300,89 @@ fn adjust_fields(ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             form::check(ui, d, key, label);
         }
     }
+    values_changed(d)
+}
+
+/// Do the dialog's values differ from those last previewed? (Remembers them for the next frame.)
+fn values_changed(d: &mut Dialog) -> bool {
     let params = form::params(d);
     let changed = d.fields.get(form::PREVIEWED) != Some(&params);
     d.fields.insert(form::PREVIEWED.into(), params);
     changed
+}
+
+/// The Transform effect (Effect › Distort & Transform › Transform…).
+const TRANSFORM: &str = "distort.transform";
+
+/// The Transform effect's dialog: Transform Each's Scale and Move sliders and Rotate dial, then
+/// Copies, the reflections, the reference point and Random. Returns whether the values differ from
+/// those last previewed.
+fn transform_fields(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Unit) -> bool {
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| transform_each::sections(ui, d, unit));
+        ui.add_space(16.0);
+        ui.vertical(|ui| {
+            widgets::subheader(ui, tl!("Options"));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                widgets::dim_label(ui, tl!("Copies:"));
+                if let Some(n) = widgets::range_field(ui, "fx-copies", d.f64("copies", 0.0), 0.0..=1000.0, "", 0, 50.0) {
+                    d.fields.insert("copies".into(), json!(n));
+                }
+            });
+            transform_each::reflect_options(ui, d);
+        });
+    });
+    values_changed(d)
+}
+
+/// The Zig Zag effect (Effect › Distort & Transform › Zig Zag…).
+const ZIG_ZAG: &str = "distort.zigZag";
+
+/// Zig Zag's dialog (#1133): Size and Ridges per segment as sliders with their fields, Relative or
+/// Absolute and the Points as radio buttons. Returns whether the values differ from those last
+/// previewed.
+fn zig_zag_fields(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Unit) -> bool {
+    const LABEL_W: f32 = 124.0;
+    const FIELD_W: f32 = 70.0;
+    let rail = Tokens::get(ui.ctx()).input_border;
+    let track = move |_| rail;
+    let relative = d.bool("relative");
+    widgets::subheader(ui, tl!("Options"));
+    // Size is a share of the object's size (Relative) or a distance (Absolute).
+    widgets::label_row(ui, tl!("Size:"), LABEL_W, |ui| {
+        form::slider_rail(ui, d, "size", 0.0..=100.0, &track);
+        if !relative {
+            form::length(ui, d, "size", unit, FIELD_W);
+        } else if let Some(n) = widgets::range_field(ui, ("zz", "size"), d.f64("size", 10.0), 0.0..=100.0, "%", 0, FIELD_W) {
+            d.fields.insert("size".into(), json!(n));
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.add_space(LABEL_W + ui.spacing().item_spacing.x);
+        for (label, on) in [(tl!("Relative"), true), (tl!("Absolute"), false)] {
+            if widgets::radio(ui, label, relative == on, true) {
+                d.fields.insert("relative".into(), json!(on));
+            }
+        }
+    });
+    widgets::label_row(ui, tl!("Ridges per segment:"), LABEL_W, |ui| {
+        form::slider_rail(ui, d, "ridges", 0.0..=100.0, &track);
+        if let Some(n) = widgets::range_field(ui, ("zz", "ridges"), d.f64("ridges", 4.0), 0.0..=100.0, "", 0, FIELD_W) {
+            d.fields.insert("ridges".into(), json!(n));
+        }
+    });
+    ui.add_space(4.0);
+    widgets::subheader(ui, crate::i18n::tr_ctx(crate::i18n::current(), "effect", "Points"));
+    let points = d.str("points");
+    ui.horizontal(|ui| {
+        for (label, value) in choices(ZIG_ZAG, "points").unwrap_or_default() {
+            if widgets::radio(ui, crate::i18n::tr_ctx(crate::i18n::current(), "effect", label), points == *value, true) {
+                d.fields.insert("points".into(), json!(value));
+            }
+        }
+    });
+    values_changed(d)
 }
 
 /// Curves' graph of its `points` (input across, output up, 0..255): drag a point to move it
@@ -347,4 +490,22 @@ fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
     }
     app.ui.dialog = None;
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fields_that_pick_a_value_are_dropdowns_of_its_values() {
+        // The values come from the effect's parameter documentation (`joins: "miter"|"round"|…`).
+        for (effect, key) in
+            [("path.offsetPath", "joins"), ("distort.zigZag", "points"), ("distort.roughen", "points"), ("stylize.innerGlow", "source")]
+        {
+            let doc = vectorcraft_effects::effect_info(effect).unwrap().params;
+            let listed = doc.split(&format!("{key}: ")).nth(1).unwrap().split([',', '}', ' ']).next().unwrap().to_string();
+            let values: Vec<String> = choices(effect, key).unwrap().iter().map(|(_, v)| format!("\"{v}\"")).collect();
+            assert_eq!(values.join("|"), listed, "{effect} {key}");
+        }
+    }
 }

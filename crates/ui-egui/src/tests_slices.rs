@@ -78,7 +78,7 @@ fn slice_tool_cursors_are_drawn_in_code() {
     let ctx = egui::Context::default();
     let mut out = ctx.run_ui(Default::default(), |ui| {
         for c in [vectorcraft_tools::Cursor::Slice, vectorcraft_tools::Cursor::SliceSelect] {
-            assert!(crate::cursors::paint(ui.painter(), c, egui::pos2(50.0, 50.0)), "{c:?}");
+            assert!(crate::cursors::paint(ui.painter(), c, egui::pos2(50.0, 50.0), 1.0), "{c:?}");
         }
     });
     out.textures_delta.clear();

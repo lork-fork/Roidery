@@ -30,7 +30,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Print Preview",
             [],
             None,
-            "{settings?: {…print.setup settings} (over the document's)} → {pages (copies included), sheets: [{artboard (0-based; null with artboards ignored), tile? (1-based), ink? (separations), width, height (pt, the page), orientation, scale: [width %, height %], transform: [a, b, c, d, e, f] (document space → the page, pt, y down), area: [x0, y0, x1, y1] (the document region the page prints), trim: [x0, y0, x1, y1] (the artboard on the page)}] (one copy, in order), tiles: [{artboard, columns, rows, printed: [1-based tiles], tiles: [[x0, y0, x1, y1]…] (document space)}], inks: [{name, spot, print, frequency, angle}] (separations), warnings (art larger than the imageable area, options not applied yet…), settings} without printing",
+            "{settings?: {…settings of print.setup} (over the document's)} → {pages (copies included), sheets: [{artboard (0-based; null with artboards ignored), tile? (1-based), ink? (separations), width, height (pt, the page), orientation, scale: [width %, height %], transform: [a, b, c, d, e, f] (document space → the page, pt, y down), area: [x0, y0, x1, y1] (the document region the page prints), trim: [x0, y0, x1, y1] (the artboard on the page)}] (one copy, in order), tiles: [{artboard, columns, rows, printed: [1-based tiles], tiles: [[x0, y0, x1, y1]…] (document space)}], inks: [{name, spot, print, frequency, angle}] (separations), warnings (art larger than the imageable area, options not applied yet…), settings} without printing",
             has_doc,
             preview
         ),
@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Print",
             [],
             Some("Cmd+P"),
-            "{settings?: {…print.setup settings} (over the document's), path?, format?: pdf (default: a print-ready PDF) | postscript (the default for a .ps path: a PostScript file with DSC comments, %%Pages, a page per sheet with its paper size, marks, separations with their ink and halftone screen, the fixed flatness, negatives), level?: 3|2 (the PostScript language level), flattenerPreset?: \"medium\" (PostScript: the preset transparency is flattened with — high, low or a saved one, see flattener.presets.list)} print the document, one page per sheet of paper (per tile, per ink, per copy) → {pages, format, path, bytes, warnings}; no path → {dataBase64, bytes, pages, format, warnings}. Raster effects print at the document's raster effects resolution; a PDF leaves halftone screens and flatness to the output device",
+            "{settings?: {…settings of print.setup} (over the document's), path?, format?: pdf (default: a print-ready PDF) | postscript (the default for a .ps path: a PostScript file with DSC comments, %%Pages, a page per sheet with its paper size, marks, separations with their ink and halftone screen, the fixed flatness, negatives), level?: 3|2 (the PostScript language level), flattenerPreset?: \"medium\" (PostScript: the preset transparency is flattened with — high, low or a saved one, see flattener.presets.list), acknowledgeLoss?: bool (with path: write over the file the document was read from although reading it left things out)} print the document, one page per sheet of paper (per tile, per ink, per copy) → {pages, format, path, bytes, warnings}; no path → {dataBase64, bytes, pages, format, warnings}. Raster effects print at the document's raster effects resolution; a PDF leaves halftone screens and flatness to the output device",
             has_doc,
             print
         ),
@@ -109,6 +109,9 @@ fn to_postscript(p: &Value) -> Result<bool> {
 }
 
 fn print(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(path) = str_param(p, "path") {
+        super::fileio::check_not_lossy_overwrite(s.doc()?, path, p, PRINT)?;
+    }
     let postscript = to_postscript(p)?;
     let doc = &s.doc()?.doc;
     let mut set = settings(PRINT, doc, p)?;
@@ -118,11 +121,14 @@ fn print(s: &mut Session, p: &Value) -> Result<Value> {
         let preset = given.or(Some(set.advanced.flattener_preset.as_str()).filter(|n| !n.trim().is_empty())).unwrap_or("medium");
         set.advanced.flattener_preset = preset.to_string();
     }
+    // Placed documents print their files' art.
+    let (full, _) = super::place::document::full_documents(doc);
+    let doc = &*full;
     // Raster effects print as images at the document's raster effects resolution.
     let flat = super::rasterfx::flatten_raster_effects(doc);
     let doc = flat.as_ref().unwrap_or(doc);
     // Print as Bitmap and the flattener preset (Advanced) render and flatten it first.
-    let prepared = super::printadvanced::prepare(PRINT, doc, &set, &s.prefs.flattener_presets)?;
+    let prepared = super::printadvanced::prepare(PRINT, doc, &set, &s.prefs.flattener_presets, s.prefs.black_output == "rich")?;
     let path = str_param(p, "path");
     if !postscript {
         let r = vectorcraft_pdf::print(prepared.as_ref().unwrap_or(doc), &PrintOptions { settings: set, ..Default::default() })

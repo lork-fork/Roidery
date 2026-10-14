@@ -107,7 +107,7 @@ fn recent_files_show_as_many_as_the_preference_keeps() {
     assert!(menus::enabled(&app, "file.openRecent30"));
     app.session.prefs.recent_files_count = 0;
     assert_eq!((io::recent_files(&app).len(), listed(&app)), (0, 0), "0 hides the list");
-    assert_eq!(menus::listed_slots(&app), 0, "the native menu rebuilds without them");
+    assert!(menus::shown_state(&app, "file.openRecent1", &json!(null)).is_none(), "the slots leave the menus");
     assert!(app.run("file.openRecent1", json!({})).is_err());
     app.session.prefs.recent_files_count = 5;
     assert_eq!(io::recent_files(&app)[0], "/art/34.svg", "hiding them didn't forget them");
@@ -165,4 +165,67 @@ fn a_document_reopens_at_its_saved_view() {
     app.run("file.new", json!({})).unwrap();
     assert!(!app.view().unwrap().fitted);
     let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
+fn replacing_a_file_that_opening_left_things_out_of_asks_first() {
+    let d = dir("lossy");
+    let path = d.join("a.vectorcraft").to_string_lossy().to_string();
+    let mut app = app();
+    app.run("file.new", json!({"width": 100, "height": 100})).unwrap();
+    rect(&mut app);
+    app.run("file.saveAs", json!({"path": path})).unwrap();
+    // As if reading the file had left out text it can't read yet.
+    let st = app.session.doc_mut().unwrap();
+    st.imported_from = Some(path.clone());
+    st.import_losses = vec!["hidden type".into()];
+    let saved = std::fs::read(&path).unwrap();
+    rect(&mut app);
+    let r = app.run("file.save", json!({})).unwrap();
+    assert_eq!(r["pending"], dialogs::confirm::KIND);
+    let dialog = app.ui.dialog.as_ref().unwrap();
+    assert!(dialog.str("detail").contains("“hidden type”"), "{:?}", dialog.fields);
+    assert_eq!(std::fs::read(&path).unwrap(), saved, "nothing is written before OK");
+    // Export As over it asks too; Cancel leaves the file.
+    app.ui.dialog = None;
+    assert_eq!(app.run("file.exportAs", json!({"path": path, "format": "svg"})).unwrap()["pending"], dialogs::confirm::KIND);
+    app.ui.dialog = None;
+    assert_eq!(std::fs::read(&path).unwrap(), saved);
+    // Another name doesn't ask.
+    let copy = d.join("b.svg").to_string_lossy().to_string();
+    assert!(app.run("file.exportAs", json!({"path": copy, "format": "svg"})).unwrap().get("pending").is_none());
+    crate::background::wait_all(&mut app);
+    assert!(app.ui.dialog.is_none());
+    // OK replaces it.
+    app.run("file.save", json!({})).unwrap();
+    press_ok(&mut app);
+    crate::background::wait_all(&mut app);
+    assert!(app.ui.dialog.is_none());
+    assert_ne!(std::fs::read(&path).unwrap(), saved);
+    assert!(!app.session.active().unwrap().is_dirty());
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
+fn native_saves_stream_into_the_file() {
+    let d = dir("stream");
+    let streamed = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+    let log = streamed.clone();
+    let mut app = app();
+    app.services.stream_shared = Some(std::sync::Arc::new(move |p: &str, fill: &mut dyn FnMut(&mut dyn std::io::Write) -> std::io::Result<()>| {
+        log.lock().unwrap().push(p.to_string());
+        let mut f = std::fs::File::create(p).map_err(|e| e.to_string())?;
+        fill(&mut f).map_err(|e| e.to_string())
+    }));
+    app.run("file.new", json!({"width": 100, "height": 100})).unwrap();
+    rect(&mut app);
+    let native = d.join("a.vectorcraft").to_string_lossy().to_string();
+    let r = app.run("file.saveAs", json!({"path": native, "compress": true})).unwrap();
+    let bytes = std::fs::read(&native).unwrap();
+    assert_eq!(r["bytes"], bytes.len(), "{r}");
+    assert!(vectorcraft_format::is_compressed(&bytes));
+    assert_eq!(vectorcraft_format::load(&bytes).unwrap().node_count(), objects(&app));
+    assert!(!app.session.doc().unwrap().is_dirty(), "the file is the document's own");
+    assert_eq!(*streamed.lock().unwrap(), [native]);
+    let _ = std::fs::remove_dir_all(&d);
 }

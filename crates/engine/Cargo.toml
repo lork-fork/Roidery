@@ -30,6 +30,8 @@ roidery-stitch = { workspace = true }
 roidery-plan = { workspace = true }
 roidery-mockup = { workspace = true }
 roidery-fonts = { workspace = true }
+vectorcraft-affinity = { workspace = true }
+vectorcraft-scriptcheck = { workspace = true }
 image = { workspace = true }
 flate2 = { workspace = true }
 kurbo = { workspace = true }
@@ -39,6 +41,10 @@ thiserror = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
+vectorcraft-affinity = { workspace = true, features = ["synth"] }
+crc32fast = { workspace = true }
 vectorcraft-testkit = { workspace = true }
 proptest = { workspace = true }
 wat = { workspace = true }
+# Zstandard streams for the Illustrator editing data fuzz tests.
+ruzstd = { workspace = true }
