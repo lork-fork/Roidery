@@ -4614,3 +4614,7 @@ lighting	Light	광원
 	Version {version} — open-source embroidery digitizing in pure Rust.	버전 {version} — 순수 Rust로 만든 오픈 소스 자수 디지타이징.
 	Pink	분홍
 	Hide Roidery	Roidery 숨기기
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	파일을 열 때 Roidery가 아직 읽지 못하는 내용({what})이 제외되어, 덮어쓰면 해당 내용이 영구적으로 사라집니다. 보존하려면 다른 이름으로 저장하세요.
+	Roidery copies the fonts to {folder}.	Roidery가 글꼴을 {folder}에 복사합니다.
+	Roidery read this script without running it.	Roidery가 이 스크립트를 실행하지 않고 읽었습니다.

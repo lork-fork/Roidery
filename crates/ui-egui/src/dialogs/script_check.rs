@@ -194,7 +194,7 @@ fn list<'r>(r: &'r Value, key: &str) -> &'r [Value] {
 }
 
 fn report(ui: &mut egui::Ui, r: &Value, t: &Tokens) {
-    widgets::dim_label(ui, tl!("VectorCraft read this script without running it."));
+    widgets::dim_label(ui, tl!("Roidery read this script without running it."));
     let needs: Vec<&str> = list(r, "needs").iter().filter_map(Value::as_str).filter_map(need_label).collect();
     if needs.is_empty() {
         row(ui, t, tl!("Needs nothing beyond plain JavaScript"), false, "");

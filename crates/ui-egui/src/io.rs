@@ -428,7 +428,7 @@ fn ask_before_losing(app: &mut VectorcraftApp, path: &str, command: &str, params
     let name = fileio::file_name(path);
     let message = crate::i18n::fmt(tl!("Replace “{name}”, the file this document was opened from?"), &[("name", &name)]);
     let detail = crate::i18n::fmt(
-        tl!("Opening it left out what VectorCraft can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it."),
+        tl!("Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it."),
         &[("what", &what)],
     );
     let mut params = acknowledged(params);

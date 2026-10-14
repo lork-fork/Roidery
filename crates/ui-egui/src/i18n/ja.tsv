@@ -4629,3 +4629,7 @@ lighting	Light	ライト
 	Images don't sew: trace them into stitches.	画像は縫えません。トレースしてステッチにしてください。
 	Image traced into tatami fills (shapes: {paths}, colors: {colors})	画像をタタミの塗りにトレースしました（形: {paths}、色: {colors}）
 	Hide Roidery	Roidery を隠す
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	開いたときに Roidery がまだ読み込めない内容（{what}）が除外されたため、置き換えるとそれは完全に失われます。保持するには別の名前で保存してください。
+	Roidery copies the fonts to {folder}.	Roidery はフォントを {folder} にコピーします。
+	Roidery read this script without running it.	Roidery はこのスクリプトを実行せずに読み取りました。

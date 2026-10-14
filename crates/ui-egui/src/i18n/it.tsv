@@ -4650,3 +4650,7 @@ lighting	Light	Luce
 	Version {version} — open-source embroidery digitizing in pure Rust.	Versione {version} — digitalizzazione del ricamo open source in puro Rust.
 	Pink	Rosa
 	Hide Roidery	Nascondi Roidery
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Aprendolo è rimasto fuori ciò che Roidery non sa ancora leggere ({what}), quindi sostituirlo lo perde per sempre. Salva con un altro nome per conservarlo.
+	Roidery copies the fonts to {folder}.	Roidery copia i font in {folder}.
+	Roidery read this script without running it.	Roidery ha letto questo script senza eseguirlo.

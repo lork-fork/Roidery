@@ -3978,3 +3978,7 @@ lighting	Light	光源
 	Images don't sew: trace them into stitches.	影像無法繡製：請將其描圖為針跡。
 	Image traced into tatami fills (shapes: {paths}, colors: {colors})	已將影像描圖為榻榻米填色（形狀：{paths}，顏色：{colors}）
 	Hide Roidery	隱藏 Roidery
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	開啟時略過了 Roidery 尚無法讀取的內容（{what}），取代該檔案會永久遺失這些內容。若要保留，請以其他名稱儲存。
+	Roidery copies the fonts to {folder}.	Roidery 會將字體複製到 {folder}。
+	Roidery read this script without running it.	Roidery 已讀取此指令碼，但沒有執行。

@@ -5046,3 +5046,7 @@ imageTrace	Outline	Körvonal
 	Welcome to Roidery	Üdvözöl a Roidery
 	Version {version} — open-source embroidery digitizing in pure Rust.	{version}. verzió – nyílt forráskódú hímzés-digitalizálás tiszta Rustban.
 	Hide Roidery	Roidery elrejtése
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Megnyitáskor kimaradt, amit a Roidery még nem tud beolvasni ({what}), ezért a fájl felülírásával ez végleg elvész. A megtartásához mentsd más néven.
+	Roidery copies the fonts to {folder}.	A Roidery ide másolja a betűtípusokat: {folder}.
+	Roidery read this script without running it.	A Roidery futtatás nélkül olvasta be ezt a szkriptet.

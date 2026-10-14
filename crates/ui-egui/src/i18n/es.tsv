@@ -5006,3 +5006,7 @@ mark-style	Japanese	Japonesas
 	Images don't sew: trace them into stitches.	Las imágenes no se bordan: cálcalas para convertirlas en puntadas.
 	Image traced into tatami fills (shapes: {paths}, colors: {colors})	Imagen calcada en rellenos de tatami (formas: {paths}, colores: {colors})
 	Hide Roidery	Ocultar Roidery
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Al abrirlo quedó fuera lo que Roidery aún no puede leer ({what}), así que reemplazarlo lo pierde para siempre. Guárdelo con otro nombre para conservarlo.
+	Roidery copies the fonts to {folder}.	Roidery copia las fuentes en {folder}.
+	Roidery read this script without running it.	Roidery leyó este script sin ejecutarlo.

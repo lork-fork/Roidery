@@ -69,7 +69,7 @@ fn find<'a>(bar: &'a MenuBar, command: &str) -> &'a native_menu::Item {
 fn vectorcraft_gets_a_mac_app_menu() {
     let bar = bar(&app(true));
     let titles: Vec<&str> = bar.menus.iter().map(|m| m.title.as_str()).collect();
-    assert_eq!(titles, ["VectorCraft", "File", "Edit", "Object", "Type", "Select", "Effect", "View", "Window", "Help"]);
+    assert_eq!(titles, ["Roidery", "File", "Edit", "Object", "Type", "Select", "Effect", "View", "Window", "Help"]);
     let app_menu = &bar.menus[0];
     assert_eq!(app_menu.role, MenuRole::App);
     assert_eq!(

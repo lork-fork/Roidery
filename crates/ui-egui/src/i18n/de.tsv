@@ -4605,3 +4605,7 @@ theme	Appearance	Erscheinungsbild
 	Version {version} — open-source embroidery digitizing in pure Rust.	Version {version} – Open-Source-Stickerei-Digitalisierung in reinem Rust.
 	Pink	Rosa
 	Hide Roidery	Roidery ausblenden
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Beim Öffnen wurde ausgelassen, was Roidery noch nicht lesen kann ({what}); beim Ersetzen geht das endgültig verloren. Speichern Sie unter einem anderen Namen, um es zu behalten.
+	Roidery copies the fonts to {folder}.	Roidery kopiert die Schriften nach {folder}.
+	Roidery read this script without running it.	Roidery hat dieses Skript gelesen, ohne es auszuführen.

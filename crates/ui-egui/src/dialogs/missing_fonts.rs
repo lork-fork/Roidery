@@ -298,7 +298,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         ui.add_space(8.0);
         widgets::dim_label(ui, tl!("Copy only fonts you own or are licensed to install."));
         if let Some(dir) = vectorcraft_text::app_font_dir() {
-            widgets::dim_name(ui, &crate::i18n::fmt(tl!("VectorCraft copies the fonts to {folder}."), &[("folder", &dir.to_string_lossy())]));
+            widgets::dim_name(ui, &crate::i18n::fmt(tl!("Roidery copies the fonts to {folder}."), &[("folder", &dir.to_string_lossy())]));
         }
         ui.add_space(6.0);
         if ui.add_enabled(!searching && !chosen.is_empty(), egui::Button::new(tl!("Add Fonts"))).clicked() {

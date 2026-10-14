@@ -351,7 +351,6 @@
 	Check Script	Verificar Script
 	Check Script…	Verificar Script…
 	Copy Report	Copiar Relatório
-	VectorCraft read this script without running it.	O VectorCraft leu este script sem executá-lo.
 	Needs nothing beyond plain JavaScript	Precisa apenas de JavaScript simples
 	Needs the script language's own objects or directives	Precisa de objetos ou diretivas próprios da linguagem do script
 	Needs the document model	Precisa do modelo de documento
@@ -1900,7 +1899,6 @@
 	{count} folder(s) or file(s) couldn't be read	{count} pasta(s) ou arquivo(s) não puderam ser lidos
 	The search stopped at its limit: search a smaller folder.	A pesquisa parou no limite: pesquise uma pasta menor.
 	Copy only fonts you own or are licensed to install.	Copie apenas fontes que sejam suas ou que você tenha licença para instalar.
-	VectorCraft copies the fonts to {folder}.	O VectorCraft copia as fontes para {folder}.
 	Registered Trademark Symbol	Símbolo de Marca Registrada
 	Registry name:	Nome do registro:
 	Release	Liberar
@@ -1989,7 +1987,6 @@
 	Revert	Reverter
 	Revert to the saved version of “{name}”?	Reverter para a versão salva de “{name}”?
 	Replace “{name}”, the file this document was opened from?	Substituir “{name}”, o arquivo do qual este documento foi aberto?
-	Opening it left out what VectorCraft can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Ao abri-lo, ficou de fora o que o VectorCraft ainda não consegue ler ({what}), então substituí-lo perde isso para sempre. Salve com outro nome para mantê-lo.
 	Revolve…	Revolver…
 	Right Grid:	Grade Direita:
 	Right Indent	Recuo Direito
@@ -4041,3 +4038,7 @@ axis	Both	Ambos
 	Images don't sew: trace them into stitches.	Imagens não são bordadas: trace-as em pontos.
 	Image traced into tatami fills (shapes: {paths}, colors: {colors})	Imagem traçada em preenchimentos de tatami (formas: {paths}, cores: {colors})
 	Hide Roidery	Ocultar o Roidery
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Ao abri-lo, ficou de fora o que o Roidery ainda não consegue ler ({what}), então substituí-lo perde isso para sempre. Salve com outro nome para mantê-lo.
+	Roidery copies the fonts to {folder}.	O Roidery copia as fontes para {folder}.
+	Roidery read this script without running it.	O Roidery leu este script sem executá-lo.

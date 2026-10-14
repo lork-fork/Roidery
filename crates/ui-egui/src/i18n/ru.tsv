@@ -4646,3 +4646,7 @@ lighting	Light	Свет
 	Version {version} — open-source embroidery digitizing in pure Rust.	Версия {version} — оцифровка вышивки с открытым исходным кодом на чистом Rust.
 	Pink	Розовый
 	Hide Roidery	Скрыть Roidery
+# Roidery: its name in place of VectorCraft's (strings from the 2026-10-14 merge).
+	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	При открытии было пропущено то, что Roidery пока не умеет читать ({what}), поэтому замена файла потеряет это навсегда. Чтобы сохранить это, сохраните документ под другим именем.
+	Roidery copies the fonts to {folder}.	Roidery копирует шрифты в {folder}.
+	Roidery read this script without running it.	Roidery прочитал этот сценарий, не запуская его.
