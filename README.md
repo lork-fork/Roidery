@@ -5,7 +5,7 @@
 <h1 align="center">Roidery</h1>
 
 <p align="center">
-  <b>Embroidery digitizing that's easy to start and deep enough for professional work.</b><br>
+  <b>Embroidery digitizing with an Adobe Illustrator style workflow.</b><br>
   Free, open source, and written in pure Rust.
 </p>
 
