@@ -1,0 +1,16 @@
+[package]
+name = "roidery-plan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Roidery stitch plan: sewing order, tie-ins and tie-offs, jumps, trims and colour changes"
+
+[lints]
+workspace = true
+
+[dependencies]
+roidery-stitch = { workspace = true }
+roidery-formats = { workspace = true }
+kurbo = { workspace = true }
+serde = { workspace = true }
+

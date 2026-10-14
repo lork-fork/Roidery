@@ -1,0 +1,11 @@
+[package]
+name = "roidery-mockup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Roidery mockups: realistic thread and fabric texture drawn into an RGBA image on the CPU"
+
+[lints]
+workspace = true
+
+[dependencies]

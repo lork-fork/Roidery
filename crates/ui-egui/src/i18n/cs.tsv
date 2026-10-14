@@ -1,0 +1,888 @@
+# Czech (cs) catalog. Same format as zh-hant.tsv:  context <TAB> source <TAB> translation
+# (empty context = a plain UI string; `@id` = a command id; `@plural` = "one|few|other" forms).
+#
+# Clean-room: every entry is written from the meaning of VectorCraft's English label, following
+# common Czech desktop-software conventions (commands in the infinitive, menus as nouns); no other
+# application's Czech localisation was consulted or copied.
+#
+# Coverage: every menu label (tested: `menu_catalogs_translate_every_menu_label`); panels and dialogs fall
+# back to English. Left in English on purpose (`MENU_KEEP_AS_IS` in the tests): the product name,
+# language names, OpenType, the built-in workspace names and the bracketed perspective grid preset
+# names.
+	About Roidery	O aplikaci Roidery
+	Align to Path	Zarovnat k cestě
+	Settings…	Nastavení…
+	Language	Jazyk
+	UI Brightness	Jas rozhraní
+	Dark	Tmavý
+	Medium Dark	Středně tmavý
+	Medium Light	Středně světlý
+	Light	Světlý
+	Quit Roidery	Ukončit Roidery
+	File	Soubor
+	New…	Nový…
+	New from Template…	Nový ze šablony…
+	Open…	Otevřít…
+	Open Recent Files	Otevřít nedávné soubory
+	Clear Recent Files	Vymazat seznam nedávných souborů
+	Show in Folder	Zobrazit ve složce
+	Close	Zavřít
+	Close All	Zavřít vše
+	Save	Uložit
+	Save As…	Uložit jako…
+	Save a Copy…	Uložit kopii…
+	Save as Template…	Uložit jako šablonu…
+	Save as PDF…	Uložit jako PDF…
+	Save for Office Documents…	Uložit pro kancelářské dokumenty…
+	Revert	Vrátit k uložené verzi
+	Place…	Umístit…
+	Export	Export
+	Export for Screens…	Exportovat pro obrazovky…
+	Export As…	Exportovat jako…
+	Export As SVG…	Exportovat jako SVG…
+	Export As PNG…	Exportovat jako PNG…
+	Save for Web (Legacy)…	Uložit pro web (starší)…
+	Export Selection…	Exportovat výběr…
+	Package…	Sbalit…
+	Scripts	Skripty
+	Other Script…	Jiný skript…
+	Document Setup…	Nastavení dokumentu…
+	Document Color Mode	Barevný režim dokumentu
+	CMYK Color	Barvy CMYK
+	RGB Color	Barvy RGB
+	File Info…	Informace o souboru…
+	Print…	Tisk…
+	Edit	Úpravy
+	Undo	Zpět
+	Redo	Znovu
+	Cut	Vyjmout
+	Copy	Kopírovat
+	Paste	Vložit
+	Paste in Front	Vložit dopředu
+	Paste in Back	Vložit dozadu
+	Paste in Place	Vložit na místo
+	Paste on All Artboards	Vložit na všechny pracovní plochy
+	Paste without Formatting	Vložit bez formátování
+	Clear	Smazat
+	Find and Replace…	Najít a nahradit…
+	Find Next	Najít další
+	Spelling	Pravopis
+	Auto Spell Check	Automatická kontrola pravopisu
+	Check Spelling…	Zkontrolovat pravopis…
+	Edit Custom Dictionary…	Upravit vlastní slovník…
+	Edit Colors	Upravit barvy
+	Recolor Artwork…	Přebarvit kresbu…
+	Recolor with Preset	Přebarvit podle přednastavení
+	1 Color Job…	Zakázka s 1 barvou…
+	2 Color Job…	Zakázka se 2 barvami…
+	3 Color Job…	Zakázka se 3 barvami…
+	Color Library…	Knihovna barev…
+	Adjust Color Balance…	Upravit vyvážení barev…
+	Blend Front to Back	Prolnout zepředu dozadu
+	Blend Horizontally	Prolnout vodorovně
+	Blend Vertically	Prolnout svisle
+	Convert to CMYK	Převést na CMYK
+	Convert to Grayscale	Převést na stupně šedi
+	Convert to RGB	Převést na RGB
+	Invert Colors	Invertovat barvy
+	Overprint Black…	Přetisknout černou…
+	Saturate…	Upravit sytost…
+	Edit Original	Upravit originál
+	Transparency Flattener Presets…	Přednastavení sloučení průhlednosti…
+	Print Presets…	Přednastavení tisku…
+	PDF Presets…	Přednastavení PDF…
+	Perspective Grid Presets…	Přednastavení perspektivní mřížky…
+	Color Settings…	Nastavení barev…
+	Assign Profile…	Přiřadit profil…
+	Keyboard Shortcuts…	Klávesové zkratky…
+	Preferences…	Předvolby…
+	Object	Objekt
+	Transform	Transformace
+	Transform Again	Transformovat znovu
+	Move…	Přesunout…
+	Rotate…	Otočit…
+	Reflect…	Zrcadlit…
+	Scale…	Změnit velikost…
+	Shear…	Zkosit…
+	Transform Each…	Transformovat jednotlivě…
+	Reset Bounding Box	Obnovit ohraničovací rámeček
+	Arrange	Uspořádat
+	Bring to Front	Přenést do popředí
+	Bring Forward	Přenést blíž
+	Send Backward	Přesunout dál
+	Send to Back	Přesunout do pozadí
+	Send to Current Layer	Přesunout do aktuální vrstvy
+	Align	Zarovnat
+	Horizontal Align Left	Vodorovně zarovnat doleva
+	Horizontal Align Center	Vodorovně zarovnat na střed
+	Horizontal Align Right	Vodorovně zarovnat doprava
+	Vertical Align Top	Svisle zarovnat nahoru
+	Vertical Align Center	Svisle zarovnat na střed
+	Vertical Align Bottom	Svisle zarovnat dolů
+	Group	Seskupit
+	Ungroup	Oddělit
+	Lock	Zamknout
+	Selection	Výběr
+	All Artwork Above	Veškerou kresbu výše
+	Other Layers	Ostatní vrstvy
+	Unlock All	Odemknout vše
+	Hide	Skrýt
+	Show All	Zobrazit vše
+	Expand…	Rozložit…
+	Expand Appearance	Rozložit vzhled
+	Crop Image	Oříznout obraz
+	Rasterize…	Rastrovat…
+	Create Gradient Mesh…	Vytvořit přechodovou síť…
+	Create Object Mosaic…	Vytvořit mozaiku objektů…
+	Vector Halftone…	Vektorový polotón…
+	Create Trim Marks	Vytvořit značky ořezu
+	Flatten Transparency…	Sloučit průhlednost…
+	Make Pixel Perfect	Zarovnat na obrazové body
+	Slice	Řez
+	Make	Vytvořit
+	Release	Uvolnit
+	Create from Guides	Vytvořit z vodítek
+	Create from Selection	Vytvořit z výběru
+	Duplicate Slice	Duplikovat řez
+	Combine Slices	Spojit řezy
+	Divide Slices…	Rozdělit řezy…
+	Delete All	Odstranit vše
+	Slice Options…	Možnosti řezu…
+	Clip to Artboard	Oříznout na pracovní plochu
+	Path	Cesta
+	Join	Spojit
+	Average…	Zprůměrovat…
+	Outline Stroke	Převést tah na obrys
+	Offset Path…	Posunout cestu…
+	Reverse Path Direction	Obrátit směr cesty
+	Simplify…	Zjednodušit…
+	Add Anchor Points	Přidat kotevní body
+	Remove Anchor Points	Odstranit kotevní body
+	Divide Objects Below	Rozdělit objekty pod
+	Split Into Grid…	Rozdělit do mřížky…
+	Clean Up…	Vyčistit…
+	Shape	Tvar
+	Convert to Shape	Převést na tvar
+	Expand Shape	Rozložit tvar
+	Pattern	Vzorek
+	Edit Pattern	Upravit vzorek
+	Tile Edge Color…	Barva okraje dlaždice…
+	Repeat	Opakování
+	Radial	Kruhové
+	Grid	Mřížkové
+	Mirror	Zrcadlové
+	Options…	Možnosti…
+	Blend	Prolnutí
+	Blend Options…	Možnosti prolnutí…
+	Expand	Rozložit
+	Replace Spine	Nahradit páteř
+	Reverse Spine	Obrátit páteř
+	Reverse Front to Back	Obrátit pořadí zepředu dozadu
+	Envelope Distort	Deformace obálkou
+	Make with Warp…	Vytvořit pokřivením…
+	Reset with Warp…	Obnovit pokřivením…
+	Make with Mesh…	Vytvořit sítí…
+	Reset with Mesh…	Obnovit sítí…
+	Make with Top Object	Vytvořit horním objektem
+	Envelope Options…	Možnosti obálky…
+	Edit Contents	Upravit obsah
+	Edit Envelope	Upravit obálku
+	Perspective	Perspektiva
+	Attach to Active Plane	Připojit k aktivní rovině
+	Release with Perspective	Uvolnit s perspektivou
+	Move Plane to Match Object	Posunout rovinu k objektu
+	Edit Text	Upravit text
+	Live Paint	Živá malba
+	Merge	Sloučit
+	Gap Options…	Možnosti mezer…
+	Image Trace	Vektorizace obrazu
+	Make…	Vytvořit…
+	Make and Expand…	Vytvořit a rozložit…
+	Text Wrap	Obtékání textu
+	Text Wrap Options…	Možnosti obtékání textu…
+	Clipping Mask	Ořezová maska
+	Edit Clipping Path	Upravit ořezovou cestu
+	Compound Path	Složená cesta
+	Artboards	Pracovní plochy
+	Convert to Artboards	Převést na pracovní plochy
+	Rearrange All Artboards…	Přeuspořádat všechny pracovní plochy…
+	Fit to Artwork Bounds	Přizpůsobit hranicím kresby
+	Fit to Selected Art	Přizpůsobit vybrané kresbě
+	Graph	Graf
+	Type…	Typ…
+	Data…	Údaje…
+	Design…	Návrh…
+	Column…	Sloupec…
+	Marker…	Značka…
+	Collect for Export	Shromáždit pro export
+	As Single Asset	Jako jeden prvek
+	As Multiple Assets	Jako více prvků
+	Plug-ins	Zásuvné moduly
+	No filter plug-ins installed	Nejsou nainstalovány žádné filtry
+	Install Plug-in…	Nainstalovat zásuvný modul…
+	Reload Plug-ins	Znovu načíst zásuvné moduly
+	Type	Text
+	Font	Písmo
+	Recent Fonts	Nedávná písma
+	Size	Velikost
+	Glyphs	Glyfy
+	Insert Special Character	Vložit speciální znak
+	Bullet	Odrážka
+	Copyright Symbol	Symbol copyrightu
+	Ellipsis	Výpustka
+	Paragraph Symbol	Symbol odstavce
+	Registered Trademark Symbol	Symbol registrované ochranné známky
+	Section Symbol	Symbol paragrafu
+	Trademark Symbol	Symbol ochranné známky
+	Em Dash	Dlouhá pomlčka
+	En Dash	Krátká pomlčka
+	Discretionary Hyphen	Volitelný spojovník
+	Nonbreaking Hyphen	Nezlomitelný spojovník
+	Double Left Quotation Marks	Levé dvojité uvozovky
+	Double Right Quotation Marks	Pravé dvojité uvozovky
+	Single Left Quotation Mark	Levá jednoduchá uvozovka
+	Single Right Quotation Mark	Pravá jednoduchá uvozovka
+	Insert Whitespace Character	Vložit znak mezery
+	Em Space	Čtverčíková mezera
+	En Space	Půlčtverčíková mezera
+	Hair Space	Vlasová mezera
+	Sixth Space	Šestinová mezera
+	Thin Space	Úzká mezera
+	Nonbreaking Space	Nezlomitelná mezera
+	Figure Space	Číslicová mezera
+	Punctuation Space	Interpunkční mezera
+	Third Space	Třetinová mezera
+	Quarter Space	Čtvrtinová mezera
+	Insert Break Character	Vložit znak zalomení
+	Forced Line Break	Vynucené zalomení řádku
+	Tab	Tabulátor
+	Convert To Area Type	Převést na text v oblasti
+	Convert To Point Type	Převést na bodový text
+	Area Type Options…	Možnosti textu v oblasti…
+	Type on a Path	Text na cestě
+	Rainbow	Duha
+	Skew	Zkosení
+	3D Ribbon	3D stuha
+	Stair Step	Schody
+	Gravity	Gravitace
+	Type on a Path Options…	Možnosti textu na cestě…
+	Threaded Text	Zřetězený text
+	Create	Vytvořit
+	Release Selection	Uvolnit výběr
+	Remove Threading	Odstranit zřetězení
+	Fit Headline	Přizpůsobit titulek
+	Find Font…	Najít písmo…
+	Change Case	Změnit velikost písmen
+	UPPERCASE	VELKÁ PÍSMENA
+	lowercase	malá písmena
+	Title Case	Velká Počáteční Písmena
+	Sentence case	Velké první písmeno věty
+	Smart Punctuation…	Inteligentní interpunkce…
+	Create Outlines	Převést na křivky
+	Optical Margin Alignment	Optické zarovnání okrajů
+	Fill with Placeholder Text	Vyplnit zástupným textem
+	Show Hidden Characters	Zobrazit skryté znaky
+	Hide Hidden Characters	Skrýt skryté znaky
+	Type Orientation	Orientace textu
+	Horizontal	Vodorovně
+	Vertical	Svisle
+	Select	Výběr
+	All	Vybrat vše
+	All on Active Artboard	Vše na aktivní pracovní ploše
+	Deselect	Zrušit výběr
+	Reselect	Znovu vybrat
+	Inverse	Invertovat výběr
+	Next Object Above	Další objekt nad
+	Next Object Below	Další objekt pod
+	Same	Stejné
+	Appearance	Vzhled
+	Appearance Attribute	Atribut vzhledu
+	Blending Mode	Režim míchání
+	Fill & Stroke	Výplň a tah
+	Fill Color	Barva výplně
+	Opacity	Krytí
+	Stroke Color	Barva tahu
+	Stroke Weight	Tloušťka tahu
+	Graphic Style	Grafický styl
+	Symbol Instance	Instance symbolu
+	Font Family	Rodina písma
+	Font Family & Style	Rodina a řez písma
+	Font Family, Style & Size	Rodina, řez a velikost písma
+	Font Size	Velikost písma
+	Text Fill Color	Barva výplně textu
+	Text Stroke Color	Barva tahu textu
+	All on Same Layers	Vše ve stejných vrstvách
+	Direction Handles	Směrové úchyty
+	Brush Strokes	Tahy štětcem
+	Bristle Brush Strokes	Tahy štětinovým štětcem
+	Clipping Masks	Ořezové masky
+	Slices	Řezy
+	Stray Points	Osamocené body
+	Open Paths	Otevřené cesty
+	All Text Objects	Všechny textové objekty
+	Point Text Objects	Bodové textové objekty
+	Area Text Objects	Textové objekty v oblasti
+	Start Global Edit	Zahájit globální úpravy
+	Save Selection…	Uložit výběr…
+	Edit Selection…	Upravit výběr…
+	Effect	Efekt
+	Apply Last Effect	Použít poslední efekt
+	Last Effect…	Poslední efekt…
+	Document Raster Effects Settings…	Nastavení rastrových efektů dokumentu…
+	Vector Effects	Vektorové efekty
+	3D and Materials	3D a materiály
+	Extrude & Bevel…	Vysunutí a zkosení…
+	Revolve…	Rotační těleso…
+	Inflate…	Nafouknutí…
+	Materials…	Materiály…
+	Color Adjustments	Úpravy barev
+	Brightness/Contrast…	Jas/kontrast…
+	Curves…	Křivky…
+	Hue/Saturation…	Odstín/sytost…
+	Levels…	Úrovně…
+	Shift to Color…	Posun k barvě…
+	Temperature/Tint…	Teplota/nádech…
+	Rectangle…	Obdélník…
+	Rounded Rectangle…	Zaoblený obdélník…
+	Ellipse…	Elipsa…
+	Crop Marks	Ořezové značky
+	Distort & Transform	Deformace a transformace
+	Free Distort…	Volná deformace…
+	Pucker & Bloat…	Smrštění a vyboulení…
+	Roughen…	Zdrsnění…
+	Transform…	Transformovat…
+	Tweak…	Náhodné posunutí…
+	Twist…	Zkroucení…
+	Zig Zag…	Cikcak…
+	Pathfinder	Operace s cestami
+	Add	Sjednotit
+	Intersect	Protnout
+	Exclude	Vyloučit
+	Subtract	Odečíst
+	Minus Back	Odečíst zadní
+	Divide	Rozdělit
+	Trim	Zastřihnout
+	Crop	Oříznout
+	Outline	Obrys
+	Stylize	Stylizace
+	Round Corners…	Zaoblit rohy…
+	Scribble…	Čmáranice…
+	Drop Shadow…	Vržený stín…
+	Inner Glow…	Vnitřní záře…
+	Outer Glow…	Vnější záře…
+	Feather…	Měkké okraje…
+	SVG Filters	Filtry SVG
+	Apply SVG Filter…	Použít filtr SVG…
+	Warp	Pokřivení
+	Arc…	Oblouk…
+	Arc Lower…	Dolní oblouk…
+	Arc Upper…	Horní oblouk…
+	Arch…	Klenba…
+	Bulge…	Vydutí…
+	Shell Lower…	Dolní mušle…
+	Shell Upper…	Horní mušle…
+	Flag…	Vlajka…
+	Wave…	Vlna…
+	Fish…	Ryba…
+	Rise…	Stoupání…
+	Fisheye…	Rybí oko…
+	Squeeze…	Stlačení…
+	Raster Effects	Rastrové efekty
+	Blur	Rozostření
+	Gaussian Blur…	Gaussovské rozostření…
+	View	Zobrazení
+	Preview	Náhled
+	Overprint Preview	Náhled přetisků
+	Pixel Preview	Náhled obrazových bodů
+	Trim View	Oříznuté zobrazení
+	Presentation Mode	Režim prezentace
+	Screen Mode	Režim obrazovky
+	Normal Screen Mode	Normální režim obrazovky
+	Full Screen Mode with Menu Bar	Celá obrazovka s pruhem nabídek
+	Full Screen Mode	Celá obrazovka
+	Proof Setup	Nastavení nátisku
+	Working CMYK	Pracovní CMYK
+	Legacy Macintosh RGB (Gamma 1.8)	Starší Macintosh RGB (gama 1,8)
+	Internet Standard RGB (sRGB)	Standardní internetové RGB (sRGB)
+	Monitor RGB	RGB monitoru
+	Color blindness – Protanopia-type	Barvoslepost – protanopie
+	Color blindness – Deuteranopia-type	Barvoslepost – deuteranopie
+	Customize…	Vlastní…
+	Proof Colors	Barvy nátisku
+	Zoom In	Zvětšit
+	Zoom Out	Zmenšit
+	Fit Artboard in Window	Přizpůsobit pracovní plochu oknu
+	Fit All in Window	Přizpůsobit vše oknu
+	Actual Size	Skutečná velikost
+	Reset Rotate View	Obnovit otočení zobrazení
+	Hide Edges	Skrýt okraje
+	Show Edges	Zobrazit okraje
+	Hide Artboards	Skrýt pracovní plochy
+	Show Artboards	Zobrazit pracovní plochy
+	Show Print Tiling	Zobrazit dlaždice tisku
+	Hide Print Tiling	Skrýt dlaždice tisku
+	Hide Slices	Skrýt řezy
+	Show Slices	Zobrazit řezy
+	Lock Slices	Zamknout řezy
+	Rulers	Pravítka
+	Show Rulers	Zobrazit pravítka
+	Hide Rulers	Skrýt pravítka
+	Change to Global Rulers	Přepnout na globální pravítka
+	Show Video Rulers	Zobrazit video pravítka
+	Hide Bounding Box	Skrýt ohraničovací rámeček
+	Show Bounding Box	Zobrazit ohraničovací rámeček
+	Show Transparency Grid	Zobrazit mřížku průhlednosti
+	Hide Transparency Grid	Skrýt mřížku průhlednosti
+	Hide Text Threads	Skrýt zřetězení textu
+	Show Text Threads	Zobrazit zřetězení textu
+	Hide Gradient Annotator	Skrýt ovladač přechodu
+	Show Gradient Annotator	Zobrazit ovladač přechodu
+	Hide Corner Widget	Skrýt ovladač rohů
+	Show Corner Widget	Zobrazit ovladač rohů
+	Guides	Vodítka
+	Hide Guides	Skrýt vodítka
+	Show Guides	Zobrazit vodítka
+	Lock Guides	Zamknout vodítka
+	Unlock Guides	Odemknout vodítka
+	Make Guides	Vytvořit vodítka
+	Release Guides	Uvolnit vodítka
+	Clear Guides	Vymazat vodítka
+	Smart Guides	Chytrá vodítka
+	Perspective Grid	Perspektivní mřížka
+	Show Grid	Zobrazit mřížku
+	Hide Grid	Skrýt mřížku
+	Snap to Grid	Přichytávat k mřížce
+	Lock Grid	Zamknout mřížku
+	Unlock Grid	Odemknout mřížku
+	Lock Station Point	Zamknout bod pozorovatele
+	Define Grid…	Definovat mřížku…
+	One Point Perspective	Jednobodová perspektiva
+	Two Point Perspective	Dvoubodová perspektiva
+	Three Point Perspective	Tříbodová perspektiva
+	Save Grid as Preset…	Uložit mřížku jako přednastavení…
+	Snap to Pixel	Přichytávat k obrazovým bodům
+	Snap to Point	Přichytávat k bodům
+	Snap to Glyph	Přichytávat ke glyfům
+	New View…	Nové zobrazení…
+	Edit Views…	Upravit zobrazení…
+	Saved View 1	Uložené zobrazení 1
+	Saved View 2	Uložené zobrazení 2
+	Saved View 3	Uložené zobrazení 3
+	Saved View 4	Uložené zobrazení 4
+	Saved View 5	Uložené zobrazení 5
+	Saved View 6	Uložené zobrazení 6
+	Saved View 7	Uložené zobrazení 7
+	Saved View 8	Uložené zobrazení 8
+	Saved View 9	Uložené zobrazení 9
+	Saved View 10	Uložené zobrazení 10
+	Window	Okno
+	New Window	Nové okno
+	Cascade	Do kaskády
+	Tile	Vedle sebe
+	Float in Window	Uvolnit do samostatného okna
+	Consolidate All Windows	Sloučit všechna okna
+	Workspace	Pracovní prostor
+	Reset Essentials	Obnovit Essentials
+	New Workspace…	Nový pracovní prostor…
+	Manage Workspaces…	Spravovat pracovní prostory…
+	Control	Ovládací panel
+	Contextual Task Bar	Kontextový panel úloh
+	Tools	Nástroje
+	Toolbars	Panely nástrojů
+	Advanced	Rozšířený
+	Single / Double Column	Jeden / dva sloupce
+	Actions	Akce
+	Asset Export	Export prvků
+	Attributes	Atributy
+	Brushes	Štětce
+	Color	Barva
+	Color Guide	Průvodce barvami
+	Color Themes	Barevné motivy
+	CSS Properties	Vlastnosti CSS
+	Document Info	Informace o dokumentu
+	Flattener Preview	Náhled sloučení
+	Gradient	Přechod
+	Graphic Styles	Grafické styly
+	History	Historie
+	Info	Informace
+	Layers	Vrstvy
+	Libraries	Knihovny
+	Links	Propojení
+	Magic Wand	Kouzelná hůlka
+	Navigator	Navigátor
+	Pattern Options	Možnosti vzorku
+	Properties	Vlastnosti
+	Separations Preview	Náhled separací
+	Stroke	Tah
+	SVG Interactivity	Interaktivita SVG
+	Swatches	Vzorník
+	Symbols	Symboly
+	Transparency	Průhlednost
+	Character	Znak
+	Character Styles	Styly znaků
+	Paragraph	Odstavec
+	Paragraph Styles	Styly odstavců
+	Tabs	Tabulátory
+	Variables	Proměnné
+	Brush Libraries	Knihovny štětců
+	Built-in Libraries	Vestavěné knihovny
+	User Defined	Uživatelské
+	Other Library…	Jiná knihovna…
+	Graphic Style Libraries	Knihovny grafických stylů
+	Shadows and Glows	Stíny a záře
+	Outlines and Rules	Obrysy a linky
+	Hand-Drawn	Ručně kreslené
+	Gradient Finishes	Přechodové povrchy
+	Shape Effects	Efekty tvarů
+	Blends and Transparency	Prolnutí a průhlednost
+	Save Graphic Style Library…	Uložit knihovnu grafických stylů…
+	Swatch Libraries	Knihovny vzorníků
+	Default Swatches	Výchozí vzorník
+	Web Safe 216	Webově bezpečné 216
+	Grays and Neutrals	Šedé a neutrální
+	Earth Tones	Zemité tóny
+	Skin Tone Ramps	Škály odstínů pleti
+	Pastels	Pastelové
+	Brights	Zářivé
+	Metallic Gradients	Kovové přechody
+	Perceptual Scales	Percepční škály
+	Harmony Sets	Harmonické sady
+	Gradients	Přechody
+	Spectrum Gradients	Spektrální přechody
+	Sky Gradients	Přechody oblohy
+	Neutral Gradients	Neutrální přechody
+	Duotone Gradients	Dvoutónové přechody
+	Radial Glows	Kruhové záře
+	Save Swatch Library…	Uložit knihovnu vzorníku…
+	Symbol Libraries	Knihovny symbolů
+	Help	Nápověda
+	VectorCraft on GitHub	VectorCraft na GitHubu
+	Search Commands…	Hledat příkazy…
+	Roidery Help…	Nápověda Roidery…
+	Automatic	Automaticky
+	Isolate Selected Group	Izolovat vybranou skupinu
+	Exit Isolation Mode	Ukončit izolovaný režim
+	Make Clipping Mask	Vytvořit ořezovou masku
+	Release Clipping Mask	Uvolnit ořezovou masku
+	Make Compound Path	Vytvořit složenou cestu
+	Release Compound Path	Uvolnit složenou cestu
+	Select All	Vybrat vše
+	Collapse Panels to Icons	Sbalit panely na ikony
+	Collapse to Icons	Sbalit na ikony
+	Expand Panels	Rozbalit panely
+
+# About › Contributors / Models (credits.rs)
+	About	O aplikaci
+	Contributors	Přispěvatelé
+	Models	Modely
+	Username	Uživatelské jméno
+	Display name	Zobrazované jméno
+	Real name	Skutečné jméno
+	Sort	Řadit
+	Reverse the order	Obrátit pořadí
+	Grab bag	Volný seznam
+	Table	Tabulka
+	Name (A–Z)	Jméno (A–Z)
+	Merged PRs	Sloučené PR
+	Commits	Commity
+	Lines added	Přidané řádky
+	Lines deleted	Odstraněné řádky
+	Line delta	Rozdíl řádků
+	Binary assets added	Přidané binární soubory
+	Binary assets removed	Odstraněné binární soubory
+	First commit	První commit
+	Last commit	Poslední commit
+	First	První
+	Last	Poslední
+	{people} contributors · {commits} commits	Přispěvatelé: {people} · Commity: {commits}
+	No contributor data was built into this copy.	Tato kopie neobsahuje údaje o přispěvatelích.
+	No model credits were built into this copy.	Tato kopie neobsahuje uvedení modelů.
+	Company	Společnost
+	Version	Verze
+	% of all commits	% všech commitů
+	Lines +/−	Řádky +/−
+	Drag to move	Přetažením přesunete
+	Drag to float as a toolbar	Přetažením vytvoříte plovoucí panel nástrojů
+	Put back in the toolbar	Vrátit do panelu nástrojů
+	Float Tool Group	Plovoucí skupina nástrojů
+# Roidery
+	Stitch View	Zobrazení stehů
+	Realistic View	Realistické zobrazení
+	Vector View	Vektorové zobrazení
+	Nothing to stitch: draw a shape with a fill or a stroke	Není co vyšít: nakreslete tvar s výplní nebo tahem
+	Embroidery	Vyšívání
+	Fill Angle Tool	Nástroj Úhel výplně
+	Fill Angle	Úhel výplně
+	Thread	Nit
+	{top} m + {bobbin} m bobbin	{top} m + {bobbin} m spodní nitě
+	Use as Fill Guide	Použít jako vodítko výplně
+	Guided Fill	Řízená výplň
+	Map Lettering to Path	Namapovat písmo na cestu
+	Machine	Stroj
+	Hoop	Rámeček
+	Commercial	Průmyslové
+	Cap frame	Rámeček na čepice
+	{n} cm round	Kulatý {n} cm
+	Fits the hoop	Vejde se do rámečku
+	Fits turned 90°	Vejde se po otočení o 90°
+	{w} mm too wide, {h} mm too tall	O {w} mm příliš široký, o {h} mm příliš vysoký
+	{w} mm too wide	O {w} mm příliš široký
+	{h} mm too tall	O {h} mm příliš vysoký
+	Too large for the hoop	Příliš velký pro rámeček
+	Exported {path}: {n} stitches	Exportováno {path}: {n} stehů
+	The design is larger than the hoop.	Výšivka je větší než rámeček.
+	Turn the design 90° to fit the hoop.	Otočte výšivku o 90°, aby se vešla do rámečku.
+	Export Worksheet…	Exportovat pracovní list…
+	Production Worksheet	Výrobní list
+	Actual size	Skutečná velikost
+	Scale {n}%	Měřítko {n} %
+	Color sequence	Pořadí barev
+	and {n} more	a {n} další
+	worksheet	pracovní list
+	Export Mockup	Exportovat maketu
+	Export Mockup…	Exportovat maketu…
+	T-Shirt	Tričko
+	Baseball Cap	Kšiltovka
+	Tote Bag	Plátěná taška
+	Fabric Swatch	Vzorek látky
+	Center Chest	Střed hrudi
+	Left Chest	Levá strana hrudi
+	Natural	Přírodní
+	Heather Grey	Melírovaná šedá
+	Navy	Námořnická modrá
+	Royal Blue	Královská modrá
+	Forest Green	Lesní zelená
+	Pink	Růžová
+	As the Design	Podle návrhu
+	Garment:	Oděv:
+	Fabric:	Látka:
+	mockup	maketa
+	Check for Updates…	Vyhledat aktualizace…
+	Update Status	Stav aktualizace
+	Download Update	Stáhnout aktualizaci
+	Install Update	Nainstalovat aktualizaci
+	Skip This Version	Přeskočit tuto verzi
+	Software Update	Aktualizace softwaru
+	Check for updates automatically	Automaticky vyhledávat aktualizace
+	The browser version is always up to date.	Verze pro prohlížeč je vždy aktuální.
+	Updates aren't set up for this copy of Roidery.	Tato kopie Roidery nemá nastavené aktualizace.
+	Checking for updates…	Vyhledávání aktualizací…
+	Roidery {version} is up to date.	Roidery {version} je aktuální.
+	Couldn't check for updates.	Aktualizace nelze vyhledat.
+	Roidery {version} is available	Je k dispozici Roidery {version}
+	You have {version}.	Máte verzi {version}.
+	Download and Install	Stáhnout a nainstalovat
+	There's no installer for this computer in this release.	Toto vydání nemá instalátor pro tento počítač.
+	Downloading Roidery {version}…	Stahování Roidery {version}…
+	Roidery {version} is ready to install.	Roidery {version} je připraveno k instalaci.
+	Roidery quits and the installer opens. Save your work first.	Roidery se ukončí a otevře se instalátor. Nejdřív si uložte práci.
+	The disk image opens: drag Roidery to Applications.	Otevře se obraz disku: přetáhněte Roidery do Aplikací.
+	Roidery is replaced; open it again to use the new version.	Roidery se nahradí; novou verzi použijete po dalším otevření.
+	The download opens in its folder.	Stažený soubor se zobrazí ve své složce.
+	Install	Nainstalovat
+	Satin Blocks Tool	Nástroj Saténové bloky
+	Export Machine File…	Exportovat soubor pro stroj…
+	Satin Blocks	Saténové bloky
+	Stitch Info	Informace o stezích
+	Stitch Settings	Nastavení stehů
+	Sew-Out Player	Přehrávač vyšívání
+	Back to the start	Zpět na začátek
+	Previous stitch	Předchozí steh
+	Next stitch	Další steh
+	Play	Přehrát
+	Pause	Pozastavit
+	To the end	Na konec
+	Stitch {n} of {total}	Steh {n} z {total}
+	{n} stitches/s	{n} stehů/s
+	Center walk	Středová linka
+	Density	Hustota
+	Design	Vzor
+	Edge walk	Okrajová linka
+	Manual	Ruční
+	Not Stitched	Nevyšívat
+	Nothing selected sews: paths, compound paths and text do.	Nic z výběru se nevyšívá: vyšívají se cesty, složené cesty a text.
+	Pull compensation	Kompenzace stažení
+	Satin	Satén
+	Select objects to set how they sew.	Vyberte objekty a nastavte, jak se mají vyšívat.
+	Single Run	Jednoduchý steh
+	Stitch length	Délka stehu
+	Stitch type	Typ stehu
+	Stitches	Stehy
+	Tatami	Tatami
+	The selected objects sew differently: choose a stitch type to set them all.	Vybrané objekty se vyšívají různě: zvolte typ stehu pro všechny.
+	Trims	Odstřihy
+	Triple Run	Trojitý steh
+	Underlay	Podklad
+	Zigzag	Cik-cak
+	{n} stitches	{n} stehů
+	Angle	Úhel
+	Colors	Barvy
+	No document	Žádný dokument
+	Width	Šířka
+	Embroidery digitizing — fast, open, scriptable.	Digitalizace výšivek — rychlá, otevřená, skriptovatelná.
+	Sequencer	Pořadí
+	{n} objects	Objekty: {n}
+	{n} colors	Barvy: {n}
+	Sew Earlier	Šít dříve
+	Sew Later	Šít později
+	Sort by Color	Seřadit podle barvy
+	Sorted by color: {n} color changes	Seřazeno podle barvy: výměny barev: {n}
+	Already sorted by color	Už je seřazeno podle barvy
+	Nothing sews yet: draw paths, or use the Satin Blocks tool.	Zatím se nic nešije: nakreslete cesty nebo použijte nástroj Saténové bloky.
+	Reorder Sequence	Změnit pořadí šití
+	1 object	1 objekt
+	Fabric	Látka
+	Thread chart	Vzorník nití
+	Woven (Cotton, Poplin)	Tkanina (bavlna, popelín)
+	Knit (T-Shirt, Jersey)	Úplet (tričko, žerzej)
+	Piqué (Polo Shirt)	Piké (polokošile)
+	Terry (Towel)	Froté (ručník)
+	Fleece	Fleece
+	Denim, Canvas	Denim, plátno
+	Twill (Cap)	Kepr (kšiltovka)
+	Leather, Vinyl	Kůže, vinyl
+	Import Chart…	Importovat vzorník…
+	Importing a thread chart needs the desktop app for now.	Import vzorníku nití zatím vyžaduje desktopovou aplikaci.
+	Thread Charts	Vzorníky nití
+	Thread chart: {name}	Vzorník nití: {name}
+	Matched {n} objects to the thread chart	Objekty přizpůsobené vzorníku nití: {n}
+	Not in chart. Nearest: {thread} (difference {d})	Není ve vzorníku. Nejbližší: {thread} (rozdíl {d})
+	Match to Chart	Přizpůsobit vzorníku
+	{n} threads	Nitě: {n}
+	{n} not in chart	Mimo vzorník: {n}
+	Embroidery Design	Výšivkový návrh
+	Match to Thread Chart	Přizpůsobit vzorníku nití
+	Import Thread Chart…	Importovat vzorník nití…
+	Threads	Nitě
+	Text	Text
+	Lettering	Nápis
+	Letter height	Výška písmen
+	Letter spacing	Rozestup písmen
+	The lettering font has no {chars}	Písmo pro nápisy nemá {chars}
+	Convert to Satin (Centerline)	Převést na satén (středová linie)
+	Convert to Satin (Classic)	Převést na satén (klasicky)
+	Swap Satin Sides	Prohodit strany saténu
+	Reverse Sewing Direction	Obrátit směr šití
+	Add Lettering	Přidat nápis
+	Move Rung	Přesunout příčku
+	Insert Rung	Vložit příčku
+	Delete Rung	Smazat příčku
+	Basic	Základní
+	Fractional spacing	Poměrné rozestupy
+	Staggers	Posun řad
+	Underlay spacing	Rozestup podkladu
+	Underlay inset	Odsazení podkladu
+	Inset	Odsazení
+	Length	Délka
+	Curve tolerance	Tolerance křivky
+	Stitch Settings: Basic / Advanced	Nastavení stehů: základní / pokročilé
+	E-Stitch	Steh E
+	Rope	Šňůra
+	Passes	Průchody
+	Slant	Sklon
+	Contour Fill	Obrysová výplň
+	Circular Fill	Kruhová výplň
+	Center X	Střed X
+	Center Y	Střed Y
+	Gradient Fill	Přechodová výplň
+	End density	Koncová hustota
+	Density Map	Mapa hustoty
+	Stitch Density	Hustota stehů
+	Remove Overlaps	Odstranit překryvy
+	Sew time	Doba šití
+	Heavy	Silné
+	Dense	Husté
+	Too dense	Příliš husté
+	{m} min	{m} min
+	{h} h {m} min	{h} h {m} min
+	Motif Fill	Vzorová výplň
+	Row spacing	Rozestup řad
+	Wave	Vlna
+	Diamonds	Kosočtverce
+	Scales	Šupiny
+	Height	Výška
+	No fill: choose a fill stitch to add one.	Bez výplně: vyberte steh výplně a přidejte ji.
+	No stroke: choose a stroke stitch to add one.	Bez tahu: vyberte steh tahu a přidejte ho.
+	Select Inside Unfilled Shapes	Vybírat uvnitř tvarů bez výplně
+	Show or hide	Zobrazit nebo skrýt
+	Lock or unlock	Zamknout nebo odemknout
+	Layer	Vrstva
+	Fill	Výplň
+	Sew Fill First	Šít nejdřív výplň
+	Sew Stroke First	Šít nejdřív tah
+	Sewing Order of Fill and Stroke	Pořadí šití výplně a tahu
+	Add Lettering…	Přidat nápis…
+	Lettering Fonts	Písma pro nápisy
+	Add Ink/Stitch fonts of your own to {folder}	Vlastní písma Ink/Stitch přidejte do {folder}
+	Any font installed on this computer. Roidery fills each letter's outline with stitches, which suits large, bold letters best.	Libovolné písmo nainstalované v tomto počítači. Roidery vyplní obrys každého písmene stehy, což se nejlépe hodí pro velká a tučná písmena.
+	Built-in	Vestavěné
+	Built-in satin font	Vestavěné saténové písmo
+	Change Lettering Font	Změnit písmo nápisu
+	Change…	Změnit…
+	Change Font	Změnit písmo
+	Computer Fonts	Písma počítače
+	Each letter sews as the font's digitizer made it. To change how one piece sews, select it inside the lettering.	Každé písmeno se šije tak, jak ho autor písma digitalizoval. Chcete-li změnit, jak se šije jedna část, vyberte ji uvnitř nápisu.
+	Embroidery Fonts	Vyšívací písma
+	Embroidery font	Vyšívací písmo
+	Fonts digitized for stitching, letter by letter. They sew cleanly at the sizes shown and stay editable as text.	Písma digitalizovaná pro vyšívání, písmeno po písmenu. V uvedených velikostech se šijí čistě a zůstávají upravitelná jako text.
+	Look Again	Hledat znovu
+	Multicolor	Vícebarevné
+	Run	Rovný steh
+	Search fonts	Hledat písma
+	Sews well at about {size} mm	Dobře se šije při zhruba {size} mm
+	Sews well at {min}–{max} mm	Dobře se šije při {min}–{max} mm
+	This font sews best at {min}–{max} mm	Toto písmo se nejlépe šije při {min}–{max} mm
+	Type the text to add.	Napište text, který chcete přidat.
+	Yours	Vaše
+	Line spacing	Řádkování
+# Roidery: the embroidery bar and stitch overlays.
+	Add this text as lettering in an embroidery font	Přidat tento text jako nápis ve vyšívacím písmu
+	Border	Okraj
+	Center in Hoop	Vycentrovat v rámečku
+	Change the font…	Změnit písmo…
+	Color shown	Zobrazená barva
+	Current Color Only	Jen aktuální barva
+	Drag a rung's end, click a rail to add one, Alt-click one to delete it	Přetáhněte konec příčky, klikněte na kolejnici pro přidání, Alt-klik pro odstranění
+	Edit Rungs	Upravit příčky
+	Edit the objects inside it (Escape leaves)	Upravit objekty uvnitř (Escape ukončí)
+	Enter Group	Vstoupit do skupiny
+	Fill Angle tool: drag across the shape	Nástroj Úhel výplně: táhněte přes tvar
+	Hoop, fabric and thread chart	Rámeček, látka a vzorník nití
+	Join the shapes into one, for one fill or one satin	Spojit tvary v jeden, pro jednu výplň nebo jeden satén
+	Map Lettering to Path: the letters follow the selected path	Umístit nápis na cestu: písmena sledují vybranou cestu
+	Mixed	Smíšené
+	No hoop	Bez rámečku
+	No underlay	Bez podkladu
+	Not stitched	Nevyšívá se
+	Place Artwork	Umístit kresbu
+	Place an image or SVG to trace or digitize	Umístěte obrázek nebo SVG k obkreslení nebo digitalizaci
+	Pull comp.	Komp. tahu
+	Put on Path	Umístit na cestu
+	Remove Overlaps: cut fills where later ones cover them	Odstranit překryvy: ořízne výplně tam, kde je zakrývají pozdější
+	Satin this wide can snag and pull: split the column or sew it as a fill	Takto široký satén se může zachytávat a stahovat: rozdělte sloupec nebo ho vyšijte jako výplň
+	Select a path with it to put it on the path	Vyberte s ním cestu, abyste ho umístili na cestu
+	Sews as fill	Vyšívá se jako výplň
+	Show Hoop	Zobrazit rámeček
+	Show Jumps and Trims	Zobrazit skoky a střihy
+	Show Needle Points	Zobrazit vpichy jehly
+	Show Underlay	Zobrazit podklad
+	Snap to…	Přichytávat k…
+	Snapping	Přichytávání
+	Stitch	Steh
+	The design fits the hoop	Vzor se vejde do rámečku
+	The design fits the hoop turned 90°	Vzor se vejde do rámečku otočený o 90°
+	The design is too large for the hoop	Vzor je pro rámeček příliš velký
+	The fills' rows follow the selected path	Řady výplní sledují vybranou cestu
+	Underlay passes	Průchody podkladu
+	Underlay: {n}	Podklad: {n}
+	Use an Embroidery Font…	Použít vyšívací písmo…
+	{n} objects, {s} stitches	{n} objektů, {s} stehů
+	{n} st	{n} st.
+	{n} stitches, sewn as they are	{n} stehů, vyšitých tak, jak jsou
+	{n} stitches, {c} colors, {t} trims	{n} stehů, {c} barev, {t} střihů
+	{w} mm wide	šířka {w} mm
+	Jumps and Trims	Skoky a střihy
+	Needle Points	Vpichy jehly
+	Stitch Overlays	Překryvy stehů
+	Embroidery Bar	Vyšívací lišta
+	No stitches yet	Zatím žádné stehy

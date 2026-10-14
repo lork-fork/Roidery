@@ -1,0 +1,24 @@
+[package]
+name = "roidery-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Roidery software updates: the update feed, picking this computer's download, checking it, fetching it over HTTPS"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+semver = "1"
+sha2 = { version = "0.10", default-features = false }
+
+[features]
+default = ["net"]
+# Fetch over HTTPS (desktop only: the browser version is always current). Off for tools that only
+# write the feed (`cargo xtask update-feed`).
+net = ["dep:ureq"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["tls"], optional = true }

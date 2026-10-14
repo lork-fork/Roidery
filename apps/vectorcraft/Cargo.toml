@@ -1,0 +1,51 @@
+[package]
+name = "vectorcraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+default-run = "vectorcraft"
+
+[lints]
+workspace = true
+
+[features]
+default = ["wgpu", "accessibility"]
+wgpu = ["eframe/wgpu", "vectorcraft-ui-egui/wgpu"]
+accessibility = ["eframe/accesskit"]
+# Build with --no-default-features --features windows7 and the win7 Rust target.
+windows7 = ["eframe/glow"]
+
+[dependencies]
+vectorcraft-engine = { workspace = true }
+vectorcraft-ui-egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wayland", "x11"] }
+egui = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Roidery: software updates over HTTPS.
+roidery-update = { workspace = true, features = ["net"] }
+rfd = { workspace = true }
+# wayland-data-control: native Wayland clipboard (Linux; X11 through XWayland only sees what X11 apps copied).
+arboard = { workspace = true, features = ["image-data", "wayland-data-control"] }
+image = { workspace = true }
+webbrowser = { workspace = true }
+# The window's monitors, size and position (the same winit eframe runs on).
+winit = { version = "0.30", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+clipboard-win = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.21", default-features = false }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSTextInputContext"] }
+# Files opened from Finder and the Dock (src/open_documents.rs); both already come with winit, muda and rfd.
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSNotification", "NSOperation", "NSString", "NSURL"] }
+block2 = "0.6"
+
+[build-dependencies]
+# Icon + VERSIONINFO for vectorcraft.exe; build.rs only uses it when targeting Windows.
+winresource = "0.1"

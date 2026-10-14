@@ -1,0 +1,398 @@
+//! Brushes and symbols: commands, tools, rendering and persistence.
+
+use serde_json::{Value, json};
+use vectorcraft_doc::{Node, NodeKind};
+use vectorcraft_geom::Rect;
+use vectorcraft_tools::{Mods, PointerEvent, PointerKind};
+
+use super::*;
+
+fn session() -> Session {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
+    s
+}
+
+fn rect(s: &mut Session, x: f64, y: f64, w: f64, h: f64) -> NodeId {
+    let r = s.execute("shape.rectangle", &json!({"x": x, "y": y, "width": w, "height": h})).unwrap();
+    NodeId(r["id"].as_u64().unwrap())
+}
+
+fn line(s: &mut Session) -> NodeId {
+    let r = s.execute("shape.line", &json!({"x1": 50, "y1": 100, "x2": 250, "y2": 100}));
+    match r {
+        Ok(v) if v["id"].is_u64() => NodeId(v["id"].as_u64().unwrap()),
+        _ => {
+            let r = s.execute("path.freehand", &json!({"points": [[50, 100], [150, 100], [250, 100]]})).unwrap();
+            NodeId(r["id"].as_u64().unwrap())
+        }
+    }
+}
+
+fn node(s: &Session, id: NodeId) -> Node {
+    s.doc().unwrap().doc.node(id).cloned().unwrap()
+}
+
+fn brush_of(s: &Session, id: NodeId) -> Option<String> {
+    node(s, id).appearance.stroke().and_then(|st| st.brush.clone())
+}
+
+fn select(s: &mut Session, ids: &[NodeId]) {
+    let ids = ids.to_vec();
+    s.select(|_, sel| sel.set(ids)).unwrap();
+}
+
+fn close(a: Rect, b: Rect, tol: f64) -> bool {
+    (a.x0 - b.x0).abs() < tol && (a.y0 - b.y0).abs() < tol && (a.x1 - b.x1).abs() < tol && (a.y1 - b.y1).abs() < tol
+}
+
+fn bounds(s: &Session, id: NodeId) -> Rect {
+    node(s, id).geometric_bounds().unwrap()
+}
+
+// ---------- brushes ----------
+
+#[test]
+fn brush_list_has_the_default_library() {
+    let mut s = session();
+    let l = s.execute("brush.list", &json!({})).unwrap();
+    let names: Vec<&str> = l["brushes"].as_array().unwrap().iter().map(|b| b["name"].as_str().unwrap()).collect();
+    for n in ["3 pt. Round", "6 pt. Flat", "Charcoal", "Arrow", "Dots", "Chain", "Bristle Round"] {
+        assert!(names.contains(&n), "{n} in {names:?}");
+    }
+    let def = s.execute("brush.get", &json!({"name": "6 pt. Flat"})).unwrap();
+    assert_eq!(def["type"], "calligraphic");
+    assert_eq!(def["angle"], json!(45.0));
+}
+
+#[test]
+fn apply_and_remove_brush_with_undo() {
+    let mut s = session();
+    let a = rect(&mut s, 10.0, 10.0, 50.0, 50.0);
+    s.execute("brush.apply", &json!({"name": "Charcoal"})).unwrap();
+    assert_eq!(brush_of(&s, a).as_deref(), Some("Charcoal"));
+    assert_eq!(s.execute("brush.list", &json!({})).unwrap()["current"], "Charcoal");
+    s.execute("brush.remove", &json!({})).unwrap();
+    assert_eq!(brush_of(&s, a), None);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(brush_of(&s, a).as_deref(), Some("Charcoal"));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(brush_of(&s, a), None);
+    assert!(s.execute("brush.apply", &json!({"name": "Nope"})).is_err());
+}
+
+#[test]
+fn apply_adds_a_stroke_when_missing_and_reaches_into_groups() {
+    let mut s = session();
+    let a = rect(&mut s, 10.0, 10.0, 50.0, 50.0);
+    let b = rect(&mut s, 80.0, 10.0, 50.0, 50.0);
+    s.execute("paint.setStroke", &json!({"color": null, "ids": [a.0]})).ok();
+    select(&mut s, &[a, b]);
+    s.execute("object.group", &json!({})).unwrap();
+    s.execute("brush.apply", &json!({"name": "Dots"})).unwrap();
+    assert_eq!(brush_of(&s, a).as_deref(), Some("Dots"));
+    assert_eq!(brush_of(&s, b).as_deref(), Some("Dots"));
+    assert!(!node(&s, a).appearance.stroke_paint().is_none());
+}
+
+#[test]
+fn new_brushes_from_params_and_selection() {
+    let mut s = session();
+    let r = s.execute("brush.new", &json!({"type": "calligraphic", "name": "Nib", "params": {"angle": 20, "roundness": 30, "size": 8}})).unwrap();
+    assert_eq!(r["name"], "Nib");
+    assert_eq!(s.execute("brush.get", &json!({"name": "Nib"})).unwrap()["size"], json!(8.0));
+    // Art brushes need art.
+    s.select(|_, sel| sel.clear()).unwrap();
+    assert!(s.execute("brush.new", &json!({"type": "art"})).is_err());
+    let a = rect(&mut s, 0.0, 0.0, 40.0, 8.0);
+    let r = s.execute("brush.new", &json!({"type": "art", "name": "Bar"})).unwrap();
+    assert_eq!(r["name"], "Bar");
+    let r = s.execute("brush.new", &json!({"type": "pattern"})).unwrap();
+    assert_eq!(r["name"], "New Pattern Brush");
+    let def = s.execute("brush.get", &json!({"name": "New Pattern Brush"})).unwrap();
+    assert!(def["side"].is_object());
+    // The new art brush draws the rectangle along another path.
+    let l = line(&mut s);
+    s.execute("brush.apply", &json!({"name": "Bar", "ids": [l.0]})).unwrap();
+    let g = s.execute("object.expandBrush", &json!({"ids": [l.0]})).unwrap();
+    let gid = NodeId(g["ids"][0].as_u64().unwrap());
+    let b = bounds(&s, gid);
+    assert!((b.width() - 200.0).abs() < 0.5 && (b.height() - 8.0).abs() < 0.5, "{b:?}");
+    let _ = a;
+    // Undo removes the brush again; the library was not there before.
+    assert!(s.execute("brush.new", &json!({"type": "nope"})).is_err());
+}
+
+#[test]
+fn brush_options_rename_duplicate_and_delete_update_strokes() {
+    let mut s = session();
+    let a = rect(&mut s, 10.0, 10.0, 50.0, 50.0);
+    s.execute("brush.apply", &json!({"name": "3 pt. Round"})).unwrap();
+    s.execute("brush.options", &json!({"name": "3 pt. Round", "params": {"size": 5}, "newName": "5 pt. Round"})).unwrap();
+    assert_eq!(brush_of(&s, a).as_deref(), Some("5 pt. Round"));
+    assert_eq!(s.execute("brush.get", &json!({"name": "5 pt. Round"})).unwrap()["size"], json!(5.0));
+    assert_eq!(s.execute("brush.list", &json!({})).unwrap()["current"], "5 pt. Round");
+    let d = s.execute("brush.duplicate", &json!({"name": "5 pt. Round"})).unwrap();
+    assert_eq!(d["name"], "5 pt. Round copy");
+    s.execute("brush.delete", &json!({"name": "5 pt. Round"})).unwrap();
+    assert_eq!(brush_of(&s, a), None);
+    assert!(s.execute("brush.get", &json!({"name": "5 pt. Round"})).is_err());
+    assert!(s.execute("brush.delete", &json!({"name": "5 pt. Round"})).is_err());
+}
+
+#[test]
+fn expand_brush_replaces_path_with_art_group() {
+    let mut s = session();
+    let a = rect(&mut s, 100.0, 100.0, 100.0, 100.0);
+    s.execute("brush.apply", &json!({"name": "10 pt. Oval"})).unwrap();
+    let r = s.execute("object.expandBrush", &json!({})).unwrap();
+    let g = NodeId(r["ids"][0].as_u64().unwrap());
+    assert!(s.doc().unwrap().doc.node(a).is_none());
+    let gn = node(&s, g);
+    assert!(matches!(gn.kind, NodeKind::Group { .. }));
+    // White fill kept + the black nib outline.
+    assert_eq!(gn.children().unwrap().len(), 2);
+    let b = bounds(&s, g);
+    assert!(b.width() > 104.0 && b.width() < 112.0, "{b:?}");
+    assert_eq!(s.doc().unwrap().selection.objects, vec![g]);
+    assert!(s.execute("object.expandBrush", &json!({})).is_err(), "nothing brushed left");
+}
+
+#[test]
+fn brush_freehand_paints_with_a_brush_in_one_step() {
+    let mut s = session();
+    let n = s.doc().unwrap().history.undo.len();
+    s.begin_interaction("Paintbrush").unwrap();
+    s.preview("brush.freehand", &json!({"points": [[10, 10], [60, 40], [120, 10]], "style": "brush", "brush": "Charcoal"})).unwrap();
+    s.commit_interaction().unwrap();
+    assert_eq!(s.doc().unwrap().history.undo.len(), n + 1);
+    let id = s.doc().unwrap().selection.objects[0];
+    assert_eq!(brush_of(&s, id).as_deref(), Some("Charcoal"));
+}
+
+#[test]
+fn paintbrush_tool_uses_the_current_brush() {
+    let mut s = session();
+    s.execute("brush.setCurrent", &json!({"name": "Arrow"})).unwrap();
+    let v = ViewInfo::default();
+    s.select_tool("paintbrush", v).unwrap();
+    for (k, x, y) in
+        [(PointerKind::Down, 10.0, 10.0), (PointerKind::Drag, 50.0, 30.0), (PointerKind::Drag, 90.0, 20.0), (PointerKind::Up, 130.0, 10.0)]
+    {
+        s.pointer(&PointerEvent::new(k, x, y), v).unwrap();
+    }
+    let id = s.doc().unwrap().selection.objects[0];
+    assert_eq!(brush_of(&s, id).as_deref(), Some("Arrow"));
+    // A tool option overrides the document's current brush.
+    s.set_tool_option("brush", &json!("Dots"));
+    for (k, x, y) in [(PointerKind::Down, 10.0, 110.0), (PointerKind::Drag, 50.0, 130.0), (PointerKind::Up, 130.0, 110.0)] {
+        s.pointer(&PointerEvent::new(k, x, y), v).unwrap();
+    }
+    let id = s.doc().unwrap().selection.objects[0];
+    assert_eq!(brush_of(&s, id).as_deref(), Some("Dots"));
+    assert!(s.execute("brush.setCurrent", &json!({"name": "Nope"})).is_err());
+}
+
+// ---------- symbols ----------
+
+fn make_symbol(s: &mut Session) -> (NodeId, String, Rect) {
+    let a = rect(s, 100.0, 50.0, 80.0, 40.0);
+    let b = bounds(s, a);
+    let r = s.execute("symbol.new", &json!({"name": "Box"})).unwrap();
+    (NodeId(r["id"].as_u64().unwrap()), r["name"].as_str().unwrap().to_string(), b)
+}
+
+#[test]
+fn new_symbol_replaces_selection_with_instance_of_same_bounds() {
+    let mut s = session();
+    let (inst, name, b) = make_symbol(&mut s);
+    assert_eq!(name, "Box");
+    let n = node(&s, inst);
+    assert!(matches!(&n.kind, NodeKind::SymbolInstance { symbol, .. } if symbol == "Box"));
+    assert!(close(n.geometric_bounds().unwrap(), b, 1e-9), "{:?} vs {b:?}", n.geometric_bounds());
+    let d = &s.doc().unwrap().doc;
+    assert_eq!(d.symbols.len(), 1);
+    assert_eq!(d.layers[0].children().unwrap().len(), 1);
+    let l = s.execute("symbol.list", &json!({})).unwrap();
+    assert_eq!(l["symbols"][0]["instances"], 1);
+    assert_eq!(l["symbols"][0]["size"], json!([80.0, 40.0]));
+    // A second symbol gets a unique name.
+    rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    assert_eq!(s.execute("symbol.new", &json!({"name": "Box"})).unwrap()["name"], "Box 2");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.symbols.len(), 1);
+}
+
+#[test]
+fn place_and_break_link_round_trip_geometry() {
+    let mut s = session();
+    let (_, name, _) = make_symbol(&mut s);
+    let r = s.execute("symbol.place", &json!({"name": name, "x": 300, "y": 200})).unwrap();
+    let p = NodeId(r["id"].as_u64().unwrap());
+    assert!(close(bounds(&s, p), Rect::new(260.0, 180.0, 340.0, 220.0), 1e-9), "{:?}", bounds(&s, p));
+    let r = s.execute("symbol.breakLink", &json!({"ids": [p.0]})).unwrap();
+    let art = NodeId(r["ids"][0].as_u64().unwrap());
+    let n = node(&s, art);
+    assert!(matches!(n.kind, NodeKind::Path { .. }));
+    assert!(close(n.geometric_bounds().unwrap(), Rect::new(260.0, 180.0, 340.0, 220.0), 1e-6));
+    assert_eq!(n.appearance.stroke_width(), 1.0, "strokes are not scaled by normalisation");
+}
+
+#[test]
+fn edit_then_update_redefines_all_instances() {
+    let mut s = session();
+    let (inst, name, _) = make_symbol(&mut s);
+    let other = NodeId(s.execute("symbol.place", &json!({"x": 300, "y": 200})).unwrap()["id"].as_u64().unwrap());
+    select(&mut s, &[inst]);
+    let r = s.execute("symbol.edit", &json!({})).unwrap();
+    assert_eq!(r["name"], name);
+    let art = NodeId(r["ids"][0].as_u64().unwrap());
+    // Make the art twice as wide, then redefine.
+    s.execute("object.transform", &json!({"ids": [art.0], "matrix": [2, 0, 0, 1, -140, 0]})).ok();
+    let w = bounds(&s, art).width();
+    let r = s.execute("symbol.update", &json!({"name": name})).unwrap();
+    let new_inst = NodeId(r["id"].as_u64().unwrap());
+    assert!((bounds(&s, new_inst).width() - w).abs() < 1e-6);
+    assert!((bounds(&s, other).width() - w).abs() < 1e-6, "other instances pick up the new size");
+    assert!((bounds(&s, other).center().x - 300.0).abs() < 1e-6);
+}
+
+#[test]
+fn delete_duplicate_and_replace_symbols() {
+    let mut s = session();
+    let (inst, name, _) = make_symbol(&mut s);
+    let d = s.execute("symbol.duplicate", &json!({"name": name})).unwrap();
+    assert_eq!(d["name"], "Box copy");
+    rect(&mut s, 0.0, 0.0, 20.0, 20.0);
+    s.execute("symbol.new", &json!({"name": "Small"})).unwrap();
+    select(&mut s, &[inst]);
+    s.execute("symbol.replace", &json!({"name": "Small"})).unwrap();
+    assert!(matches!(&node(&s, inst).kind, NodeKind::SymbolInstance { symbol, .. } if symbol == "Small"));
+    assert!(close(bounds(&s, inst), Rect::new(130.0, 60.0, 150.0, 80.0), 1e-6), "{:?}", bounds(&s, inst));
+    s.execute("symbol.delete", &json!({"name": "Small"})).unwrap();
+    let doc = &s.doc().unwrap().doc;
+    assert!(doc.symbols.iter().all(|x| x.name != "Small"));
+    assert!(doc.node(inst).is_none());
+    let mut plain = 0;
+    doc.walk(|n| plain += matches!(n.kind, NodeKind::Path { .. }) as i32);
+    assert_eq!(plain, 2, "both instances of Small were expanded");
+    assert!(s.execute("symbol.delete", &json!({"name": "Small"})).is_err());
+}
+
+#[test]
+fn sprayer_command_creates_a_symbol_set_and_alt_removes() {
+    let mut s = session();
+    make_symbol(&mut s);
+    s.select(|_, sel| sel.clear()).unwrap();
+    let pts: Vec<Value> = (0..20).map(|i| json!([20.0 + i as f64 * 15.0, 150.0])).collect();
+    let r = s.execute("symbol.spray", &json!({"points": pts, "radius": 10, "density": 8})).unwrap();
+    let set = NodeId(r["id"].as_u64().unwrap());
+    let n = r["count"].as_u64().unwrap() as usize;
+    assert!(n >= 3, "{n}");
+    let g = node(&s, set);
+    assert_eq!(g.name.as_deref(), Some("Symbol Set"));
+    assert_eq!(g.children().unwrap().len(), n);
+    // Spraying again with the set selected adds to it.
+    s.execute("symbol.spray", &json!({"points": [[200, 250]]})).unwrap();
+    assert_eq!(node(&s, set).children().unwrap().len(), n + 1);
+    let r = s.execute("symbol.spray", &json!({"points": [[200, 250]], "radius": 60, "alt": true})).unwrap();
+    assert!(r["count"].as_u64().unwrap() >= 1);
+    assert_eq!(node(&s, set).children().unwrap().len(), n + 1 - r["count"].as_u64().unwrap() as usize);
+}
+
+#[test]
+fn symbolism_adjustments() {
+    let mut s = session();
+    let (inst, _, b) = make_symbol(&mut s);
+    let c = b.center();
+    let at = json!([[c.x, c.y]]);
+    s.execute("symbol.adjust", &json!({"tool": "size", "points": at, "radius": 50, "intensity": 10})).unwrap();
+    assert!(bounds(&s, inst).width() > b.width() + 1.0);
+    s.execute("symbol.adjust", &json!({"tool": "screen", "points": at, "intensity": 10})).unwrap();
+    assert!(node(&s, inst).opacity < 1.0);
+    s.execute("symbol.adjust", &json!({"tool": "stain", "points": at, "color": "#ff0000", "intensity": 10})).unwrap();
+    let f = node(&s, inst).appearance.fill().cloned().unwrap();
+    assert!(f.opacity > 0.0 && f.paint.color().unwrap().to_hex() == "#ff0000");
+    s.execute("symbol.adjust", &json!({"tool": "shift", "points": [[c.x, c.y], [c.x + 20.0, c.y]], "intensity": 10})).unwrap();
+    assert!(bounds(&s, inst).center().x > c.x + 5.0);
+    let before = bounds(&s, inst);
+    s.execute("symbol.adjust", &json!({"tool": "spin", "points": at, "intensity": 10})).unwrap();
+    assert!(!close(bounds(&s, inst), before, 1e-6), "spin rotates");
+    let far = s.execute("symbol.adjust", &json!({"tool": "size", "points": [[0, 290]], "radius": 5})).unwrap();
+    assert_eq!(far["count"], 0);
+    assert!(s.execute("symbol.adjust", &json!({"tool": "nope", "points": at})).is_err());
+}
+
+#[test]
+fn symbol_sprayer_tool_gesture_is_one_undo_step() {
+    let mut s = session();
+    make_symbol(&mut s);
+    s.select(|_, sel| sel.clear()).unwrap();
+    let n = s.doc().unwrap().history.undo.len();
+    let v = ViewInfo::default();
+    s.select_tool("symbolSprayer", v).unwrap();
+    let mut evs = vec![PointerEvent::new(PointerKind::Down, 50.0, 200.0)];
+    for i in 1..15 {
+        evs.push(PointerEvent::new(PointerKind::Drag, 50.0 + i as f64 * 20.0, 200.0));
+    }
+    evs.push(PointerEvent::new(PointerKind::Up, 350.0, 200.0).with_mods(Mods::default()));
+    for e in evs {
+        s.pointer(&e, v).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().history.undo.len(), n + 1);
+    let set = s.doc().unwrap().selection.objects[0];
+    assert!(node(&s, set).children().unwrap().len() >= 3);
+    // The sizer tool grows the sprayed instances.
+    let first = node(&s, set).children().unwrap()[0].clone();
+    let c = first.geometric_bounds().unwrap().center();
+    s.select_tool("symbolSizer", v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Down, c.x, c.y), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, c.x, c.y), v).unwrap();
+    let after = s.doc().unwrap().doc.node(first.id).unwrap().geometric_bounds().unwrap();
+    assert!(after.width() > first.geometric_bounds().unwrap().width());
+}
+
+// ---------- rendering & persistence ----------
+
+#[test]
+fn brushed_strokes_and_instances_render() {
+    let mut s = session();
+    make_symbol(&mut s);
+    let l = line(&mut s);
+    s.execute("brush.apply", &json!({"name": "Chain", "ids": [l.0]})).unwrap();
+    let doc = s.doc().unwrap().doc.clone();
+    let img = vectorcraft_render::Renderer::new().render_region(&doc, Rect::new(0.0, 0.0, 400.0, 300.0), 1.0, true);
+    let dark = |x: u32, y: u32| {
+        let p = img.pixel(x, y);
+        (p[0] as u32 + p[1] as u32 + p[2] as u32) < 300
+    };
+    // The instance's outline (the rectangle's black stroke) is drawn.
+    assert!((45..=55).any(|y| dark(100, y)), "instance stroke rendered");
+    // Chain links are thicker than the 1 pt stroke, with gaps.
+    let hits = (50..250).filter(|x| (95..=105).any(|y| dark(*x, y))).count();
+    assert!(hits > 100, "chain covers most of the line: {hits}");
+}
+
+#[test]
+fn brushes_and_symbols_survive_vectorcraft_round_trip() {
+    let mut s = session();
+    make_symbol(&mut s);
+    s.execute("brush.new", &json!({"type": "calligraphic", "name": "Mine", "params": {"size": 7}})).unwrap();
+    let l = line(&mut s);
+    s.execute("brush.apply", &json!({"name": "Mine", "ids": [l.0]})).unwrap();
+    let doc = s.doc().unwrap().doc.clone();
+    let bytes = vectorcraft_format::save(&doc, false);
+    let back = vectorcraft_format::load(&bytes).unwrap();
+    assert_eq!(vectorcraft_brush::library(&back), vectorcraft_brush::library(&doc));
+    assert_eq!(vectorcraft_brush::find(&back, "Mine").map(|b| b.kind.type_id()), Some("calligraphic"));
+    assert_eq!(back.symbols, doc.symbols);
+    assert_eq!(back.unknown.get("symbolSizes"), doc.unknown.get("symbolSizes"));
+    let bl = back.node(l).unwrap();
+    assert_eq!(bl.appearance.stroke().unwrap().brush.as_deref(), Some("Mine"));
+    // A reloaded document places instances at the natural size.
+    let mut s2 = Session::new();
+    s2.add_document(back, None);
+    let r = s2.execute("symbol.place", &json!({"name": "Box", "x": 100, "y": 100})).unwrap();
+    let b = s2.doc().unwrap().doc.node(NodeId(r["id"].as_u64().unwrap())).unwrap().geometric_bounds().unwrap();
+    assert!(close(b, Rect::new(60.0, 80.0, 140.0, 120.0), 1e-9));
+}

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Roidery MSI (WiX Toolset v5: `dotnet tool install -g wix`). Built by package.ps1:
+
+    wix build roidery.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -o out.msi
+
+  Per-machine install into Program Files, a Start Menu shortcut and an App Paths entry (so
+  `Roidery` starts from the Run dialog), plus roidery-cli. BinDir holds the binaries already
+  renamed (Roidery.exe, roidery-cli.exe).
+
+  The UpgradeCode and component GUIDs are Roidery's own, never VectorCraft's: a Roidery install
+  must not upgrade, replace or share components with a VectorCraft install.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Roidery"
+      Manufacturer="The Roidery authors"
+      Version="$(var.Version)"
+      UpgradeCode="71508DF6-DFA8-459C-8DD0-AAB493201C2D"
+      Scope="perMachine"
+      Compressed="yes"
+      Language="1033">
+    <SummaryInformation Description="Roidery embroidery digitizing" Manufacturer="The Roidery authors" />
+    <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
+         (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of Roidery is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="RoideryIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="RoideryIcon.ico" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Roidery" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="Roidery" Level="1">
+      <ComponentGroupRef Id="RoideryFiles" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="RoideryFiles" Directory="INSTALLFOLDER">
+      <Component Id="RoideryApp" Guid="E81CD3A9-7627-4473-9C30-422C9195A0DD">
+        <File Id="RoideryExe" Source="$(var.BinDir)\Roidery.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Roidery"
+              Description="Roidery embroidery digitizing" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
+              Icon="RoideryIcon.ico" IconIndex="0" />
+        </File>
+
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\Roidery.exe" Value="[#RoideryExe]" Type="string" />
+      </Component>
+
+      <Component Id="RoideryCli" Guid="9BBC9B96-6DC9-4B1E-B385-259E4B642630">
+        <File Id="RoideryCliExe" Source="$(var.BinDir)\roidery-cli.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

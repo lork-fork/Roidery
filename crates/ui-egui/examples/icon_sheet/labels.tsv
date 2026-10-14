@@ -1,0 +1,272 @@
+# Roidery icon sheet labels: group<TAB>icon file (without .svg)<TAB>what it does.
+# Groups: 1 Toolbar tools, 2 Panels, 3 Buttons in panels, 4 App window and dialogs, 5 Not used yet.
+1	dc-selection	Selection Tool (V)
+1	dc-direct	Direct Selection Tool (A)
+1	dc-group-select	Group Selection Tool
+1	wand-sparkles	Magic Wand Tool (Y) · Magic Wand panel
+1	lasso	Lasso Tool (Q)
+1	pen-tool	Pen Tool (P)
+1	dc-pen-add	Add Anchor Point Tool (+)
+1	dc-pen-delete	Delete Anchor Point Tool (-) · Remove Anchor Points
+1	dc-anchor	Anchor Point Tool (Shift+C)
+1	spline	Curvature Tool (Shift+~) · Simplify (right-click menu)
+1	rd-satin-blocks	Satin Blocks Tool (1)
+1	rd-fill-angle	Fill Angle Tool (2)
+1	type	Type Tool (T) · Character / Character Styles panels · Create Outlines
+1	dc-type-area	Area Type Tool
+1	dc-type-path	Type on a Path Tool
+1	dc-type-vertical	Vertical Area Type Tool
+1	dc-touch-type	Touch Type Tool (Shift+T) · OpenType panel
+1	dc-line	Line Segment Tool (\)
+1	dc-arc	Arc Tool
+1	tornado	Spiral Tool
+1	dc-rect-grid	Rectangular Grid Tool
+1	dc-polar-grid	Polar Grid Tool
+1	square	Rectangle Tool (M) · Stop Playing/Recording (Actions)
+1	dc-rounded-rect	Rounded Rectangle Tool
+1	dc-ellipse	Ellipse Tool (L)
+1	dc-polygon	Polygon Tool
+1	star	Star Tool
+1	dc-flare	Flare Tool
+1	paintbrush	Paintbrush Tool (B) · Brushes panel
+1	brush	Blob Brush Tool (Shift+B)
+1	shapes	Shaper Tool (Shift+N) · Edit Contents (Envelope) · Shape row (Layers)
+1	pencil	Pencil Tool (N) · Edit theme · Edit Original (Links)
+1	dc-smooth	Smooth Tool
+1	dc-path-eraser	Path Eraser Tool
+1	dc-join	Join Tool
+1	eraser	Eraser Tool (Shift+E)
+1	scissors	Scissors Tool (C)
+1	dc-knife	Knife Tool
+1	dc-mirror-cut	Mirror & Cut Tool
+1	dc-line-cut	Line Cut Tool
+1	dc-rect-cut	Rectangle Cut Tool
+1	rotate-ccw	Rotate Tool (R) · Rotate angle field
+1	flip-horizontal-2	Reflect Tool (O) · Flip Horizontal
+1	scaling	Scale Tool (S) · Aspect Ratio (Gradient)
+1	dc-shear	Shear Tool · Shear (Transform)
+1	dc-reshape	Reshape Tool
+1	dc-width	Width Tool (Shift+W)
+1	waves	Warp Tool (Shift+R)
+1	dc-twirl	Twirl Tool
+1	dc-pucker	Pucker Tool
+1	dc-bloat	Bloat Tool
+1	dc-scallop	Scallop Tool
+1	dc-crystallize	Crystallize Tool
+1	dc-wrinkle	Wrinkle Tool
+1	dc-free-transform	Free Transform Tool (E)
+1	dc-puppet	Puppet Warp Tool
+1	dc-shape-builder	Shape Builder Tool (Shift+M)
+1	dc-live-bucket	Live Paint Bucket (K)
+1	dc-live-select	Live Paint Selection Tool (Shift+L)
+1	dc-perspective	Perspective Grid Tool (Shift+P) · Perspective Selection Tool (Shift+V)
+1	dc-mesh	Mesh Tool (U) · Edit Envelope
+1	dc-gradient	Gradient Tool (G) · Gradient panel
+1	pipette	Eyedropper Tool (I) · Pick a color (Threads, Gradient, Color Themes)
+1	dc-measure	Measure Tool
+1	dc-blend	Blend Tool (W)
+1	dc-symbol-sprayer	Symbol Sprayer tools
+1	chart-column	Graph Tool
+1	frame	Artboard Tool (Shift+O) · Make/Release Clipping Mask (Layers)
+1	slice	Slice Tool
+1	hand	Hand Tool (H)
+1	dc-rotate-view	Rotate View Tool (Shift+H)
+1	printer	Print Tiling Tool · Separations Preview panel
+1	zoom-in	Zoom Tool (Z) · Go To Link (Links)
+1	dc-draw-normal	Draw Normal mode (Shift+D), bottom of toolbar
+1	dc-draw-behind	Draw Behind mode (Shift+D), bottom of toolbar
+1	dc-draw-inside	Draw Inside mode (Shift+D), bottom of toolbar
+1	dc-screen-mode	Change Screen Mode (F), bottom of toolbar
+2	align-horizontal-justify-start	Tabs panel
+2	dc-actions	Actions panel
+2	dc-align	Align panel
+2	dc-appearance	Appearance panel
+2	dc-artboards	Artboards panel
+2	dc-color-guide	Color Guide panel
+2	dc-graphic-styles	Graphic Styles panel
+2	dc-list-view	Document Info panel · Show List View (Swatches)
+2	dc-options	Properties panel · Options buttons (Brushes, Swatches)
+2	dc-pathfinder	Pathfinder panel
+2	dc-stroke	Stroke panel
+2	dc-transform-panel	Transform panel
+2	dc-transparency	Transparency panel
+2	globe	CSS Properties panel
+2	grid-3x3	Pattern Options panel · Show Grid (Properties) · Pattern swatch · Grid by Column layout
+2	history	History panel
+2	image	Image Trace panel · Embedded image (Links)
+2	info	Info panel
+2	layers	Layers panel
+2	library	Libraries panel · Swatch libraries (Color Guide)
+2	link	Links panel · Relink… · Proportions linked
+2	list-ordered	Sequencer panel
+2	map	Navigator panel
+2	palette	Color panel · Edit or Apply Colors (Recolor)
+2	pilcrow	Paragraph panel · Paragraph Styles panel
+2	rainbow	Threads panel
+2	settings	Attributes panel
+2	share-2	Asset Export panel
+2	spool	Stitch Settings panel
+2	spray-can	Symbols panel
+2	sun	Color Themes panel
+2	swatch-book	Swatches panel
+2	text-cursor-input	Glyphs panel
+3	align-center-horizontal	Vertical Align Center (Properties panel, top bar)
+3	align-center-vertical	Horizontal Align Center (Properties panel, top bar)
+3	align-end-horizontal	Vertical Align Bottom (Properties panel, top bar)
+3	align-end-vertical	Horizontal Align Right (Properties panel, top bar)
+3	align-start-horizontal	Vertical Align Top (Properties panel, top bar)
+3	align-start-vertical	Horizontal Align Left (Properties panel, top bar)
+3	arrow-down-wide-narrow	Sort by Color (Sequencer panel)
+3	arrow-left-right	Swap start and end arrowheads (Stroke) · Randomly change color order (Recolor) · Artboard layout: Row (New Document)
+3	chevron-down	Expanded section / open dropdown · Sew Later (Sequencer)
+3	chevron-left	Back / previous page · Previous stitch (Sew-out player) · Previous Library
+3	chevron-right	Collapsed section · Next page · Next stitch (Sew-out player) · Next Library
+3	chevron-up	Sew Earlier (Sequencer)
+3	circle	Freeform gradient: Points mode (Gradient panel)
+3	combine	Merge colors into one row (Recolor panel)
+3	copy	Duplicate (right-click menu) · Copy CSS (CSS Properties)
+3	dc-al-bottom	Vertical Align Bottom (Align panel)
+3	dc-al-hcenter	Horizontal Align Center (Align panel)
+3	dc-al-left	Horizontal Align Left (Align panel)
+3	dc-al-right	Horizontal Align Right (Align panel)
+3	dc-al-top	Vertical Align Top (Align panel)
+3	dc-al-vcenter	Vertical Align Center (Align panel)
+3	dc-alignto-artboard	Align to Artboard (Align panel)
+3	dc-alignto-key	Align to Key Object (Align panel)
+3	dc-alignto-selection	Align to Selection (Align panel)
+3	dc-arrow-down	Move Down (Artboards panel)
+3	dc-arrow-extend	Tip extends past the end point (Stroke panel)
+3	dc-arrow-tip	Tip on the end point (Stroke panel)
+3	dc-arrow-up	Move Up (Artboards panel)
+3	dc-artboard-options	Artboard Options button on each row (Artboards panel)
+3	dc-cap-butt	Butt Cap (Stroke panel)
+3	dc-cap-round	Round Cap (Stroke panel)
+3	dc-cap-square	Projecting Cap (Stroke panel)
+3	dc-center-hide	Don't Show Center (Attributes panel)
+3	dc-center-show	Show Center (Attributes panel)
+3	dc-clear	Clear Appearance (Appearance panel)
+3	dc-cube	Out of Web Color Warning (Color panel)
+3	dc-dash-align	Fit dashes to corners and ends (Stroke panel)
+3	dc-dash-exact	Exact dash lengths (Stroke panel)
+3	dc-dir-off	Reverse Path Direction Off (Attributes panel)
+3	dc-dir-on	Reverse Path Direction On (Attributes panel)
+3	dc-dist-bottom	Vertical Distribute Bottom (Align panel)
+3	dc-dist-hcenter	Horizontal Distribute Center (Align panel)
+3	dc-dist-hspace	Horizontal Distribute Space (Align panel)
+3	dc-dist-left	Horizontal Distribute Left (Align panel)
+3	dc-dist-right	Horizontal Distribute Right (Align panel)
+3	dc-dist-top	Vertical Distribute Top (Align panel)
+3	dc-dist-vcenter	Vertical Distribute Center (Align panel)
+3	dc-dist-vspace	Vertical Distribute Space (Align panel)
+3	dc-folder	Add to Swatches / save color group (Color Guide, Color Themes) · Color group folder (Swatches)
+3	dc-fx	Add New Effect (Appearance panel)
+3	dc-gamut	Out of Gamut Warning (Color panel)
+3	dc-grad-freeform	Freeform Gradient (Gradient, Swatches panel)
+3	dc-grad-linear	Linear Gradient (Gradient, Swatches panel)
+3	dc-grad-radial	Radial Gradient (Gradient, Swatches panel)
+3	dc-grad-stroke-across	Gradient across stroke (Gradient panel)
+3	dc-grad-stroke-along	Gradient along stroke (Gradient panel)
+3	dc-grad-stroke-within	Gradient within stroke (Gradient panel)
+3	dc-grid-view	Show Thumbnail View (Swatches) · Artboard layout: Grid by Row (New Document)
+3	dc-join-bevel	Bevel Join (Stroke panel)
+3	dc-join-miter	Miter Join (Stroke panel)
+3	dc-join-round	Round Join (Stroke panel)
+3	dc-mask-none	Empty opacity-mask thumbnail (Transparency panel)
+3	dc-new-fill	Add New Fill (Appearance panel)
+3	dc-new-item	New item: New Artboard, New Brush, New Swatch, New Symbol, Duplicate item (bottom of many panels)
+3	dc-new-stroke	Add New Stroke (Appearance panel)
+3	dc-para-center	Align center (Paragraph panel)
+3	dc-para-justify-all	Justify all lines (Paragraph panel)
+3	dc-para-justify-center	Justify with last line aligned center (Paragraph panel)
+3	dc-para-justify-left	Justify with last line aligned left (Paragraph panel)
+3	dc-para-justify-right	Justify with last line aligned right (Paragraph panel)
+3	dc-para-left	Align left (Paragraph panel)
+3	dc-para-ltr	Left-to-Right Paragraph Direction (Paragraph panel)
+3	dc-para-right	Align right (Paragraph panel)
+3	dc-para-rtl	Right-to-Left Paragraph Direction (Paragraph panel)
+3	dc-pf-crop	Crop (Pathfinder panel)
+3	dc-pf-divide	Divide (Pathfinder panel)
+3	dc-pf-exclude	Exclude (Pathfinder panel)
+3	dc-pf-intersect	Intersect (Pathfinder panel)
+3	dc-pf-merge	Merge (Pathfinder panel)
+3	dc-pf-minus-back	Minus Back (Pathfinder panel)
+3	dc-pf-minus-front	Minus Front (Pathfinder panel)
+3	dc-pf-outline	Outline (Pathfinder panel)
+3	dc-pf-trim	Trim (Pathfinder panel)
+3	dc-pf-unite	Unite (Pathfinder panel)
+3	dc-place-symbol	Place Symbol Instance (Symbols panel)
+3	dc-rearrange	Rearrange All Artboards (Artboards panel)
+3	dc-remove-brush	Remove Brush Stroke (Brushes panel)
+3	dc-reverse	Reverse Gradient (Gradient panel)
+3	dc-rule-evenodd	Use Even-Odd Fill Rule (Attributes panel)
+3	dc-rule-nonzero	Use Non-Zero Winding Fill Rule (Attributes panel)
+3	dc-stroke-center	Align Stroke to Center (Stroke panel)
+3	dc-stroke-inside	Align Stroke to Inside (Stroke panel)
+3	dc-stroke-outside	Align Stroke to Outside (Stroke panel)
+3	dc-swap	Swap Fill and Stroke (fill/stroke chips)
+3	dc-swatch-kinds	Show Swatch Kinds (Swatches panel)
+3	dc-zoom-large	Zoom In (Navigator)
+3	dc-zoom-small	Zoom Out (Navigator)
+3	ellipsis	More options (contextual task bar, Properties panel sections)
+3	eye	Show/hide (Layers, Appearance, Sequencer) · Flattener Preview panel
+3	eye-off	Hidden item (Appearance panel)
+3	file-plus	Create New Layer (Layers) · New theme (Color Themes) · Document opened (History)
+3	flip-vertical-2	Flip Vertical (Properties, Transform, Stroke)
+3	group	Group (right-click menu)
+3	import	Import Chart… (Threads panel)
+3	layout-grid	Show Guides (Properties panel)
+3	link-2-off	Unlinked proportions · Break Link to Symbol / Graphic Style
+3	lock	Lock (Layers, Sequencer, contextual task bar)
+3	menu	Panel menu (top-right of each panel)
+3	monitor	Export for Screens… (Asset Export)
+3	pause	Pause (Sew-out player)
+3	play	Play (Sew-out player)
+3	plus	Create New Sublayer (Layers) · Add Selected Artwork (Asset Export)
+3	rotate-cw	Update Link (Links panel)
+3	ruler	Show Rulers (Properties panel)
+3	save	Save / Export (CSS Properties, Color Themes)
+3	skip-back	Back to the start (Sew-out player)
+3	skip-forward	To the end (Sew-out player)
+3	sparkles	Smart Guides (Properties) · Randomize saturation and brightness (Recolor)
+3	square-dashed	Isolate / Offset Path (right-click) · Show Transparency Grid · Fallback for a missing icon
+3	squares-exclude	Exclude (Properties > Pathfinder)
+3	squares-intersect	Intersect (Properties > Pathfinder)
+3	squares-subtract	Minus Front (Properties > Pathfinder)
+3	squares-unite	Unite (Properties > Pathfinder, right-click)
+3	trash-2	Delete (Layers, Artboards, Appearance, Swatches and other panels)
+3	ungroup	Ungroup (right-click) · Separate colors into rows (Recolor)
+4	arrow-up-down	Artboard layout: Column (New Document dialog)
+4	chevrons-left	First page · Expand the panel dock · Right-to-Left artboard layout (New Document)
+4	chevrons-right	Last page · Collapse the panel dock to icons · Close flyout panel
+4	folder-open	Choose a folder (Export for Screens)
+4	git-branch	Roidery on GitHub (Community)
+4	house	Home screen
+4	search	Search commands and tools (top bar) · Locate Object (Layers)
+4	x	Close (tabs, Sew-out player)
+5	align-horizontal-justify-center	Not used in the app right now
+5	align-horizontal-justify-end	Not used in the app right now
+5	align-vertical-justify-center	Not used in the app right now
+5	align-vertical-justify-end	Not used in the app right now
+5	align-vertical-justify-start	Not used in the app right now
+5	blend	Not used in the app right now
+5	clipboard-paste	Not used in the app right now
+5	cloud	Not used in the app right now
+5	dc-fill-none	Not used in the app right now
+5	dc-reference-point	Not used in the app right now
+5	dc-width-profile	Not used in the app right now
+5	external-link	Not used in the app right now
+5	hexagon	Not used in the app right now
+5	lock-open	Not used in the app right now
+5	maximize-2	Not used in the app right now
+5	message-circle	Not used in the app right now
+5	minus	Not used in the app right now
+5	move	Not used in the app right now
+5	move-diagonal-2	Not used in the app right now
+5	paint-bucket	Not used in the app right now
+5	pin	Not used in the app right now
+5	redo-2	Not used in the app right now
+5	rotate-3d	Not used in the app right now
+5	spline-pointer	Not used in the app right now
+5	squircle	Not used in the app right now
+5	triangle	Not used in the app right now
+5	undo-2	Not used in the app right now

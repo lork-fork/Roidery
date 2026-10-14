@@ -1,0 +1,57 @@
+# Flatpak manifest for Roidery, ready for a Flathub submission.
+#
+# Flatpak builds run offline, so the crate sources must be vendored first. From the repo root:
+#
+#   curl -fsSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+#   python3 flatpak-cargo-generator.py Cargo.lock -o packaging/linux/flatpak/cargo-sources.json
+#   flatpak-builder --user --install --force-clean build-flatpak packaging/linux/flatpak/app.roidery.Roidery.yml
+#   flatpak run app.roidery.Roidery
+#
+# For Flathub, replace the `dir` source with a `git` source pinned to a release tag and commit.
+id: app.roidery.Roidery
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: roidery
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Open/Save dialogs use the file-chooser portal (rfd), and drag-and-drop uses the document
+  # portal, so broad filesystem access isn't needed. Pictures is granted for opening files by
+  # path from the command line.
+  - --filesystem=xdg-pictures
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+modules:
+  - name: roidery
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_HOME: /run/build/roidery/cargo
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - cargo --offline build --release --locked -p vectorcraft
+      # Cargo builds `vectorcraft` (the upstream crate name); it ships as `roidery`.
+      - install -Dm755 target/release/vectorcraft /app/bin/roidery
+      - install -Dm644 packaging/linux/app.roidery.Roidery.desktop /app/share/applications/app.roidery.Roidery.desktop
+      - install -Dm644 packaging/linux/app.roidery.Roidery.mime.xml /app/share/mime/packages/app.roidery.Roidery.xml
+      - mkdir -p /app/share/icons && cp -R assets/roidery-icon/hicolor /app/share/icons/
+      - >-
+        version=$(awk '/^\[/{p=($0=="[workspace.package]");next} p&&$1=="version"{gsub(/[" ]/,"",$3);print $3;exit}' Cargo.toml);
+        install -d /app/share/metainfo;
+        sed -e "s/@VERSION@/$version/" -e "s/@DATE@/$(date -u +%Y-%m-%d)/"
+        packaging/linux/app.roidery.Roidery.metainfo.xml.in > /app/share/metainfo/app.roidery.Roidery.metainfo.xml
+    sources:
+      - type: dir
+        path: ../../..
+        skip:
+          - target
+          - dist
+          - corpus
+          - build-flatpak
+          - .flatpak-builder
+      - cargo-sources.json

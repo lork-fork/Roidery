@@ -1,0 +1,29 @@
+[package]
+name = "vectorcraft-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "VectorCraft command line: MCP server (stdio) and headless batch runs"
+
+[[bin]]
+name = "vectorcraft-cli"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+vectorcraft-color = { workspace = true }
+vectorcraft-doc = { workspace = true }
+vectorcraft-engine = { workspace = true }
+vectorcraft-format = { workspace = true }
+vectorcraft-geom = { workspace = true }
+vectorcraft-svg = { workspace = true }
+vectorcraft-mcp = { workspace = true }
+vectorcraft-render = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+vectorcraft-testkit = { workspace = true }
+serde_json = { workspace = true }

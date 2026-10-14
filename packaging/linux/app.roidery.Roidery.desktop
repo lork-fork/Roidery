@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Roidery
+GenericName=Embroidery Digitizer
+Comment=Digitize artwork into machine embroidery designs
+Exec=roidery %F
+TryExec=roidery
+Icon=app.roidery.Roidery
+Terminal=false
+StartupNotify=true
+StartupWMClass=app.roidery.Roidery
+Categories=Graphics;2DGraphics;VectorGraphics;
+Keywords=embroidery;digitizing;stitch;satin;machine embroidery;dst;pes;vector;svg;
+MimeType=image/svg+xml;application/pdf;

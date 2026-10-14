@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
+    <radialGradient id="cloth" cx="0.42" cy="0.38" r="0.7">
+      <stop offset="0" stop-color="#fbf6ec"/>
+      <stop offset="1" stop-color="#e9dfcc"/>
+    </radialGradient>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="#1d5c63"/>
+    <!-- The hoop: outer ring, inner ring, and the clasp at the top. -->
+    <rect x="221" y="34" width="70" height="56" rx="10" fill="#b7793f"/>
+    <rect x="236" y="22" width="40" height="24" rx="8" fill="#8f5a2b"/>
+    <circle cx="256" cy="280" r="208" fill="#c98b4e"/>
+    <circle cx="256" cy="280" r="190" fill="#a96d36"/>
+    <circle cx="256" cy="280" r="180" fill="#d9a466"/>
+    <circle cx="256" cy="280" r="164" fill="url(#cloth)"/>
+    <!-- A running stitch round the cloth. -->
+    <circle cx="256" cy="280" r="142" fill="none" stroke="#d64a3a" stroke-width="6" stroke-linecap="round" stroke-dasharray="14 12" opacity="0.85"/>
+    <!-- The R, sewn in satin: the columns, then the stitches across them. -->
+    <g fill="none" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M212 196 V364 M212 196 H274 A44 44 0 0 1 274 284 H212 M262 284 L308 364" stroke="#7d1e22" stroke-width="56" transform="translate(4 6)" opacity="0.35"/>
+      <path d="M212 196 V364" stroke="#c8343a" stroke-width="52"/>
+      <path d="M212 196 V364" stroke="#ef6a5e" stroke-width="18" opacity="0.5" transform="translate(-7 -7)"/>
+      <path d="M212 196 V364" stroke="#8e1f26" stroke-width="52" stroke-linecap="butt" stroke-dasharray="2.2 6.8" opacity="0.4"/>
+      <path d="M212 196 H274 A44 44 0 0 1 274 284 H212" stroke="#c8343a" stroke-width="52"/>
+      <path d="M212 196 H274 A44 44 0 0 1 274 284 H212" stroke="#ef6a5e" stroke-width="18" opacity="0.5" transform="translate(-7 -7)"/>
+      <path d="M212 196 H274 A44 44 0 0 1 274 284 H212" stroke="#8e1f26" stroke-width="52" stroke-linecap="butt" stroke-dasharray="2.2 6.8" opacity="0.4"/>
+      <path d="M262 284 L308 364" stroke="#c8343a" stroke-width="52"/>
+      <path d="M262 284 L308 364" stroke="#ef6a5e" stroke-width="18" opacity="0.5" transform="translate(-7 -7)"/>
+      <path d="M262 284 L308 364" stroke="#8e1f26" stroke-width="52" stroke-linecap="butt" stroke-dasharray="2.2 6.8" opacity="0.4"/>
+    </g>
+  </g>
+</svg>

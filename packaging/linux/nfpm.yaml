@@ -1,0 +1,71 @@
+# .deb and .rpm packages (nfpm: https://nfpm.goreleaser.com). Run by package.sh, which stages
+# the file tree, substitutes its path for ${STAGE} (nfpm doesn't expand env vars in `src`) and
+# exports VERSION and NFPM_ARCH.
+#
+#   nfpm package -f packaging/linux/nfpm.yaml -p deb -t dist/release/
+name: roidery
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+# semver: 0.2.0-rc.1 becomes 0.2.0~rc.1 in deb/rpm, so pre-releases sort before the release.
+version_schema: semver
+release: 1
+section: graphics
+priority: optional
+# package.sh sets ROIDERY_MAINTAINER (default: Roidery maintainers <maintainers@roidery.invalid>).
+maintainer: ${ROIDERY_MAINTAINER}
+vendor: The Roidery authors
+license: MIT OR Apache-2.0
+description: |-
+  Open-source embroidery digitizing app.
+  Satin, fill and running stitches, lettering, a realistic thread preview,
+  hoops, worksheets and mockups; writes DST, PES, JEF, EXP, VP3, XXX, U01
+  and TAP machine files.
+  Includes roidery-cli, a headless converter and command runner.
+
+# The binaries link only glibc and libgcc_s directly. Windowing (X11/Wayland, xkbcommon) and the
+# GPU (Vulkan, EGL/GL) are loaded at runtime, so they are dependencies/recommendations here
+# rather than ELF NEEDED entries.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+      - libgcc-s1
+      - libxkbcommon0
+      - libvulkan1 | libegl1
+    recommends:
+      - libwayland-client0
+      - libx11-6
+      - libx11-xcb1
+      - libxcursor1
+      - libxi6
+      - libxrandr2
+      - mesa-vulkan-drivers
+      - xdg-desktop-portal
+  rpm:
+    depends:
+      - libxkbcommon
+      - (vulkan-loader or libglvnd-egl)
+    recommends:
+      - libwayland-client
+      - libX11
+      - libXcursor
+      - libXi
+      - libXrandr
+      - mesa-vulkan-drivers
+      - xdg-desktop-portal
+
+contents:
+  - src: ${STAGE}/usr/bin/roidery
+    dst: /usr/bin/roidery
+    file_info: { mode: 0755 }
+  - src: ${STAGE}/usr/bin/roidery-cli
+    dst: /usr/bin/roidery-cli
+    file_info: { mode: 0755 }
+  - src: ${STAGE}/usr/share/
+    dst: /usr/share/
+    type: tree
+
+scripts:
+  postinstall: packaging/linux/postinst.sh
+  postremove: packaging/linux/postinst.sh

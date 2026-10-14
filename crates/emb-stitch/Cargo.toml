@@ -1,0 +1,26 @@
+[package]
+name = "roidery-stitch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Roidery stitch generators: runs, satins, Satin Blocks, tatami fills and their settings"
+
+[lints]
+workspace = true
+
+[dependencies]
+vectorcraft-geom = { workspace = true }
+vectorcraft-pathops = { workspace = true }
+kurbo = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { workspace = true }
+
+# The exact medial axis for Convert to Satin. Not in the web build: boostvoronoi needs random
+# numbers the browser build doesn't set up, and wasm can't catch a panic in it; the web app thins.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+centerline = { workspace = true }
+boostvoronoi = { workspace = true }
+vector-traits = { workspace = true }

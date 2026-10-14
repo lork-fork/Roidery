@@ -1,0 +1,58 @@
+# Quick static checks for the release pipeline (seconds, no Rust build): workflow syntax,
+# packaging shell/PowerShell scripts, and the Linux desktop/AppStream/Flatpak metadata.
+name: Packaging lint
+
+on:
+  push:
+    branches: [main, release]
+    paths: [".github/workflows/**", "packaging/**", "assets/roidery-icon/**"]
+  pull_request:
+    paths: [".github/workflows/**", "packaging/**", "assets/roidery-icon/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaging-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck desktop-file-utils appstream libxml2-utils python3-yaml
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" actionlint
+      - name: actionlint
+        run: |
+          "$RUNNER_TEMP/actionlint" -color
+      - name: shellcheck
+        run: shellcheck packaging/*.sh packaging/*/*.sh
+      - name: PowerShell
+        shell: pwsh
+        run: |
+          foreach ($f in Get-ChildItem packaging/windows/*.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $errors | ForEach-Object { Write-Output "::error file=$($f.Name)::$_" }; exit 1 }
+            Write-Output "ok $($f.Name)"
+          }
+      - name: XML, desktop entry, AppStream, Flatpak manifest
+        run: |
+          xmllint --noout packaging/windows/roidery.wxs packaging/macos/*.plist* packaging/linux/*.xml*
+          # Windows Installer needs Icon ids ending in .ico or .exe, or shortcuts show a blank icon.
+          if grep -oE '<Icon Id="[^"]*"' packaging/windows/roidery.wxs | grep -vE '\.(ico|exe)"$'; then
+            echo "::error::Icon Id must end in .ico or .exe"; exit 1
+          fi
+          desktop-file-validate packaging/linux/app.roidery.Roidery.desktop
+          sed -e 's/@VERSION@/0.0.0/' -e 's/@DATE@/2026-01-01/' packaging/linux/app.roidery.Roidery.metainfo.xml.in >"$RUNNER_TEMP/app.roidery.Roidery.metainfo.xml"
+          # Roidery has no website yet: no homepage URL in the metainfo (see packaging/linux/package.sh).
+          appstreamcli validate --no-net --explain --override=url-homepage-missing=info "$RUNNER_TEMP/app.roidery.Roidery.metainfo.xml"
+          python3 -c "import yaml; m = yaml.safe_load(open('packaging/linux/flatpak/app.roidery.Roidery.yml')); assert m['id'] == 'app.roidery.Roidery' and m['command'] == 'roidery'"

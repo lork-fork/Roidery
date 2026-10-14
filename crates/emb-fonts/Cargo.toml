@@ -1,0 +1,18 @@
+[package]
+name = "roidery-fonts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Roidery digitized embroidery fonts: reads Ink/Stitch font folders and lays out lettering as satins, fills and runs"
+
+[lints]
+workspace = true
+
+[dependencies]
+roidery-stitch = { workspace = true }
+kurbo = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+roxmltree = { workspace = true }
+svgtypes = { workspace = true }
+flate2 = { workspace = true }

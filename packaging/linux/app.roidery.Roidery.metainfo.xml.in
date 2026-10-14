@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata (software centres, Flathub). Template: package.sh and the Flatpak
+     manifest substitute @VERSION@ and @DATE@ from Cargo.toml and the build date. -->
+<component type="desktop-application">
+  <id>app.roidery.Roidery</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>Roidery</name>
+  <summary>Digitize artwork into machine embroidery designs</summary>
+  <developer id="app.roidery">
+    <name>The Roidery authors</name>
+  </developer>
+  <description>
+    <p>
+      Roidery is an open-source embroidery digitizing app. Turn vector artwork and lettering into
+      stitches, check them in a realistic thread preview, and write the files embroidery machines
+      read.
+    </p>
+    <ul>
+      <li>Satin, fill and running stitches</li>
+      <li>Lettering</li>
+      <li>Machine files: DST, PES, JEF, EXP, VP3, XXX, U01 and TAP</li>
+      <li>Realistic thread preview</li>
+      <li>Hoops, worksheets and mockups</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">app.roidery.Roidery.desktop</launchable>
+  <icon type="stock">app.roidery.Roidery</icon>
+  <categories>
+    <category>Graphics</category>
+    <category>2DGraphics</category>
+    <category>VectorGraphics</category>
+  </categories>
+  <keywords>
+    <keyword>embroidery</keyword>
+    <keyword>digitizing</keyword>
+    <keyword>stitch</keyword>
+    <keyword>satin</keyword>
+    <keyword>machine embroidery</keyword>
+    <keyword>dst</keyword>
+    <keyword>pes</keyword>
+  </keywords>
+  <branding>
+    <color type="primary" scheme_preference="light">#a9d6cf</color>
+    <color type="primary" scheme_preference="dark">#1d5c63</color>
+  </branding>
+  <requires>
+    <display_length compare="ge">760</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>tablet</control>
+  </supports>
+  <provides>
+    <binary>roidery</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>
