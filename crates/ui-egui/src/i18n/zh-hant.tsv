@@ -4002,6 +4002,12 @@ lighting	Light	光源
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	設計比繡框大。請選擇更大的繡框，或縮小設計。
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	這裡的物件互相疊壓，線太厚可能折斷機針。「移除重疊」會剪掉被覆蓋的部分。
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	這麼細的填色會繡成幾行參差不齊的線。請改為轉換為緞紋。
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	這麼長的緞紋針腳鬆散，容易勾線。請改用填色，或拆成更窄的欄。
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	這麼窄的緞紋會纏成線結。請改用平針繡。
 	This is too small to sew cleanly. Make it bigger, or delete it.	太小，無法繡得整齊。請放大或刪除。
+
+# Roidery: smoother satins.
+	Short stitches	短針
+	Short stitch distance	短針距離
+	Split satin over	緞紋拆分長度
+	Split Satin	拆分緞紋
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	這麼長的緞紋針腳鬆散，容易勾線。「拆分緞紋」會把它們拆成較短的針腳，或改用填色。

@@ -86,7 +86,8 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   (Center in Hoop) or too large for it; spots where objects stack past 2.6 layers of thread
   (an error past 4; Remove Overlaps when fills overlap; one object's own dense spots, such as a
   satin's corners, are left alone); fills under 1.5 mm wide on average (Convert to Satin);
-  satins over 10 mm (loose, snag) or under 1 mm (Sew as Running Stitch); objects under 1.5 mm.
+  satins over 10 mm (loose, snag; Split Satin) or under 1 mm (Sew as Running Stitch); objects
+  under 1.5 mm.
   Clicking a problem selects its objects and brings it into view; while the panel is open the
   canvas rings each problem.
 - `crates/ui-egui/src/stitchview.rs`: View › Stitch View (Cmd+Y) cycles the vector art, the stitches
@@ -248,6 +249,13 @@ between rungs.
 - `stitch.matchThreads {ids?}`: change colours to their nearest chart thread.
 - Satin along a path is a Satin Column: the stroke's width profile (the Width tool's) scales
   its width along the path (`roidery_stitch::Shape::Column`), whose width is the stroke weight.
+- Every satin (along a path, Satin Blocks, lettering) sews short stitches and splits long ones
+  (`satin.rs`, `short_stitches` and `split`). Where a tight curve crowds the inside edge's
+  penetrations closer than `shortStitchDistance` (0.25 mm), every other one stops
+  `shortStitchInset` (15%) of the way across, so the thread doesn't pile up there. A top stitch
+  longer than `splitLength` (7 mm; 0 never) is split into shorter ones whose splits shift a third
+  of a piece from one crossing to the next, a brick pattern rather than a groove. Both are in
+  Stitch Settings (Short stitches, Split satin over; Short stitch distance under Advanced).
 - `stitch.fonts {rescan?}`: the lettering fonts, built-in and digitized, with what each sews with
   and the sizes it sews well at.
 - `stitch.createLettering {text, height?, spacing?, lineSpacing?, font?, x?, y?}`: text as satin

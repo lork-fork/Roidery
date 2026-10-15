@@ -104,7 +104,71 @@ fn column(rungs: &[(Point, Point)], keys: &[usize], s: &SatinSettings) -> Vec<St
             }
         }
     }
-    out.extend(zigzag(&oriented(top, at_end), keys_for(at_end), s.density, s.fractional_spacing, StitchKind::Top));
+    let pairs = zigzag_pairs(&oriented(top, at_end), keys_for(at_end), s.density, s.fractional_spacing);
+    let shortened = short_stitches(&pairs, s.short_stitch_inset, s.short_stitch_distance);
+    out.extend(split(&shortened, s.split_length).into_iter().map(|p| Stitch::new(p, StitchKind::Top)));
+    out
+}
+
+/// Short stitches: where penetrations on one edge crowd closer than `distance` (the inside of a
+/// curve), every other one stops `inset` % of the way across toward the other edge, so the
+/// thread doesn't pile up there. The first and last crossings stay whole, so the ends are square.
+fn short_stitches(pairs: &[(Point, Point)], inset: f64, distance: f64) -> Vec<Point> {
+    let mut out: Vec<Point> = pairs.iter().map(|(p, _)| *p).collect();
+    if !(inset.is_finite() && inset > 0.0 && distance.is_finite() && distance > 0.0) {
+        return out;
+    }
+    let f = (inset / 100.0).clamp(0.0, 0.5);
+    // Penetrations alternate edges, so the same edge's last one is two back. Per edge: whether
+    // the last crowded penetration was shortened. The whole first rung is followed half a
+    // step later by the first zig, and the last zag by the whole last rung: those gaps are
+    // half the spacing on every column, so they are left out.
+    let mut short = [false; 2];
+    for i in 3..pairs.len().saturating_sub(2) {
+        let (Some(&(p, other)), Some(&(prev, _)), Some(flag)) = (pairs.get(i), pairs.get(i - 2), short.get_mut(i % 2)) else { continue };
+        if p.distance(prev) < distance {
+            *flag = !*flag;
+            if *flag && let Some(o) = out.get_mut(i) {
+                *o = p.lerp(other, f);
+            }
+        } else {
+            *flag = false;
+        }
+    }
+    out
+}
+
+/// Split satin: a crossing longer than `max` mm gets penetrations along it so no stitch is longer
+/// than `max`. Where they fall shifts from one crossing to the next (a third of a piece either
+/// way), so the splits make a brick pattern rather than a groove down the column. 0 never splits.
+fn split(points: &[Point], max: f64) -> Vec<Point> {
+    if !(max.is_finite() && max > 0.0) {
+        return points.to_vec();
+    }
+    let max = max.max(1.0);
+    let mut out = Vec::with_capacity(points.len());
+    let mut crossing = 0usize;
+    for (i, &b) in points.iter().enumerate() {
+        if let Some(&a) = i.checked_sub(1).and_then(|j| points.get(j)) {
+            let len = a.distance(b);
+            if len > max {
+                let mut n = (len / max).ceil();
+                // How far the splits can shift and keep every piece within `max`.
+                let mut room = (max * n / len - 1.0).min(1.0 / 3.0);
+                if room < 0.15 {
+                    n += 1.0;
+                    room = (max * n / len - 1.0).min(1.0 / 3.0);
+                }
+                let shift = [-room, 0.0, room].get(crossing % 3).copied().unwrap_or(0.0);
+                let n = (n as usize).min(64);
+                for k in 1..n {
+                    out.push(a.lerp(b, (k as f64 + shift) / n as f64));
+                }
+            }
+            crossing += 1;
+        }
+        out.push(b);
+    }
     out
 }
 
@@ -236,11 +300,16 @@ fn inset_rungs(rungs: &[(Point, Point)], inset: f64) -> Vec<(Point, Point)> {
 /// the same edge, measured `frac` of the way from the longer edge to the shorter. The spacing is
 /// fitted to each stretch between two `keys` (the user's rungs), so it never piles up at a rung.
 fn zigzag(rungs: &[(Point, Point)], keys: &[usize], spacing: f64, frac: f64, kind: StitchKind) -> Vec<Stitch> {
+    zigzag_pairs(rungs, keys, spacing, frac).into_iter().map(|(p, _)| Stitch::new(p, kind)).collect()
+}
+
+/// `zigzag`'s penetrations, each with the point straight across from it on the other edge.
+fn zigzag_pairs(rungs: &[(Point, Point)], keys: &[usize], spacing: f64, frac: f64) -> Vec<(Point, Point)> {
     let spacing = if spacing.is_finite() && spacing > 0.05 { spacing } else { 0.4 };
     let frac = if frac.is_finite() { frac.clamp(0.0, 1.0) } else { 0.5 };
     let (Some(&(first_l, first_r)), Some(&(last_l, last_r))) = (rungs.first(), rungs.last()) else { return vec![] };
     // The first and last rungs are sewn whole, so the column ends square on both corners.
-    let mut out = vec![Stitch::new(first_l, kind), Stitch::new(first_r, kind)];
+    let mut out = vec![(first_l, first_r), (first_r, first_l)];
     // Penetrations alternate sides every half spacing, carried across rungs so the rhythm
     // doesn't restart at each one.
     let mut left_next = true;
@@ -271,13 +340,13 @@ fn zigzag(rungs: &[(Point, Point)], keys: &[usize], spacing: f64, frac: f64, kin
             let (Some(&(l0, r0)), Some(&(l1, r1))) = (stretch.get(j), stretch.get(j + 1)) else { break };
             let span = at[j + 1] - at[j];
             let t = if span > 1e-12 { ((target - at[j]) / span).clamp(0.0, 1.0) } else { 1.0 };
-            let p = if left_next { l0.lerp(l1, t) } else { r0.lerp(r1, t) };
-            out.push(Stitch::new(p, kind));
+            let (l, r) = (l0.lerp(l1, t), r0.lerp(r1, t));
+            out.push(if left_next { (l, r) } else { (r, l) });
             left_next = !left_next;
         }
     }
     if rungs.len() > 1 {
-        out.push(Stitch::new(if left_next { last_l } else { last_r }, kind));
+        out.push(if left_next { (last_l, last_r) } else { (last_r, last_l) });
     }
     out
 }
@@ -416,5 +485,50 @@ mod tests {
         let st = along_path_profiled(&line, &s, &[(0.0, f64::NAN, 1e9), (1.0, -3.0, f64::INFINITY)]);
         assert!(st.iter().all(|p| p.x.is_finite() && p.y.is_finite()));
         assert_eq!(along_path_profiled(&line, &s, &[]), along_path(&line, &s));
+    }
+
+    #[test]
+    fn tight_curves_get_short_stitches_inside() {
+        let s = SatinSettings { underlays: vec![], pull_compensation: 0.0, ..Default::default() };
+        let st = blocks_curved(&[arc(2.0)], &[arc(6.0)], &s);
+        let radii: Vec<f64> = st.iter().map(|p| p.point().distance(Point::ORIGIN)).collect();
+        let inner = radii.iter().filter(|r| (*r - 2.0).abs() < 0.01).count();
+        // Every other crowded inner penetration stops 15% of the way across: at 2.6 mm.
+        let short = radii.iter().filter(|r| (*r - 2.6).abs() < 0.01).count();
+        assert!(short > 5 && short.abs_diff(inner) <= 3, "{short} short, {inner} on the edge");
+        // The outer edge isn't crowded, so it keeps its full stitches, and nothing else moves.
+        assert!(radii.iter().all(|r| (r - 2.0).abs() < 0.01 || (r - 2.6).abs() < 0.01 || (r - 6.0).abs() < 0.01), "{radii:?}");
+        // Off, every penetration is on an edge.
+        let off = blocks_curved(&[arc(2.0)], &[arc(6.0)], &SatinSettings { short_stitch_inset: 0.0, ..s.clone() });
+        assert!(off.iter().all(|p| {
+            let r = p.point().distance(Point::ORIGIN);
+            (r - 2.0).abs() < 0.01 || (r - 6.0).abs() < 0.01
+        }));
+        // A gentle curve has no short stitches.
+        let gentle = blocks_curved(&[arc(10.0)], &[arc(14.0)], &s);
+        assert!(gentle.iter().all(|p| {
+            let r = p.point().distance(Point::ORIGIN);
+            (r - 10.0).abs() < 0.01 || (r - 14.0).abs() < 0.01
+        }));
+    }
+
+    #[test]
+    fn wide_satins_split_into_staggered_stitches() {
+        let (l, r) = straight(20.0, 12.0);
+        let s = SatinSettings { underlays: vec![], pull_compensation: 0.0, ..Default::default() };
+        let longest = |st: &[Stitch]| st.windows(2).map(|w| w[0].point().distance(w[1].point())).fold(0.0, f64::max);
+        let st = blocks(&l, &r, &s);
+        assert!(longest(&st) <= 7.0 + 1e-9, "{}", longest(&st));
+        // The splits shift from one crossing to the next, so they don't line up into a groove.
+        let mut inside: Vec<i64> = st.iter().filter(|p| p.y > 0.5 && p.y < 11.5).map(|p| (p.y * 100.0).round() as i64).collect();
+        inside.sort_unstable();
+        inside.dedup();
+        assert!(inside.len() >= 3, "{inside:?}");
+        // Off, the stitches cross the whole 12 mm.
+        let off = blocks(&l, &r, &SatinSettings { split_length: 0.0, ..s.clone() });
+        assert!(longest(&off) >= 12.0, "{}", longest(&off));
+        // A column narrower than the split length is untouched.
+        let (l, r) = straight(20.0, 4.0);
+        assert!(blocks(&l, &r, &s).iter().all(|p| p.y.abs() < 1e-9 || (p.y - 4.0).abs() < 1e-9));
     }
 }

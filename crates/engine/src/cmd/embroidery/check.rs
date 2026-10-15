@@ -12,7 +12,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use roidery_formats::Command;
-use roidery_stitch::{Polyline, StitchKind, StitchType};
+use roidery_stitch::{Polyline, SatinSettings, StitchKind, StitchType};
 use serde_json::{Value, json};
 use vectorcraft_doc::{Document, NodeId};
 
@@ -256,7 +256,12 @@ fn part_problems(d: &Document, o: &Sewn) -> Vec<Problem> {
         spans.sort_by(f64::total_cmp);
         let at_rank = |q: f64| spans.get(((spans.len() as f64 - 1.0) * q).round().max(0.0) as usize).copied();
         if let Some(wide) = at_rank(0.9).filter(|w| *w > WIDE_SATIN_MM) {
-            return vec![problem("wideSatin", wide, None)];
+            // Split satin turned off, or set longer than this: back to the default.
+            let part = if o.part == Part::Stroke { "stroke" } else { "fill" };
+            let split = SatinSettings::default().split_length;
+            let fix =
+                json!({ "command": "stitch.set", "params": { "ids": [o.id], "part": part, "settings": { "satin": { "splitLength": split } } } });
+            return vec![problem("wideSatin", wide, Some(fix))];
         }
         if let Some(narrow) = at_rank(0.5).filter(|w| *w < NARROW_SATIN_MM) {
             let fix =

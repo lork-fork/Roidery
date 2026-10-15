@@ -4062,6 +4062,12 @@ axis	Both	Ambos
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	O desenho é maior que o bastidor. Escolha um bastidor maior ou reduza o desenho.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Aqui os objetos se empilham, e tanta linha pode quebrar a agulha. Remover sobreposições corta as partes cobertas.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Um preenchimento tão fino é bordado como poucas fileiras irregulares. Converta-o em cetim.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Pontos de cetim tão longos ficam soltos e enroscam. Borde como preenchimento ou divida em colunas mais estreitas.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Um cetim tão estreito embola num nó. Borde com ponto reto.
 	This is too small to sew cleanly. Make it bigger, or delete it.	É pequeno demais para bordar com perfeição. Aumente ou exclua.
+
+# Roidery: smoother satins.
+	Short stitches	Pontos curtos
+	Short stitch distance	Distância dos pontos curtos
+	Split satin over	Dividir cetim acima de
+	Split Satin	Dividir cetim
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Pontos de cetim tão longos ficam soltos e enroscam. Dividir cetim os quebra em pontos mais curtos, ou borde como preenchimento.

@@ -4654,6 +4654,12 @@ lighting	Light	Світло
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Дизайн більший за п’яльці. Виберіть більші п’яльці або зменште дизайн.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Тут об’єкти лежать один на одному, і такий товстий шар нитки може зламати голку. «Прибрати перекриття» виріже закриті частини.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Така вузька заливка вишиється кількома рваними рядами. Краще перетворіть її на гладь.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Такі довгі стібки гладі лежать вільно й чіпляються. Вишийте це заливкою або розділіть на вужчі стовпці.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Така вузька гладь збивається у вузол. Краще вишийте її прямим стібком.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Це замале для акуратного вишивання. Збільште або видаліть.
+
+# Roidery: smoother satins.
+	Short stitches	Короткі стібки
+	Short stitch distance	Відстань для коротких стібків
+	Split satin over	Ділити гладь довшу за
+	Split Satin	Розділити гладь
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Такі довгі стібки гладі лежать вільно й чіпляються. «Розділити гладь» розіб’є їх на коротші стібки, або вишийте це заливкою.

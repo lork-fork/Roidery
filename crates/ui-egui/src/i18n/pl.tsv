@@ -4947,6 +4947,12 @@ mark-style	Japanese	Japońskie
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Projekt jest większy niż tamborek. Wybierz większy tamborek albo zmniejsz projekt.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Obiekty nakładają się tutaj, a tak gruba warstwa nici może złamać igłę. Usuń nakładanie wycina zakryte części.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Tak cienkie wypełnienie wyhaftuje się jako kilka postrzępionych rzędów. Zamiast tego przekonwertuj je na satynę.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Tak długie ściegi satynowe leżą luźno i zaczepiają się. Wyhaftuj to jako wypełnienie albo podziel na węższe kolumny.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Tak wąska satyna zbija się w supeł. Zamiast tego wyhaftuj ją ściegiem prostym.
 	This is too small to sew cleanly. Make it bigger, or delete it.	To jest za małe, by wyhaftować to czysto. Powiększ to albo usuń.
+
+# Roidery: smoother satins.
+	Short stitches	Krótkie ściegi
+	Short stitch distance	Odległość krótkich ściegów
+	Split satin over	Dziel satynę powyżej
+	Split Satin	Podziel satynę
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Tak długie ściegi satynowe leżą luźno i zaczepiają się. Podziel satynę rozbije je na krótsze ściegi, albo wyhaftuj to jako wypełnienie.

@@ -4656,6 +4656,12 @@ theme	Appearance	Giao diện
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Mẫu thêu lớn hơn khung. Hãy chọn khung lớn hơn hoặc thu nhỏ mẫu.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Các đối tượng chồng lên nhau ở đây, chỉ dày như vậy có thể làm gãy kim. Loại bỏ chồng lấn sẽ cắt bỏ các phần bị che.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Phần tô mảnh như vậy sẽ thêu thành vài hàng lởm chởm. Hãy chuyển nó thành satin.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Mũi satin dài như vậy sẽ lỏng và dễ vướng. Hãy thêu nó dạng tô, hoặc chia thành các cột hẹp hơn.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Satin hẹp như vậy sẽ rối thành nút. Hãy thêu bằng mũi chạy.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Quá nhỏ để thêu gọn. Hãy làm to hơn hoặc xóa đi.
+
+# Roidery: smoother satins.
+	Short stitches	Mũi ngắn
+	Short stitch distance	Khoảng cách mũi ngắn
+	Split satin over	Chia satin khi dài hơn
+	Split Satin	Chia satin
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Mũi satin dài như vậy sẽ lỏng và dễ vướng. Chia satin sẽ tách chúng thành các mũi ngắn hơn, hoặc hãy thêu nó dạng tô.

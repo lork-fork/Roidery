@@ -61,6 +61,9 @@ pub(crate) fn fields(kind: &str) -> Vec<Field> {
             v.push((tl!("Density"), "satin", "density", " mm", 2, false));
             v.push((tl!("Pull compensation"), "satin", "pullCompensation", " mm", 2, true));
             v.push((tl!("Fractional spacing"), "satin", "fractionalSpacing", "", 2, true));
+            v.push((tl!("Short stitches"), "satin", "shortStitchInset", "%", 0, false));
+            v.push((tl!("Short stitch distance"), "satin", "shortStitchDistance", " mm", 2, true));
+            v.push((tl!("Split satin over"), "satin", "splitLength", " mm", 2, false));
             v
         }
         "contour" => vec![

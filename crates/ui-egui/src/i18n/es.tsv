@@ -5030,6 +5030,12 @@ mark-style	Japanese	Japonesas
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	El diseño es más grande que el bastidor. Elija un bastidor más grande o reduzca el diseño.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Aquí se apilan objetos, y tanto hilo puede romper la aguja. Quitar superposiciones recorta las partes tapadas.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Un relleno tan fino se borda como unas pocas filas irregulares. Conviértalo en satén.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Puntadas de satén tan largas quedan sueltas y se enganchan. Bórdelo como relleno o divídalo en columnas más estrechas.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Un satén tan estrecho se amontona en un nudo. Bórdelo con puntada recta.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Es demasiado pequeño para bordarse limpiamente. Agrándelo o elimínelo.
+
+# Roidery: smoother satins.
+	Short stitches	Puntadas cortas
+	Short stitch distance	Distancia de puntadas cortas
+	Split satin over	Dividir satén a partir de
+	Split Satin	Dividir satén
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Puntadas de satén tan largas quedan sueltas y se enganchan. Dividir satén las parte en puntadas más cortas, o bórdelo como relleno.

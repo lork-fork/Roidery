@@ -5105,6 +5105,12 @@ mark-style	Japanese	Japonské
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Návrh je větší než rámeček. Vyberte větší rámeček, nebo návrh zmenšete.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Objekty se tu překrývají a takto silná vrstva nitě může zlomit jehlu. Odstranit překryvy vyřízne zakryté části.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Takto tenká výplň se vyšije jako několik roztřepených řad. Převeďte ji raději na satén.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Takto dlouhé saténové stehy leží volně a zachytávají se. Vyšijte ji jako výplň, nebo ji rozdělte na užší sloupce.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Takto úzký satén se smotá do uzlu. Vyšijte ho raději rovným stehem.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Toto je příliš malé na čisté vyšití. Zvětšete to, nebo to smažte.
+
+# Roidery: smoother satins.
+	Short stitches	Krátké stehy
+	Short stitch distance	Vzdálenost krátkých stehů
+	Split satin over	Dělit satén nad
+	Split Satin	Rozdělit satén
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Takto dlouhé saténové stehy leží volně a zachytávají se. Rozdělit satén je rozdělí na kratší stehy, nebo ji vyšijte jako výplň.

@@ -4674,6 +4674,12 @@ lighting	Light	Luce
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Il disegno è più grande del telaio. Scegli un telaio più grande o rimpicciolisci il disegno.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Qui gli oggetti si sovrappongono e così tanto filo può rompere l’ago. Rimuovi sovrapposizioni ritaglia le parti coperte.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Un riempimento così sottile si ricama in poche file sfilacciate. Convertilo invece in satin.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Punti satin così lunghi restano lenti e si impigliano. Ricamalo come riempimento o dividilo in colonne più strette.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Un satin così stretto si aggroviglia in un nodo. Ricamalo invece a punto filza.
 	This is too small to sew cleanly. Make it bigger, or delete it.	È troppo piccolo per essere ricamato in modo pulito. Ingrandiscilo o eliminalo.
+
+# Roidery: smoother satins.
+	Short stitches	Punti corti
+	Short stitch distance	Distanza punti corti
+	Split satin over	Dividi il satin oltre
+	Split Satin	Dividi satin
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Punti satin così lunghi restano lenti e si impigliano. Dividi satin li spezza in punti più corti, oppure ricamalo come riempimento.

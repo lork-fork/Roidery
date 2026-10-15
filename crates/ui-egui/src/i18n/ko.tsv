@@ -4638,6 +4638,12 @@ lighting	Light	광원
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	디자인이 자수틀보다 큽니다. 더 큰 자수틀을 고르거나 디자인을 줄이세요.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	여기서 개체가 겹쳐 실이 너무 두꺼워 바늘이 부러질 수 있습니다. [겹침 제거]로 가려진 부분을 잘라 내세요.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	이렇게 가는 칠은 들쭉날쭉한 몇 줄로 수놓아집니다. 새틴으로 변환하세요.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	이렇게 긴 새틴 땀은 느슨해져 걸립니다. 칠로 수놓거나 더 좁은 기둥으로 나누세요.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	이렇게 좁은 새틴은 실이 엉켜 매듭이 됩니다. 러닝 스티치로 수놓으세요.
 	This is too small to sew cleanly. Make it bigger, or delete it.	너무 작아서 깔끔하게 수놓을 수 없습니다. 크게 만들거나 삭제하세요.
+
+# Roidery: smoother satins.
+	Short stitches	짧은 땀
+	Short stitch distance	짧은 땀 거리
+	Split satin over	새틴 분할 기준
+	Split Satin	새틴 분할
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	이렇게 긴 새틴 땀은 느슨해져 걸립니다. 새틴 분할로 더 짧은 땀으로 나누거나 칠로 수놓으세요.

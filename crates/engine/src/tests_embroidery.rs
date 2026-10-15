@@ -1125,11 +1125,18 @@ fn check_design_finds_thin_tiny_and_dense_objects_and_fixes_them() {
 fn check_design_measures_satin_width() {
     let mut s = session();
     let a = rect(&mut s, 10.0);
+    // Split satin keeps a wide satin's stitches short; turned off, they lie 12 mm long.
     run(&mut s, "stitch.set", json!({"ids": [a.0], "part": "stroke", "type": "satin", "settings": {"satin": {"width": 12}}}));
     run(&mut s, "select.none", json!({}));
+    assert!(kinds(&mut s).is_empty(), "{:?}", kinds(&mut s));
+    run(&mut s, "stitch.set", json!({"ids": [a.0], "part": "stroke", "settings": {"satin": {"splitLength": 0}}}));
+    run(&mut s, "select.none", json!({}));
     let ps = problems(&mut s);
-    let wide = ps.iter().find(|p| p["kind"] == "wideSatin").unwrap();
+    let wide = ps.iter().find(|p| p["kind"] == "wideSatin").unwrap().clone();
     assert!(wide["value"].as_f64().unwrap() > 10.0, "{wide}");
+    fix(&mut s, &wide);
+    run(&mut s, "select.none", json!({}));
+    assert!(kinds(&mut s).is_empty(), "{:?}", kinds(&mut s));
     run(&mut s, "stitch.set", json!({"ids": [a.0], "part": "stroke", "type": "satin", "settings": {"satin": {"width": 0.4}}}));
     run(&mut s, "select.none", json!({}));
     let ps = problems(&mut s);

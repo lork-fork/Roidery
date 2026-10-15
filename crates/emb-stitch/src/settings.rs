@@ -186,11 +186,29 @@ pub struct SatinSettings {
     pub fractional_spacing: f64,
     /// Underlay passes, sewn in order before the top stitching.
     pub underlays: Vec<Underlay>,
+    /// Short stitches: where a curve crowds penetrations on one edge (closer than
+    /// `short_stitch_distance`), every other one stops this % of the way short of that edge, so
+    /// the inside of the curve doesn't pile up. 0 turns them off.
+    pub short_stitch_inset: f64,
+    /// mm: penetrations on the same edge closer than this get short stitches.
+    pub short_stitch_distance: f64,
+    /// Split satin: a top stitch longer than this (mm) is split into shorter ones, staggered so
+    /// the splits don't line up into a groove. 0 never splits.
+    pub split_length: f64,
 }
 
 impl Default for SatinSettings {
     fn default() -> Self {
-        Self { width: 3.0, density: 0.4, pull_compensation: 0.2, fractional_spacing: 0.5, underlays: vec![Underlay::CenterWalk { length: 2.5 }] }
+        Self {
+            width: 3.0,
+            density: 0.4,
+            pull_compensation: 0.2,
+            fractional_spacing: 0.5,
+            underlays: vec![Underlay::CenterWalk { length: 2.5 }],
+            short_stitch_inset: 15.0,
+            short_stitch_distance: 0.25,
+            split_length: 7.0,
+        }
     }
 }
 
@@ -374,6 +392,12 @@ impl StitchSettings {
         s.satin.density = f(s.satin.density, d.satin.density, 0.1, 5.0);
         s.satin.pull_compensation = f(s.satin.pull_compensation, d.satin.pull_compensation, -2.0, 5.0);
         s.satin.fractional_spacing = f(s.satin.fractional_spacing, d.satin.fractional_spacing, 0.0, 1.0);
+        s.satin.short_stitch_inset = f(s.satin.short_stitch_inset, d.satin.short_stitch_inset, 0.0, 50.0);
+        s.satin.short_stitch_distance = f(s.satin.short_stitch_distance, d.satin.short_stitch_distance, 0.0, 5.0);
+        s.satin.split_length = f(s.satin.split_length, d.satin.split_length, 0.0, 12.0);
+        if s.satin.split_length > 0.0 {
+            s.satin.split_length = s.satin.split_length.max(2.0);
+        }
         s.satin.underlays.truncate(8);
         for u in &mut s.satin.underlays {
             match u {

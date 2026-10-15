@@ -4629,6 +4629,12 @@ theme	Appearance	Erscheinungsbild
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Das Design ist größer als der Stickrahmen. Wählen Sie einen größeren Rahmen oder verkleinern Sie das Design.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Hier liegen Objekte übereinander, und so dickes Garn kann die Nadel brechen. Überlappungen entfernen schneidet die verdeckten Teile weg.
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Eine so schmale Füllung wird zu ein paar ausgefransten Reihen. Wandeln Sie sie stattdessen in Satin um.
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	So lange Satinstiche liegen lose und bleiben hängen. Sticken Sie es als Füllung oder teilen Sie es in schmalere Säulen.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Ein so schmaler Satin verknäuelt sich. Sticken Sie ihn stattdessen als Steppstich.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Das ist zu klein, um sauber gestickt zu werden. Vergrößern oder löschen Sie es.
+
+# Roidery: smoother satins.
+	Short stitches	Kurze Stiche
+	Short stitch distance	Abstand für kurze Stiche
+	Split satin over	Satin teilen ab
+	Split Satin	Satin teilen
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	So lange Satinstiche liegen lose und bleiben hängen. Satin teilen zerlegt sie in kürzere Stiche, oder sticken Sie es als Füllung.

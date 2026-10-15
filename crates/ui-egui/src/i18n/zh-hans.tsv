@@ -4218,6 +4218,12 @@ lighting	Light	光源
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	设计比绣框大。请选择更大的绣框，或缩小设计。
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	这里的对象互相叠压，线太厚可能折断机针。“移除重叠”会剪掉被覆盖的部分。
 	A fill this thin sews as a few ragged rows. Convert it to satin instead.	这么细的填色会绣成几行参差不齐的线。请改为转换为缎纹。
-	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	这么长的缎纹针脚松散，容易勾线。请改用填色，或拆成更窄的列。
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	这么窄的缎纹会缠成线结。请改用平针绣。
 	This is too small to sew cleanly. Make it bigger, or delete it.	太小，无法绣得整齐。请放大或删除。
+
+# Roidery: smoother satins.
+	Short stitches	短针
+	Short stitch distance	短针距离
+	Split satin over	缎纹拆分长度
+	Split Satin	拆分缎纹
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	这么长的缎纹针脚松散，容易勾线。“拆分缎纹”会把它们拆成较短的针脚，或改用填色。
