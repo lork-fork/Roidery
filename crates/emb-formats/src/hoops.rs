@@ -130,6 +130,74 @@ impl Hoop {
     }
 }
 
+/// The smallest circle holding every point (mm): `(centre x, centre y, diameter)`, or None for
+/// no points. A round hoop holds a design if this circle fits, wherever the design sits.
+pub fn enclosing_circle(points: &[(f64, f64)]) -> Option<(f64, f64, f64)> {
+    // Only the convex hull's corners matter (Andrew's monotone chain), then Welzl's method.
+    let mut p: Vec<(f64, f64)> = points.iter().copied().filter(|q| q.0.is_finite() && q.1.is_finite()).collect();
+    p.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    p.dedup();
+    let cross = |o: (f64, f64), a: (f64, f64), b: (f64, f64)| (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0);
+    let mut hull: Vec<(f64, f64)> = Vec::new();
+    for pass in 0..2 {
+        let start = hull.len();
+        let it: Box<dyn Iterator<Item = &(f64, f64)>> = if pass == 0 { Box::new(p.iter()) } else { Box::new(p.iter().rev()) };
+        for &q in it {
+            while hull.len() >= start + 2 && hull.get(hull.len() - 2).zip(hull.last()).is_some_and(|(&a, &b)| cross(a, b, q) <= 0.0) {
+                hull.pop();
+            }
+            hull.push(q);
+        }
+        hull.pop();
+    }
+    if hull.is_empty() {
+        hull = p;
+    }
+    // Spread the corners out so the expected work stays linear.
+    let n = hull.len();
+    let mut order: Vec<usize> = (0..n).collect();
+    let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+    for i in (1..n).rev() {
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        order.swap(i, usize::try_from(seed >> 33).unwrap_or(0) % (i + 1));
+    }
+    let pts: Vec<(f64, f64)> = order.iter().filter_map(|&i| hull.get(i).copied()).collect();
+    let inside = |c: (f64, f64, f64), q: (f64, f64)| (q.0 - c.0).hypot(q.1 - c.1) <= c.2 + 1e-7;
+    let two = |a: (f64, f64), b: (f64, f64)| ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0, (a.0 - b.0).hypot(a.1 - b.1) / 2.0);
+    let three = |a: (f64, f64), b: (f64, f64), c: (f64, f64)| {
+        let d = 2.0 * (a.0 * (b.1 - c.1) + b.0 * (c.1 - a.1) + c.0 * (a.1 - b.1));
+        if d.abs() < 1e-12 {
+            // In a line: the two farthest apart.
+            let (ab, bc, ca) = (two(a, b), two(b, c), two(c, a));
+            return [ab, bc, ca].into_iter().fold(ab, |m, x| if x.2 > m.2 { x } else { m });
+        }
+        let (a2, b2, c2) = (a.0 * a.0 + a.1 * a.1, b.0 * b.0 + b.1 * b.1, c.0 * c.0 + c.1 * c.1);
+        let x = (a2 * (b.1 - c.1) + b2 * (c.1 - a.1) + c2 * (a.1 - b.1)) / d;
+        let y = (a2 * (c.0 - b.0) + b2 * (a.0 - c.0) + c2 * (b.0 - a.0)) / d;
+        (x, y, (a.0 - x).hypot(a.1 - y))
+    };
+    let first = *pts.first()?;
+    let mut c = (first.0, first.1, 0.0);
+    for (i, &a) in pts.iter().enumerate() {
+        if inside(c, a) {
+            continue;
+        }
+        c = (a.0, a.1, 0.0);
+        for (j, &b) in pts.iter().enumerate().take(i) {
+            if inside(c, b) {
+                continue;
+            }
+            c = two(a, b);
+            for &q in pts.iter().take(j) {
+                if !inside(c, q) {
+                    c = three(a, b, q);
+                }
+            }
+        }
+    }
+    Some((c.0, c.1, 2.0 * c.2))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +227,22 @@ mod tests {
         let round = find("commercial-12").unwrap();
         assert_eq!(round.fit(70.0, 70.0), Fit::Fits);
         assert!(matches!(round.fit(80.0, 80.0), Fit::TooLarge { .. }));
+    }
+
+    #[test]
+    fn the_smallest_circle_round_a_design() {
+        assert_eq!(enclosing_circle(&[]), None);
+        assert_eq!(enclosing_circle(&[(1.0, 2.0)]), Some((1.0, 2.0, 0.0)));
+        // A square's circle is its diagonal; points inside change nothing.
+        let mut sq = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        sq.extend((0..100).map(|i| (f64::from(i % 10) + 0.5, f64::from(i / 10) + 0.3)));
+        let (x, y, d) = enclosing_circle(&sq).unwrap();
+        assert!((x - 5.0).abs() < 1e-9 && (y - 5.0).abs() < 1e-9 && (d - 200f64.sqrt()).abs() < 1e-9);
+        // A star's points: its circle, far smaller than its bounding box's diagonal.
+        let star: Vec<(f64, f64)> = (0..5).map(|i| (f64::from(i) * 72f64.to_radians()).sin_cos()).map(|(s, c)| (50.0 * s, -50.0 * c)).collect();
+        let (_, _, d) = enclosing_circle(&star).unwrap();
+        assert!((d - 100.0).abs() < 1e-9, "{d}");
+        // In a line.
+        assert_eq!(enclosing_circle(&[(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)]), Some((5.0, 0.0, 10.0)));
     }
 }

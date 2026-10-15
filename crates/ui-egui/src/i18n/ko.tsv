@@ -4552,7 +4552,6 @@ lighting	Light	광원
 	Satin this wide can snag and pull: split the column or sew it as a fill	이렇게 넓은 새틴은 걸리거나 당겨질 수 있습니다. 컬럼을 나누거나 채우기로 수놓으세요
 	Select a path with it to put it on the path	패스에 배치하려면 패스를 함께 선택하세요
 	Sews as fill	채우기로 수놓음
-	Show Hoop	자수틀 표시
 	Show Jumps and Trims	점프 및 트림 표시
 	Show Needle Points	바늘 지점 표시
 	Show Underlay	언더레이 표시
@@ -4618,3 +4617,6 @@ lighting	Light	광원
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	파일을 열 때 Roidery가 아직 읽지 못하는 내용({what})이 제외되어, 덮어쓰면 해당 내용이 영구적으로 사라집니다. 보존하려면 다른 이름으로 저장하세요.
 	Roidery copies the fonts to {folder}.	Roidery가 글꼴을 {folder}에 복사합니다.
 	Roidery read this script without running it.	Roidery가 이 스크립트를 실행하지 않고 읽었습니다.
+# Roidery: the page is the hoop.
+	Partly outside the hoop	일부가 자수틀 밖에 있음
+	{d} mm outside the hoop	자수틀 밖으로 {d} mm

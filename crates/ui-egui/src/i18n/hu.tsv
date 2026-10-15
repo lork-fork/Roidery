@@ -4985,7 +4985,6 @@ imageTrace	Outline	Körvonal
 	Satin this wide can snag and pull: split the column or sew it as a fill	Ilyen széles szatén beakadhat és húzódhat: oszd fel az oszlopot, vagy hímezd kitöltésként
 	Select a path with it to put it on the path	Jelölj ki vele együtt egy útvonalat, hogy az útvonalra helyezd
 	Sews as fill	Kitöltésként hímeződik
-	Show Hoop	Hímzőkeret megjelenítése
 	Show Jumps and Trims	Ugrások és cérnavágások megjelenítése
 	Show Needle Points	Tűszúrási pontok megjelenítése
 	Show Underlay	Alátöltés megjelenítése
@@ -5050,3 +5049,6 @@ imageTrace	Outline	Körvonal
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Megnyitáskor kimaradt, amit a Roidery még nem tud beolvasni ({what}), ezért a fájl felülírásával ez végleg elvész. A megtartásához mentsd más néven.
 	Roidery copies the fonts to {folder}.	A Roidery ide másolja a betűtípusokat: {folder}.
 	Roidery read this script without running it.	A Roidery futtatás nélkül olvasta be ezt a szkriptet.
+# Roidery: the page is the hoop.
+	Partly outside the hoop	Részben a hímzőkereten kívül
+	{d} mm outside the hoop	{d} mm-rel a hímzőkereten kívül

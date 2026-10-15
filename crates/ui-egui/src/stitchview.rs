@@ -109,15 +109,13 @@ fn shade(c: [u8; 3], light: f64, sheen: f64) -> Color32 {
     Color32::from_rgb(m(b[0]), m(b[1]), m(b[2]))
 }
 
-/// Paint the current embroidery view over the canvas `rect` (nothing in the vector view), and
-/// the hoop over any view when View › Stitch Overlays › Hoop is on.
+/// Paint the current embroidery view over the canvas `rect` (nothing in the vector view), and,
+/// when the page is a hoop, the hoop over any view.
 pub fn paint(app: &mut VectorcraftApp, painter: &Painter, xf: &Xf, rect: egui::Rect) {
     if app.ui.view.stitches != 0 {
         paint_stitches(app, painter, xf, rect);
     }
-    if app.ui.view.hoop {
-        hoop(app, painter, xf);
-    }
+    hoop(app, painter, xf, rect);
 }
 
 /// Turn on a stitch view (the stitch lines) when `on` and the vector art is showing: the
@@ -235,46 +233,50 @@ fn parse_hex(s: &str) -> Option<[u8; 3]> {
     Some([c(0)?, c(2)?, c(4)?])
 }
 
-/// The stitches in doc units, as a box (`None` with no stitches).
-fn stitch_bounds(pv: &StitchPreview) -> Option<(Point, Point)> {
-    let mut it = pv.stitches.iter().filter(|s| s.x.is_finite() && s.y.is_finite());
-    let first = it.next()?;
-    let (mut lo, mut hi) = (Point::new(first.x, first.y), Point::new(first.x, first.y));
-    for s in it {
-        lo = Point::new(lo.x.min(s.x), lo.y.min(s.y));
-        hi = Point::new(hi.x.max(s.x), hi.y.max(s.y));
-    }
-    Some((lo, hi))
-}
-
-/// View › Stitch Overlays › Hoop: the design's hoop round the stitches (the machine centres the
-/// design in it), else round the first artboard; nothing without a hoop.
-fn hoop(app: &mut VectorcraftApp, painter: &Painter, xf: &Xf) {
+/// The page is the hoop: when the design has a hoop, its first artboard is the hoop's sewing
+/// field (`stitch.design`'s `field`), and the needle starts at its centre. Drawn in every view:
+/// the hoop's frame round the page, the field's edge (a round field's with the page's corners,
+/// which are outside it, shaded), and in red every stitch that goes past the edge, so what won't
+/// sew shows where it is.
+fn hoop(app: &mut VectorcraftApp, painter: &Painter, xf: &Xf, rect: egui::Rect) {
     let Some(q) = crate::panels::threads::design(app, painter.ctx()) else { return };
-    let h = &q["hoop"];
-    let (Some(w), Some(hh)) = (h["widthMm"].as_f64().filter(|v| *v > 0.0), h["heightMm"].as_f64().filter(|v| *v > 0.0)) else { return };
+    let (h, f) = (&q["hoop"], &q["field"]);
+    let num = |v: &Value| v.as_f64().filter(|x| x.is_finite());
+    let (Some(x), Some(y), Some(w), Some(hh)) = (num(&f["x"]), num(&f["y"]), num(&f["width"]), num(&f["height"])) else { return };
+    if w <= 0.0 || hh <= 0.0 {
+        return;
+    }
     let round = h["round"].as_bool().unwrap_or(false);
-    let center = match preview(app).as_deref().and_then(stitch_bounds) {
-        Some((lo, hi)) => Point::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0),
-        None => match app.session.active().and_then(|st| st.doc.artboards.first().map(|a| a.rect.center())) {
-            Some(c) => c,
-            None => return,
-        },
-    };
-    let (w, hh) = (w * PT_PER_MM, hh * PT_PER_MM);
-    let field = egui::Rect::from_two_pos(
-        xf.to_screen(Point::new(center.x - w / 2.0, center.y - hh / 2.0)),
-        xf.to_screen(Point::new(center.x + w / 2.0, center.y + hh / 2.0)),
-    );
+    let field = egui::Rect::from_two_pos(xf.to_screen(Point::new(x, y)), xf.to_screen(Point::new(x + w, y + hh)));
+    let outside = preview(app).map(|pv| outside_segments(&pv, Point::new(x + w / 2.0, y + hh / 2.0), (w / 2.0, hh / 2.0), round)).unwrap_or_default();
     let frame_pad = (12.0 * PT_PER_MM * xf.zoom) as f32;
     let frame = field.expand(frame_pad);
+    if !frame.intersects(rect) {
+        return;
+    }
     let ring = Color32::from_rgba_unmultiplied(120, 120, 128, 150);
-    let edge = Color32::from_rgb(40, 140, 220);
+    let edge = if outside.is_empty() { Color32::from_rgb(40, 140, 220) } else { OUTSIDE };
     let dash = |pts: &[egui::Pos2]| Shape::dashed_line(pts, Stroke::new(1.5, edge), 6.0, 4.0);
     if round {
         painter.circle_stroke(frame.center(), frame.width() / 2.0, Stroke::new((frame_pad * 0.5).max(3.0), ring));
         let r = field.width() / 2.0;
-        let pts: Vec<egui::Pos2> = (0..=96).map(|i| field.center() + egui::Vec2::angled(i as f32 / 96.0 * std::f32::consts::TAU) * r).collect();
+        let arc = |i: usize| field.center() + egui::Vec2::angled(i as f32 / 96.0 * std::f32::consts::TAU) * r;
+        // The page's corners lie outside a round field: shade each as a fan from the corner to
+        // its quarter of the circle.
+        let shade = Color32::from_black_alpha(46);
+        let mut mesh = egui::Mesh::default();
+        for (corner, quarter) in [(field.right_bottom(), 0), (field.left_bottom(), 1), (field.left_top(), 2), (field.right_top(), 3)] {
+            let base = mesh.vertices.len() as u32;
+            mesh.colored_vertex(corner, shade);
+            for k in 0..=24 {
+                mesh.colored_vertex(arc(quarter * 24 + k), shade);
+            }
+            for k in 0..24 {
+                mesh.add_triangle(base, base + 1 + k, base + 2 + k);
+            }
+        }
+        painter.add(Shape::mesh(mesh));
+        let pts: Vec<egui::Pos2> = (0..=96).map(arc).collect();
         painter.extend(dash(&pts));
     } else {
         let corner = CornerRadius::same((frame_pad * 1.4).clamp(4.0, 120.0) as u8);
@@ -282,8 +284,58 @@ fn hoop(app: &mut VectorcraftApp, painter: &Painter, xf: &Xf) {
         let pts = [field.left_top(), field.right_top(), field.right_bottom(), field.left_bottom(), field.left_top()];
         painter.extend(dash(&pts));
     }
+    // The stitches past the field's edge, in red over the art and the stitches.
+    if !outside.is_empty() {
+        let width = ((THREAD_MM * PT_PER_MM * xf.zoom) as f32).max(2.0);
+        let cull = rect.expand(width);
+        let shapes: Vec<Shape> = outside
+            .iter()
+            .map(|(a, b)| (xf.to_screen(*a), xf.to_screen(*b)))
+            .filter(|(a, b)| egui::Rect::from_two_pos(*a, *b).intersects(cull))
+            .map(|(a, b)| {
+                if a.distance(b) < 0.5 {
+                    Shape::circle_filled(a, width / 2.0, OUTSIDE)
+                } else {
+                    Shape::line_segment([a, b], Stroke::new(width, OUTSIDE))
+                }
+            })
+            .collect();
+        painter.extend(shapes);
+    }
     let name = h["name"].as_str().unwrap_or_default();
     painter.text(field.left_top() + vec2(4.0, 4.0), egui::Align2::LEFT_TOP, name, egui::FontId::proportional(11.0), edge);
+}
+
+/// Stitches past the hoop's edge are drawn in this.
+const OUTSIDE: Color32 = Color32::from_rgb(220, 38, 38);
+/// Most stitches drawn red past the hoop's edge.
+const MAX_OUTSIDE: usize = 200_000;
+/// A stitch may end this far past the edge (doc units: 0.15 mm, a machine file's rounding).
+const OUTSIDE_SLACK: f64 = 0.15 * PT_PER_MM;
+
+/// The sewn stitches of `pv` with an end outside the field round `center` (`half` its width and
+/// height; a circle of radius `half.0` when `round`), as (from, to) in doc units.
+fn outside_segments(pv: &StitchPreview, center: Point, half: (f64, f64), round: bool) -> Vec<(Point, Point)> {
+    let out = |p: Point| {
+        let (dx, dy) = (p.x - center.x, p.y - center.y);
+        if round { dx.hypot(dy) > half.0 + OUTSIDE_SLACK } else { dx.abs() > half.0 + OUTSIDE_SLACK || dy.abs() > half.1 + OUTSIDE_SLACK }
+    };
+    let mut segs = vec![];
+    let mut prev: Option<Point> = None;
+    for s in &pv.stitches {
+        let p = Point::new(s.x, s.y);
+        if !(p.x.is_finite() && p.y.is_finite()) {
+            continue;
+        }
+        if s.sew && out(p) {
+            segs.push((prev.filter(|_| !s.trim).unwrap_or(p), p));
+            if segs.len() >= MAX_OUTSIDE {
+                break;
+            }
+        }
+        prev = Some(p);
+    }
+    segs
 }
 
 /// View › Stitch Overlays › Jumps and Trims and Needle Points, over the stitches sewn so far.

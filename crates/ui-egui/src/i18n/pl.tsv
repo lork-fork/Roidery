@@ -4861,7 +4861,6 @@ mark-style	Japanese	Japońskie
 	Satin this wide can snag and pull: split the column or sew it as a fill	Tak szeroka satyna może zaczepiać się i ściągać materiał: podziel kolumnę lub haftuj ją jako wypełnienie
 	Select a path with it to put it on the path	Zaznacz razem z nim ścieżkę, aby umieścić go na ścieżce
 	Sews as fill	Haftowane jako wypełnienie
-	Show Hoop	Pokaż tamborek
 	Show Jumps and Trims	Pokaż przeskoki i obcięcia
 	Show Needle Points	Pokaż punkty wkłucia
 	Show Underlay	Pokaż podkład
@@ -4927,3 +4926,6 @@ mark-style	Japanese	Japońskie
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Przy otwieraniu pominięto to, czego Roidery jeszcze nie odczytuje ({what}), więc zastąpienie pliku utraci to bezpowrotnie. Zapisz pod inną nazwą, aby to zachować.
 	Roidery copies the fonts to {folder}.	Roidery kopiuje czcionki do {folder}.
 	Roidery read this script without running it.	Roidery odczytał ten skrypt, nie uruchamiając go.
+# Roidery: the page is the hoop.
+	Partly outside the hoop	Częściowo poza tamborkiem
+	{d} mm outside the hoop	{d} mm poza tamborkiem

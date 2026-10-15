@@ -1,17 +1,22 @@
 //! Roidery: design-wide embroidery settings, kept in [`Document::embroidery`]: the fabric (the
 //! automatic rule's stitch settings come from its preset), the thread chart the design's
 //! colours are matched against (machine files then name the threads), and the hoop it is sewn in.
+//!
+//! The page is the hoop: a design with a hoop has its first artboard as the hoop's sewing field
+//! ([`HoopField`]). The needle starts at the page's centre, so the design sews where it sits on
+//! the page, and a page resized by hand is a custom hoop of the page's size.
 
-use roidery_formats::Thread;
 use roidery_formats::charts::{self, Chart};
 use roidery_formats::hoops::{self, Fit};
+use roidery_formats::{Command, Design, Thread};
 use roidery_stitch::{FABRICS, Fabric};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::{Document, NodeId};
+use vectorcraft_geom::Rect;
 
-use super::{Part, all_objects, objects_in, part_rgb, parts};
+use super::{MM_PER_PT, Part, all_objects, objects_in, part_rgb, parts};
 use crate::Session;
 use crate::cmd::overprint::edit_counted;
 use crate::cmd::{Result, bad, str_param, targets};
@@ -72,15 +77,7 @@ fn hoop_param(v: &Value) -> Result<Option<DesignHoop>> {
         if id.eq_ignore_ascii_case("none") || id.is_empty() {
             return Ok(None);
         }
-        let h = hoops::find(id).ok_or_else(|| bad(C, format!("unknown hoop `{id}`")))?;
-        return Ok(Some(DesignHoop {
-            id: h.id.into(),
-            brand: h.brand.into(),
-            name: h.name.into(),
-            width: h.width,
-            height: h.height,
-            round: h.round,
-        }));
+        return library_hoop(id).map(Some).ok_or_else(|| bad(C, format!("unknown hoop `{id}`")));
     }
     let mm = |k: &str| v.get(k).and_then(Value::as_f64).filter(|x| x.is_finite() && (10.0..=2000.0).contains(x));
     let (Some(width), Some(height)) = (mm("width"), mm("height")) else {
@@ -99,6 +96,106 @@ impl DesignSettings {
 
     pub fn fabric(&self) -> &'static Fabric {
         Fabric::find(&self.fabric).unwrap_or_else(Fabric::default_fabric)
+    }
+}
+
+/// A custom hoop as big as `w` × `h` mm.
+fn custom_hoop(w: f64, h: f64, name: Option<&str>) -> DesignHoop {
+    let r = |v: f64| (v * 10.0).round() / 10.0;
+    let name = name.map_or_else(|| format!("{} × {} mm", r(w), r(h)), str::to_string);
+    DesignHoop { id: String::new(), brand: "Custom".into(), name, width: w, height: h, round: false }
+}
+
+/// A library hoop by id.
+fn library_hoop(id: &str) -> Option<DesignHoop> {
+    let h = hoops::find(id)?;
+    Some(DesignHoop { id: h.id.into(), brand: h.brand.into(), name: h.name.into(), width: h.width, height: h.height, round: h.round })
+}
+
+/// The embroidery settings of a new document whose page is a hoop: the library hoop `id`, or
+/// (`"custom"`) a custom hoop as big as the page, named `name` (else by its size).
+pub(crate) fn new_document_hoop(id: &str, w_mm: f64, h_mm: f64, name: Option<&str>) -> Option<Value> {
+    let hoop = if id.eq_ignore_ascii_case("custom") { Some(custom_hoop(w_mm, h_mm, name)) } else { library_hoop(id) }?;
+    serde_json::to_value(DesignSettings { hoop: Some(hoop), ..DesignSettings::default() }).ok()
+}
+
+/// Rounding in a machine file can add a tenth of a millimetre.
+const FIT_SLACK_MM: f64 = 0.15;
+/// A page this close to its hoop's size (mm) is still that hoop.
+const SAME_SIZE_MM: f64 = 0.5;
+
+/// The hoop's sewing field, which is the design's first artboard: the page is the hoop.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HoopField {
+    /// The page, document units.
+    pub rect: Rect,
+    /// The hoop as the page is now: the chosen hoop (turned when the page is), or a custom
+    /// hoop as big as a page resized by hand.
+    pub hoop: DesignHoop,
+}
+
+impl HoopField {
+    /// `d`'s sewing field; None when the design has no hoop (or no artboard).
+    pub fn of(d: &Document) -> Option<Self> {
+        let hoop = DesignSettings::of(d).hoop?;
+        let rect = d.artboards.first()?.rect;
+        let (w, h) = (rect.width() * MM_PER_PT, rect.height() * MM_PER_PT);
+        let same = |a: f64, b: f64| (a - b).abs() <= SAME_SIZE_MM;
+        let hoop = if same(w, hoop.width) && same(h, hoop.height) {
+            hoop
+        } else if !hoop.round && same(w, hoop.height) && same(h, hoop.width) {
+            DesignHoop { width: hoop.height, height: hoop.width, ..hoop }
+        } else {
+            custom_hoop(w, h, None)
+        };
+        Some(Self { rect, hoop })
+    }
+
+    /// Where the needle starts (the page's centre), mm: the stitch plan's origin.
+    pub fn origin_mm(&self) -> (f64, f64) {
+        let c = self.rect.center();
+        (c.x * MM_PER_PT, c.y * MM_PER_PT)
+    }
+
+    /// How far (mm) the stitches of `design`, planned from [`Self::origin_mm`], go past the
+    /// field's edge (0 when they are all inside).
+    pub fn outside_mm(&self, design: &Design) -> f64 {
+        let (hw, hh) = (self.hoop.width / 2.0, self.hoop.height / 2.0);
+        design
+            .stitches
+            .iter()
+            .filter(|s| s.command == Command::Stitch)
+            .map(|s| if self.hoop.round { s.x.hypot(s.y) - hw } else { (s.x.abs() - hw).max(s.y.abs() - hh) })
+            .fold(0.0f64, f64::max)
+    }
+
+    /// How `design` (planned from [`Self::origin_mm`], `w` × `h` mm) sits in the hoop where it
+    /// is on the page: `{fit: "fits"}`, `{fit: "outside", outsideMm}` (small enough, but partly
+    /// off the page), or the hoop's size check (`tooLarge`, `rotate`) with `outsideMm`.
+    pub fn fit_json(&self, design: &Design, w: f64, h: f64) -> Value {
+        let out = self.outside_mm(design);
+        if out <= FIT_SLACK_MM {
+            return json!({ "fit": "fits" });
+        }
+        let mut v = if self.hoop.round {
+            // A round hoop holds the design if the smallest circle round its stitches fits: its
+            // bounding box's diagonal would turn a star away.
+            let pts: Vec<(f64, f64)> = design.stitches.iter().filter(|s| s.command == Command::Stitch).map(|s| (s.x, s.y)).collect();
+            let over = (hoops::enclosing_circle(&pts).map_or(0.0, |c| c.2) - self.hoop.width).max(0.0);
+            if over <= FIT_SLACK_MM { json!({ "fit": "fits" }) } else { json!({ "fit": "tooLarge", "overWidthMm": over, "overHeightMm": over }) }
+        } else {
+            self.hoop.fit_json(w, h)
+        };
+        if v["fit"] == "fits" {
+            v["fit"] = json!("outside");
+        }
+        v["outsideMm"] = json!((out * 10.0).round() / 10.0);
+        v
+    }
+
+    /// The field for the UI, document units.
+    pub fn rect_json(&self) -> Value {
+        json!({ "x": self.rect.x0, "y": self.rect.y0, "width": self.rect.width(), "height": self.rect.height() })
     }
 }
 
@@ -127,6 +224,7 @@ fn design_colors(d: &Document, ds: &DesignSettings) -> Vec<([u8; 3], Vec<NodeId>
 pub(super) fn design(s: &mut Session, _p: &Value) -> Result<Value> {
     let d = &s.doc()?.doc;
     let ds = DesignSettings::of(d);
+    let field = HoopField::of(d);
     let fabric = ds.fabric();
     let threads: Vec<Value> = design_colors(d, &ds)
         .into_iter()
@@ -155,7 +253,8 @@ pub(super) fn design(s: &mut Session, _p: &Value) -> Result<Value> {
         "chart": ds.chart.as_ref().map(|c| json!({ "name": c.name, "threads": c.threads.len() })),
         "charts": charts::BUILT_IN.iter().map(|(id, name)| json!({ "id": id, "name": name })).collect::<Vec<_>>(),
         "threads": threads,
-        "hoop": ds.hoop.as_ref().map(DesignHoop::json),
+        "hoop": field.as_ref().map(|f| f.hoop.json()).or_else(|| ds.hoop.as_ref().map(DesignHoop::json)),
+        "field": field.as_ref().map(HoopField::rect_json),
         "hoops": hoops::HOOPS.iter().map(|h| json!({ "id": h.id, "brand": h.brand, "name": h.name, "widthMm": h.width, "heightMm": h.height, "round": h.round })).collect::<Vec<_>>(),
     }))
 }
@@ -216,8 +315,8 @@ pub(super) fn set_design(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(h) = hoop.clone() {
         new.hoop = h;
     }
-    // A hoop chosen from here sizes the first artboard to its sewing field, about its centre.
-    let field = hoop.flatten().filter(|_| p.get("fitArtboard").and_then(Value::as_bool).unwrap_or(true));
+    // The page is the hoop: a hoop chosen from here sizes the first artboard to its sewing field, about its centre.
+    let field = hoop.flatten();
     let refit = fabric.is_some() && p.get("applyToObjects").and_then(Value::as_bool).unwrap_or(true);
     let value = serde_json::to_value(&new).map_err(|e| bad(C, e.to_string()))?;
     let changed = edit_counted(s, "Embroidery Design", |d| {

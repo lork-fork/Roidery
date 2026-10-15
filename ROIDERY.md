@@ -11,7 +11,7 @@ interface and keyboard shortcuts are VectorCraft's, and embroidery is added on t
 | --- | --- | --- |
 | `roidery-formats` | `crates/emb-formats` | Machine files: read and write Tajima DST and TAP, Brother PES (PES v1 with its PEC block and thumbnails), Janome JEF, Melco EXP, Husqvarna Viking VP3, Singer XXX and Barudan U01; read Barudan DSB, ZSK DSZ and Husqvarna Viking HUS; the hoop library (sewing fields by machine brand) and the fit check; thread charts (Brother and Janome built in, GIMP palette and CSV import) with colour matching in Lab. |
 | `roidery-stitch` | `crates/emb-stitch` | Stitch generators: single and triple run, satin along a path (a Satin Column when its stroke has a width profile), Satin Blocks (two rails with rungs, steerable like Ember's tool), tatami fill with stagger and underlay, gradient fill (tatami fading from dense to open), contour fill (rows following the outline inwards, built on VectorCraft's Offset Path), circular fill (rings round a centre you can move), motif fill (rows of zigzags, waves, diamonds or scales in single or triple run), E-stitch and rope, manual stitches; lettering in Roidery Sans, an original centre-line satin font drawn for Roidery; fabric presets (density, pull compensation and underlay per fabric). |
-| `roidery-plan` | `crates/emb-plan` | The stitch plan: sewing order, tie-ins and tie-offs, jumps and trims, colour changes, centring on the hoop; reviewing a design (sew time, thread density map). |
+| `roidery-plan` | `crates/emb-plan` | The stitch plan: sewing order, tie-ins and tie-offs, jumps and trims, colour changes, placing the design in the hoop (centred, or kept where it sits on the page); reviewing a design (sew time, thread density map). |
 | `roidery-mockup` | `crates/emb-mockup` | Mockups: fabric textures (woven, knit, piqué, terry, fleece, denim, twill, leather), soft light, and realistic thread drawn on the CPU (the Stitch View's thread shader ported, with shadows), so a design can be shown sewn on a garment. |
 | `roidery-fonts` | `crates/emb-fonts` | Digitized embroidery fonts in Ink/Stitch's font format (a folder with `font.json` and an SVG with one layer per letter): reads each letter's pieces with their stitch parameters (satin columns become Satin Blocks with paired rails, fills tatami, strokes running stitches), lays text out with the font's kerning and ligatures, and finds the font library (`library`). The format is read from its published files; no Ink/Stitch code is used. |
 
@@ -71,8 +71,15 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   mark where the thread is trimmed), Needle Points (`view.needlePoints`), Underlay
   (`view.underlay`, off shows just the top stitches; `roidery_plan::plan_kinds` tags each record
   with its stitch kind and `PreviewStitch` carries `underlay` and `trim`), Current Color Only
-  (`view.soloColor`, the other threads faded) and Hoop (`view.hoop`, the hoop's sewing field and
-  frame round the design, centred as the machine centres it).
+  (`view.soloColor`, the other threads faded). The hoop is always drawn when the design has one.
+- The page is the hoop (`embroidery/design.rs` `HoopField`): the first artboard is the hoop's
+  sewing field and its centre is where the needle starts, so `stitch.export` keeps the design
+  where it sits on the page (`PlanSettings::origin`; PES and JEF headers follow the origin).
+  Picking a hoop (Stitch Settings, the Embroidery bar, New Document) sizes the page about its
+  centre; resizing the page by hand makes it a custom hoop, and a page turned on its side keeps
+  its hoop. `stitchview::hoop` draws the frame round the page (round hoops shade the corners),
+  and stitches past the edge in red; `stitch.info` reports fit `outside` with `outsideMm`.
+  Documents with no hoop are centred on the needle as before.
 - `crates/ui-egui/src/stitchview.rs`: View › Stitch View (Cmd+Y) cycles the vector art, the stitches
   as lines, and realistic thread; Outline moved off Cmd+Y to make room. View › Sew-Out Player
   (`view.sewOut`) sews the design stitch by stitch with play, step, scrub and speed.
@@ -123,7 +130,8 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   `appearance::fx_menu`, Properties' appearance section, and `first_run` in the desktop and web
   apps.
 - `crates/engine/src/cmd/newdoc.rs`: an Embroidery category of hoop presets, first in New
-  Document, which opens on it; Home's quick-start cards are hoops.
+  Document, which opens on it, followed by every hoop in the library by brand; each preset sets
+  the document's hoop (`DocSettings::hoop`). Home's quick-start cards are hoops.
 - `crates/ui-egui/src/panels/sequencer.rs`: the Sequencer dock tab (`DockTab::Sequencer`, the
   Embroidery workspace's open tab), first sewn at the top. Objects lays the design out like
   Layers: layers (when there are several) and groups that fold, then each object with a

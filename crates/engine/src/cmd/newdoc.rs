@@ -127,6 +127,10 @@ pub struct DocSettings {
     pub color_mode: ColorMode,
     pub raster_effects_ppi: f64,
     pub preview_mode: PreviewMode,
+    /// Roidery: the hoop the page is (a hoop id from the library, or `custom` for a hoop as big
+    /// as the page); empty for a page that isn't a hoop.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub hoop: String,
 }
 
 impl Default for DocSettings {
@@ -146,6 +150,7 @@ impl Default for DocSettings {
             color_mode: ColorMode::Rgb,
             raster_effects_ppi: 72.0,
             preview_mode: PreviewMode::Default,
+            hoop: String::new(),
         }
     }
 }
@@ -194,6 +199,7 @@ impl DocSettings {
             "colorMode": color_mode_id(self.color_mode),
             "rasterEffectsPpi": self.raster_effects_ppi,
             "previewMode": self.preview_mode.id(),
+            "hoop": self.hoop,
         })
     }
 
@@ -252,6 +258,13 @@ impl DocSettings {
                 .as_f64()
                 .filter(|r| (1.0..=2400.0).contains(r))
                 .ok_or_else(|| bad(cmd, "rasterEffectsPpi must be 1–2400 (72 screen, 150 medium, 300 high)"))?;
+        }
+        if let Some(h) = p.get("hoop").filter(|v| !v.is_null()) {
+            let h = h.as_str().ok_or_else(|| bad(cmd, "hoop must be a hoop id (see stitch.design), \"custom\" or \"\""))?;
+            if !h.is_empty() && !h.eq_ignore_ascii_case("custom") && roidery_formats::hoops::find(h).is_none() {
+                return Err(bad(cmd, format!("unknown hoop `{h}` (see stitch.design)")));
+            }
+            self.hoop = h.to_string();
         }
         if let Some(m) = p.get("previewMode").filter(|v| !v.is_null()) {
             self.preview_mode = m.as_str().and_then(PreviewMode::parse).ok_or_else(|| bad(cmd, "previewMode must be default, pixel or overprint"))?;
@@ -519,19 +532,46 @@ pub fn category_names() -> impl Iterator<Item = &'static str> {
     ["Recent", "Saved"].into_iter().chain(CATEGORIES.iter().map(|c| c.0))
 }
 
+/// Roidery: the category whose pages are hoops.
+const EMBROIDERY: &str = "Embroidery";
+
 /// The built-in presets of one category: screen sizes in pixels, the others in `general`
-/// (Preferences ▸ Units ▸ General).
-fn builtin(c: &Category, general: Unit) -> impl Iterator<Item = DocSettings> + '_ {
-    let (_, color_mode, ppi, presets) = *c;
-    presets.iter().map(move |&(name, w, h, units)| DocSettings {
-        name: name.into(),
-        width: units.to_pt(w),
-        height: units.to_pt(h),
-        units: if units == Unit::Pixels { units } else { general },
-        color_mode,
-        raster_effects_ppi: ppi,
-        ..DocSettings::default()
-    })
+/// (Preferences ▸ Units ▸ General). Roidery: each Embroidery preset's page is a hoop (a custom
+/// hoop of its size, the cap frame the library's), followed by every hoop in the library, by
+/// machine brand.
+fn builtin(c: &Category, general: Unit) -> Vec<DocSettings> {
+    let (category, color_mode, ppi, presets) = *c;
+    let embroidery = category == EMBROIDERY;
+    let mut out: Vec<DocSettings> = presets
+        .iter()
+        .map(|&(name, w, h, units)| DocSettings {
+            name: name.into(),
+            width: units.to_pt(w),
+            height: units.to_pt(h),
+            units: if units == Unit::Pixels { units } else { general },
+            color_mode,
+            raster_effects_ppi: ppi,
+            hoop: match (embroidery, name.starts_with("Cap ")) {
+                (false, _) => String::new(),
+                (true, true) => "commercial-cap".into(),
+                (true, false) => "custom".into(),
+            },
+            ..DocSettings::default()
+        })
+        .collect();
+    if embroidery {
+        out.extend(roidery_formats::hoops::HOOPS.iter().map(|h| DocSettings {
+            name: format!("{} {}", h.brand, h.name),
+            width: MM.to_pt(h.width),
+            height: MM.to_pt(h.height),
+            units: general,
+            color_mode,
+            raster_effects_ppi: ppi,
+            hoop: h.id.into(),
+            ..DocSettings::default()
+        }));
+    }
+    out
 }
 
 /// The presets of the category `name` (any case), or None for no such category.
@@ -542,7 +582,7 @@ pub fn category(s: &Session, name: &str) -> Option<Vec<DocSettings>> {
     if name.eq_ignore_ascii_case("Saved") {
         return Some(s.prefs.new_doc_presets.clone());
     }
-    CATEGORIES.iter().find(|c| c.0.eq_ignore_ascii_case(name)).map(|c| builtin(c, s.default_units()).collect())
+    CATEGORIES.iter().find(|c| c.0.eq_ignore_ascii_case(name)).map(|c| builtin(c, s.default_units()))
 }
 
 /// A preset by name (any case): a saved one first, then the built-in ones.
@@ -581,6 +621,17 @@ pub(crate) fn file_new(s: &mut Session, p: &Value) -> Result<Value> {
         settings.name = "Custom".into();
     }
     let mut d = settings.document();
+    // Roidery: a hoop preset's page is the hoop's sewing field, its centre where the needle starts.
+    if !settings.hoop.is_empty() {
+        let mm = super::embroidery::MM_PER_PT;
+        let name = (settings.name != "Custom").then(|| settings.name.strip_prefix("Hoop ").unwrap_or(&settings.name));
+        if let Some(e) = super::embroidery::design::new_document_hoop(&settings.hoop, settings.width * mm, settings.height * mm, name) {
+            d.embroidery = Some(e);
+            if let Some(a) = d.artboards.first_mut() {
+                a.show_center_mark = true;
+            }
+        }
+    }
     d.grid = s.prefs.grid();
     d.title = match str_param(p, "name").or(str_param(p, "title")).map(str::trim).filter(|t| !t.is_empty()) {
         // New Document offers the next untitled name: taking it uses it up.

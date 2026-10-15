@@ -78,6 +78,7 @@ pub fn export(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
     let done = match o.get("hoop").and_then(|h| h["fit"].as_str()) {
         Some("tooLarge") => format!("{done}. {}", tl!("The design is larger than the hoop.")),
         Some("rotate") => format!("{done}. {}", tl!("Turn the design 90° to fit the hoop.")),
+        Some("outside") => format!("{done}. {}.", tl!("Partly outside the hoop")),
         _ => done,
     };
     app.status(done);

@@ -188,6 +188,11 @@ pub fn write(design: &Design) -> Result<Vec<u8>, FormatError> {
     }
     body.extend([0x80, 0x10]);
     let (w, h) = if min_x <= max_x { (max_x - min_x, max_y - min_y) } else { (0, 0) };
+    // The header's extents are symmetric about the origin (where the needle starts): half the
+    // size for a design centred on it, else far enough each way to hold a design that keeps its
+    // place in the hoop.
+    let half = |lo: i32, hi: i32, size: i32| if (lo + hi).abs() <= 2 { size / 2 } else { lo.saturating_abs().max(hi.saturating_abs()) };
+    let (hw, hh) = if min_x <= max_x { (half(min_x, max_x, w), half(min_y, max_y, h)) } else { (0, 0) };
     let colors = threads.len();
     let colors_i32 = i32::try_from(colors).map_err(|_| FormatError::TooLarge { format: FORMAT, why: "too many colours".into() })?;
     let mut out = Vec::with_capacity(HEADER + colors * 8 + body.len());
@@ -198,8 +203,7 @@ pub fn write(design: &Design) -> Result<Vec<u8>, FormatError> {
     out.extend([0, 0]);
     i32le(colors_i32, &mut out);
     i32le(count, &mut out);
-    i32le(hoop(w, h), &mut out);
-    let (hw, hh) = (w / 2, h / 2);
+    i32le(hoop(w.max(2 * hw), h.max(2 * hh)), &mut out);
     for v in [hw, hh, hw, hh] {
         i32le(v, &mut out);
     }
@@ -291,11 +295,21 @@ mod tests {
         assert_eq!(i32_at(4), 0x14);
         assert_eq!(&bytes[8..22], DATE);
         assert_eq!(i32_at(24), 2);
-        // The sample is 30 × 40 mm: the 50 × 50 hoop.
-        assert_eq!(i32_at(32), 1);
-        assert_eq!((i32_at(36), i32_at(40)), (150, 200));
+        // The sample is 30 × 40 mm with its corner at the origin: the needle travels 30 mm one
+        // way and 40 mm the other, so it needs the 110 × 110 hoop and its extents say so.
+        assert_eq!(i32_at(32), 0);
+        assert_eq!((i32_at(36), i32_at(40)), (300, 400));
         assert_eq!(i32_at(0x74 + 8), 0x0D);
         assert_eq!(&bytes[bytes.len() - 2..], &[0x80, 0x10]);
+        // Centred on the origin, it fits the 50 × 50 hoop.
+        let mut centred = sample();
+        for s in &mut centred.stitches {
+            (s.x, s.y) = (s.x - 15.0, s.y - 20.0);
+        }
+        let bytes = write(&centred).unwrap();
+        let i32_at = |o: usize| i32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+        assert_eq!(i32_at(32), 1);
+        assert_eq!((i32_at(36), i32_at(40)), (150, 200));
     }
 
     #[test]

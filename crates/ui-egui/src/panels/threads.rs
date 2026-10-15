@@ -150,6 +150,10 @@ pub(crate) fn hoop_rows(app: &mut VectorcraftApp, ui: &mut Ui, q: &Value, fit: O
     let (text, color) = match fit["fit"].as_str() {
         Some("fits") => (tl!("Fits the hoop").to_string(), t.text_dim),
         Some("rotate") => (tl!("Fits turned 90°").to_string(), t.warning),
+        Some("outside") => {
+            let mm = fit["outsideMm"].as_f64().unwrap_or(0.0);
+            (tl!("{d} mm outside the hoop").replace("{d}", &format!("{mm:.1}")), t.error)
+        }
         Some("tooLarge") => {
             let over = |k: &str| fit[k].as_f64().filter(|v| *v > 0.05);
             let text = match (over("overWidthMm"), over("overHeightMm")) {

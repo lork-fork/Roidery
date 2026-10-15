@@ -206,9 +206,6 @@ pub struct ViewFlags {
     /// Roidery: View → Show Needle Points, a dot where the needle goes in.
     #[serde(default)]
     pub needle_points: bool,
-    /// Roidery: View → Show Hoop, the hoop's sewing field round the design.
-    #[serde(default)]
-    pub hoop: bool,
     /// Roidery: View → Hide Underlay, the stitch views without underlay.
     #[serde(default)]
     pub hide_underlay: bool,
@@ -242,7 +239,6 @@ impl Default for ViewFlags {
             density: false,
             jumps: false,
             needle_points: false,
-            hoop: false,
             hide_underlay: false,
             solo: None,
         }

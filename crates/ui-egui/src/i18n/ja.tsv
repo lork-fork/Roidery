@@ -4574,7 +4574,6 @@ lighting	Light	ライト
 	Satin this wide can snag and pull: split the column or sew it as a fill	この幅のサテンは引っかかりやすい：列を分けるか塗りにしてください
 	Select a path with it to put it on the path	パスと一緒に選択するとパスに沿わせられます
 	Sews as fill	塗りとして刺繍
-	Show Hoop	フープを表示
 	Show Jumps and Trims	ジャンプとトリムを表示
 	Show Needle Points	針落ち点を表示
 	Show Underlay	下縫いを表示
@@ -4633,3 +4632,6 @@ lighting	Light	ライト
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	開いたときに Roidery がまだ読み込めない内容（{what}）が除外されたため、置き換えるとそれは完全に失われます。保持するには別の名前で保存してください。
 	Roidery copies the fonts to {folder}.	Roidery はフォントを {folder} にコピーします。
 	Roidery read this script without running it.	Roidery はこのスクリプトを実行せずに読み取りました。
+# Roidery: the page is the hoop.
+	Partly outside the hoop	一部が枠からはみ出しています
+	{d} mm outside the hoop	枠から {d} mm はみ出します

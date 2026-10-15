@@ -4588,7 +4588,6 @@ lighting	Light	Luce
 	Satin this wide can snag and pull: split the column or sew it as a fill	Un satin così largo può impigliarsi e tirare: dividi la colonna o ricamala come riempimento
 	Select a path with it to put it on the path	Selezionala insieme a un tracciato per metterla sul tracciato
 	Sews as fill	Ricamato come riempimento
-	Show Hoop	Mostra telaio
 	Show Jumps and Trims	Mostra salti e tagli filo
 	Show Needle Points	Mostra punti d'ago
 	Show Underlay	Mostra sottopunto
@@ -4654,3 +4653,6 @@ lighting	Light	Luce
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Aprendolo è rimasto fuori ciò che Roidery non sa ancora leggere ({what}), quindi sostituirlo lo perde per sempre. Salva con un altro nome per conservarlo.
 	Roidery copies the fonts to {folder}.	Roidery copia i font in {folder}.
 	Roidery read this script without running it.	Roidery ha letto questo script senza eseguirlo.
+# Roidery: the page is the hoop.
+	Partly outside the hoop	In parte fuori dal telaio
+	{d} mm outside the hoop	{d} mm fuori dal telaio

@@ -8,7 +8,8 @@
 //! - a colour change whenever the thread changes;
 //! - stitches longer than a machine can sew split into pieces, and needle-wearing tiny stitches
 //!   dropped;
-//! - the whole design centred on the hoop's origin.
+//! - the whole design centred on the hoop's origin, or, when the page is the hoop, moved so the
+//!   page's centre is the origin (the design sews where it sits on the page).
 //!
 //! [`review`] checks a planned design: its sew time and a map of thread density.
 
@@ -39,13 +40,27 @@ pub struct PlanSettings {
     pub min_stitch: f64,
     /// Move the design so its centre is at the origin (where the machine centres the hoop).
     pub center: bool,
+    /// Where the needle starts, mm in the objects' space: the design is moved so this point is
+    /// the origin, keeping its place in the hoop (`center` is then ignored).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<(f64, f64)>,
     /// Travel as running stitches where fills sewn later will hide them, instead of jumping.
     pub travel_under: bool,
 }
 
 impl Default for PlanSettings {
     fn default() -> Self {
-        Self { trim_at: 3.0, tie_in: true, tie_off: true, tie_length: 0.5, max_stitch: 12.0, min_stitch: 0.3, center: true, travel_under: true }
+        Self {
+            trim_at: 3.0,
+            tie_in: true,
+            tie_off: true,
+            tie_length: 0.5,
+            max_stitch: 12.0,
+            min_stitch: 0.3,
+            center: true,
+            origin: None,
+            travel_under: true,
+        }
     }
 }
 
@@ -58,6 +73,7 @@ impl PlanSettings {
             tie_length: f(self.tie_length, d.tie_length, 0.2, 2.0),
             max_stitch: f(self.max_stitch, d.max_stitch, 1.0, 12.1),
             min_stitch: f(self.min_stitch, d.min_stitch, 0.0, 1.0),
+            origin: self.origin.filter(|(x, y)| x.is_finite() && y.is_finite()),
             ..self.clone()
         }
     }
@@ -165,10 +181,12 @@ pub fn plan_kinds(objects: &[PlanObject], settings: &PlanSettings, name: &str) -
     p.push(pos, Command::End);
     let kinds = p.kinds;
     let mut design = Design { stitches: p.out, threads: p.threads, name: name.to_string() };
-    if s.center
-        && let Some(b) = design.bounds()
-    {
-        let (cx, cy) = ((b.min_x + b.max_x) / 2.0, (b.min_y + b.max_y) / 2.0);
+    let shift = match s.origin {
+        Some(o) => Some(o),
+        None if s.center => design.bounds().map(|b| ((b.min_x + b.max_x) / 2.0, (b.min_y + b.max_y) / 2.0)),
+        None => None,
+    };
+    if let Some((cx, cy)) = shift {
         for st in &mut design.stitches {
             st.x -= cx;
             st.y -= cy;
@@ -368,6 +386,18 @@ mod tests {
             plan(&[PlanObject { stitches: line(10.0, 30.0, 5.0), thread: Thread::default(), ..Default::default() }], &PlanSettings::default(), "x");
         let b = d.bounds().unwrap();
         assert!((b.min_x + b.max_x).abs() < 1e-9 && (b.min_y + b.max_y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_origin_keeps_the_place_in_the_hoop() {
+        let s = PlanSettings { origin: Some((20.0, 5.0)), ..PlanSettings::default() };
+        let d = plan(&[PlanObject { stitches: line(10.0, 30.0, 5.0), thread: Thread::default(), ..Default::default() }], &s, "x");
+        let b = d.bounds().unwrap();
+        assert!((b.min_x + 10.0).abs() < 1e-9 && (b.max_x - 10.0).abs() < 1e-9, "{b:?}");
+        let s = PlanSettings { origin: Some((0.0, 0.0)), ..PlanSettings::default() };
+        let d = plan(&[PlanObject { stitches: line(10.0, 30.0, 5.0), thread: Thread::default(), ..Default::default() }], &s, "x");
+        let b = d.bounds().unwrap();
+        assert!((b.min_x - 10.0).abs() < 1e-9 && (b.max_x - 30.0).abs() < 1e-9 && (b.min_y - 5.0).abs() < 1e-9, "{b:?}");
     }
 
     #[test]

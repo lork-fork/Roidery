@@ -654,15 +654,20 @@ fn a_hoop_sizes_the_artboard_and_says_whether_the_design_fits() {
     let i = run(&mut s, "stitch.info", json!({}));
     assert_eq!(i["hoop"]["fit"], "tooLarge");
     assert!(i["hoop"]["overWidthMm"].as_f64().unwrap() > 15.0);
-    // 5 × 7 in (130 wide, 180 tall) holds the design (~120 × 40 mm) as it is.
+    // 5 × 7 in (130 wide, 180 tall) is big enough for the design (~120 × 40 mm), but the page is
+    // the hoop and the strip runs past its right edge until it is centred.
     run(&mut s, "stitch.setDesign", json!({"hoop": "brother-5x7"}));
+    let i = run(&mut s, "stitch.info", json!({}));
+    assert_eq!(i["hoop"]["fit"], "outside");
+    assert!(i["hoop"]["outsideMm"].as_f64().unwrap() > 4.0, "{i}");
+    run(&mut s, "select.none", json!({}));
+    run(&mut s, "stitch.centerInHoop", json!({}));
     assert_eq!(run(&mut s, "stitch.info", json!({}))["hoop"]["fit"], "fits");
-    run(&mut s, "stitch.setDesign", json!({"hoop": {"width": 50, "height": 150}, "fitArtboard": false}));
+    run(&mut s, "stitch.setDesign", json!({"hoop": {"width": 50, "height": 150}}));
     let out = run(&mut s, "stitch.export", json!({}));
     assert_eq!(out["hoop"]["fit"], "rotate");
     assert_eq!(out["hoop"]["brand"], "Custom");
-    // The custom hoop left the artboard as the 5 × 7 made it.
-    assert!((s.doc().unwrap().doc.artboards[0].rect.width() * MM_PER_PT_TEST - 130.0).abs() < 1e-9);
+    assert!((s.doc().unwrap().doc.artboards[0].rect.width() * MM_PER_PT_TEST - 50.0).abs() < 1e-9);
     // Undo steps back one hoop at a time; "none" clears it.
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(run(&mut s, "stitch.design", json!({}))["hoop"]["id"], "brother-5x7");
@@ -958,4 +963,108 @@ fn image_trace_sews_the_colours_as_tatami_and_leaves_the_white_out() {
     two_squares_on_white(&mut s);
     let e = s.execute("stitch.traceImage", &json!({"preset": "16 Colors"})).unwrap_err().to_string();
     assert!(e.contains("2 Color, 3 Color, 6 Color or Detailed"), "{e}");
+}
+
+#[test]
+fn the_page_is_the_hoop_so_export_keeps_the_place_on_the_page() {
+    let mut s = session();
+    // The square's centre sits 30 mm left of the page's centre (300 pt page: 150 pt).
+    let x = 150.0 - 30.0 / MM_PER_PT - 36.0;
+    rect(&mut s, x);
+    // Where the needle sews, leaving out the start at the origin.
+    let sewn = |d: roidery_formats::Design| {
+        let st = || d.stitches.iter().filter(|p| p.command == Command::Stitch);
+        let (x, y) = (st().map(|p| p.x), st().map(|p| p.y));
+        let (min_x, max_x) = (x.clone().fold(f64::MAX, f64::min), x.fold(f64::MIN, f64::max));
+        let (min_y, max_y) = (y.clone().fold(f64::MAX, f64::min), y.fold(f64::MIN, f64::max));
+        roidery_formats::Bounds { min_x, min_y, max_x, max_y }
+    };
+    // No hoop: the design is centred on the needle, as before.
+    let b = sewn(exported(&mut s));
+    assert!(((b.min_x + b.max_x) / 2.0).abs() < 0.3, "{b:?}");
+    run(&mut s, "stitch.setDesign", json!({"hoop": "brother-4x4"}));
+    let b = sewn(exported(&mut s));
+    assert!(((b.min_x + b.max_x) / 2.0 + 30.0).abs() < 0.3, "{b:?}");
+    // y is down: the square's centre is 46 pt above the page centre.
+    let dy = (10.0 + 36.0 - 150.0) * MM_PER_PT;
+    assert!(((b.min_y + b.max_y) / 2.0 - dy).abs() < 0.3, "{b:?} {dy}");
+    let q = run(&mut s, "stitch.design", json!({}));
+    assert_eq!(q["hoop"]["id"], "brother-4x4");
+    assert!((q["field"]["width"].as_f64().unwrap() * MM_PER_PT - 100.0).abs() < 1e-6, "{q}");
+    assert_eq!(run(&mut s, "stitch.info", json!({}))["hoop"]["fit"], "fits");
+}
+
+#[test]
+fn stitches_past_the_page_edge_are_outside_the_hoop() {
+    let mut s = session();
+    run(&mut s, "stitch.setDesign", json!({"hoop": "brother-4x4"}));
+    // The 100 mm page runs from about -6 to 277 pt; this square overhangs its right edge by 20 mm.
+    let right = s.doc().unwrap().doc.artboards[0].rect.x1;
+    rect(&mut s, right + 20.0 / MM_PER_PT - 72.0);
+    let i = run(&mut s, "stitch.info", json!({}));
+    assert_eq!(i["hoop"]["fit"], "outside");
+    let out = i["hoop"]["outsideMm"].as_f64().unwrap();
+    assert!((out - 20.0).abs() < 0.5, "{out}");
+    assert_eq!(run(&mut s, "stitch.export", json!({}))["hoop"]["fit"], "outside");
+    // A round hoop (the 12 cm sews a 100 mm circle): an 80 mm square's diagonal is 113 mm, too
+    // wide wherever it sits; a 65 mm one (92 mm across) only needs moving into the middle.
+    run(&mut s, "stitch.setDesign", json!({"hoop": "commercial-12"}));
+    run(&mut s, "select.all", json!({}));
+    run(&mut s, "edit.clear", json!({}));
+    let r = s.doc().unwrap().doc.artboards[0].rect;
+    run(&mut s, "shape.rectangle", json!({"x": r.x0, "y": r.y0, "width": 80.0 / MM_PER_PT, "height": 80.0 / MM_PER_PT}));
+    assert_eq!(run(&mut s, "stitch.info", json!({}))["hoop"]["fit"], "tooLarge");
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "shape.rectangle", json!({"x": r.x0, "y": r.y0, "width": 65.0 / MM_PER_PT, "height": 65.0 / MM_PER_PT}));
+    let i = run(&mut s, "stitch.info", json!({}));
+    assert_eq!(i["hoop"]["fit"], "outside");
+    run(&mut s, "select.none", json!({}));
+    run(&mut s, "stitch.centerInHoop", json!({}));
+    assert_eq!(run(&mut s, "stitch.info", json!({}))["hoop"]["fit"], "fits");
+}
+
+#[test]
+fn resizing_the_page_by_hand_makes_a_custom_hoop() {
+    let mut s = session();
+    run(&mut s, "stitch.setDesign", json!({"hoop": "brother-5x7"}));
+    // Turned on its side, it is still the same hoop.
+    s.edit("turn", |d, _| {
+        let r = d.artboards[0].rect;
+        let c = r.center();
+        let (w, h) = (r.height(), r.width());
+        d.artboards[0].rect = vectorcraft_geom::Rect::new(c.x - w / 2.0, c.y - h / 2.0, c.x + w / 2.0, c.y + h / 2.0);
+        Ok(())
+    })
+    .unwrap();
+    let q = run(&mut s, "stitch.design", json!({}));
+    assert_eq!((q["hoop"]["id"].clone(), q["hoop"]["widthMm"].clone()), (json!("brother-5x7"), json!(180.0)), "{q}");
+    s.edit("resize", |d, _| {
+        let r = d.artboards[0].rect;
+        d.artboards[0].rect = vectorcraft_geom::Rect::new(r.x0, r.y0, r.x0 + 150.0 / MM_PER_PT, r.y0 + 90.0 / MM_PER_PT);
+        Ok(())
+    })
+    .unwrap();
+    let q = run(&mut s, "stitch.design", json!({}));
+    assert_eq!(q["hoop"]["brand"], "Custom", "{q}");
+    assert_eq!(q["hoop"]["name"], "150 × 90 mm");
+}
+
+#[test]
+fn new_document_offers_every_hoop_and_sets_it() {
+    let mut s = Session::new();
+    let presets = run(&mut s, "file.newPresets", json!({"category": "Embroidery"}));
+    let names: Vec<String> =
+        presets["categories"][0]["presets"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_string()).collect();
+    assert!(names.iter().any(|n| n == "Brother 5 × 7 in"), "{names:?}");
+    run(&mut s, "file.new", json!({"preset": "Brother 5 × 7 in"}));
+    let q = run(&mut s, "stitch.design", json!({}));
+    assert_eq!(q["hoop"]["id"], "brother-5x7");
+    assert!(s.doc().unwrap().doc.artboards[0].show_center_mark);
+    run(&mut s, "file.new", json!({"preset": "Hoop 100 × 100 mm"}));
+    let q = run(&mut s, "stitch.design", json!({}));
+    assert_eq!((q["hoop"]["brand"].clone(), q["hoop"]["name"].clone()), (json!("Custom"), json!("100 × 100 mm")));
+    // A plain document has no hoop.
+    run(&mut s, "file.new", json!({"width": 300, "height": 300}));
+    assert!(run(&mut s, "stitch.design", json!({}))["hoop"].is_null());
+    assert!(s.execute("file.new", &json!({"width": 300, "height": 300, "hoop": "nope"})).is_err());
 }

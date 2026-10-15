@@ -204,7 +204,6 @@ fn right_side(app: &mut VectorcraftApp, ui: &mut Ui) {
     divider(ui);
     // The toggles, rightmost first: the stitch overlays, then the drawing aids.
     let v = app.ui.view.clone();
-    toggle(app, ui, "rd-hoop", tl!("Show Hoop"), "view.hoop", v.hoop);
     solo_toggle(app, ui);
     toggle(app, ui, "rd-underlay", tl!("Show Underlay"), "view.underlay", !v.hide_underlay);
     toggle(app, ui, "rd-needle-points", tl!("Show Needle Points"), "view.needlePoints", v.needle_points);
@@ -294,8 +293,8 @@ fn solo_toggle(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
 }
 
-/// The hoop: its name with how the design fits (green fits, amber turned, red too large), and a
-/// popover to choose the machine, hoop, fabric and thread chart.
+/// The hoop: its name with how the design fits where it is on the page (green fits, amber
+/// turned, red too large or partly off the page), and a popover to choose the machine, hoop, fabric and thread chart.
 fn hoop_chip(app: &mut VectorcraftApp, ui: &mut Ui, totals: Option<&Value>) {
     let t = Tokens::get(ui.ctx());
     let Some(q) = crate::panels::threads::design(app, ui.ctx()) else { return };
@@ -305,7 +304,7 @@ fn hoop_chip(app: &mut VectorcraftApp, ui: &mut Ui, totals: Option<&Value>) {
         (None, _) => (tl!("No hoop").to_string(), t.text_dim, ""),
         (Some(n), "fits") => (n.clone(), t.text, "✓"),
         (Some(n), "rotate") => (n.clone(), t.warning, "↻"),
-        (Some(n), "tooLarge") => (n.clone(), t.error, "!"),
+        (Some(n), "tooLarge" | "outside") => (n.clone(), t.error, "!"),
         (Some(n), _) => (n.clone(), t.text, ""),
     };
     let label = if mark.is_empty() { text } else { format!("{mark} {text}") };
@@ -320,6 +319,7 @@ fn hoop_chip(app: &mut VectorcraftApp, ui: &mut Ui, totals: Option<&Value>) {
         "fits" => tl!("The design fits the hoop"),
         "rotate" => tl!("The design fits the hoop turned 90°"),
         "tooLarge" => tl!("The design is too large for the hoop"),
+        "outside" => tl!("Partly outside the hoop"),
         _ => tl!("Hoop, fabric and thread chart"),
     };
     let resp = resp.on_hover_text(tip);

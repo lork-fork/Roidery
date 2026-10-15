@@ -5017,7 +5017,6 @@ theme	Appearance	Apparence
 	Satin this wide can snag and pull: split the column or sew it as a fill	Un satin aussi large peut accrocher et tirer : divisez la colonne ou brodez-la en remplissage
 	Select a path with it to put it on the path	Sélectionnez un tracé avec lui pour le placer sur ce tracé
 	Sews as fill	Se brode en remplissage
-	Show Hoop	Afficher le cadre
 	Show Jumps and Trims	Afficher les sauts et les coupes
 	Show Needle Points	Afficher les points d’aiguille
 	Show Underlay	Afficher la sous-couche
@@ -5082,3 +5081,6 @@ theme	Appearance	Apparence
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Son ouverture a laissé de côté ce que Roidery ne sait pas encore lire ({what}) : le remplacer le perd définitivement. Enregistrez sous un autre nom pour le conserver.
 	Roidery copies the fonts to {folder}.	Roidery copie les polices dans {folder}.
 	Roidery read this script without running it.	Roidery a lu ce script sans l’exécuter.
+# Roidery: the page is the hoop.
+	Partly outside the hoop	En partie hors du cadre
+	{d} mm outside the hoop	{d} mm hors du cadre

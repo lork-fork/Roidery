@@ -4951,7 +4951,6 @@ mark-style	Japanese	Japonesas
 	Satin this wide can snag and pull: split the column or sew it as a fill	Un satén tan ancho puede engancharse y tirar: divide la columna o bórdala como relleno
 	Select a path with it to put it on the path	Selecciona un trazado junto con ella para ponerla en el trazado
 	Sews as fill	Se borda como relleno
-	Show Hoop	Mostrar bastidor
 	Show Jumps and Trims	Mostrar saltos y cortes
 	Show Needle Points	Mostrar puntos de aguja
 	Show Underlay	Mostrar base
@@ -5010,3 +5009,6 @@ mark-style	Japanese	Japonesas
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Al abrirlo quedó fuera lo que Roidery aún no puede leer ({what}), así que reemplazarlo lo pierde para siempre. Guárdelo con otro nombre para conservarlo.
 	Roidery copies the fonts to {folder}.	Roidery copia las fuentes en {folder}.
 	Roidery read this script without running it.	Roidery leyó este script sin ejecutarlo.
+# Roidery: the page is the hoop.
+	Partly outside the hoop	Parcialmente fuera del bastidor
+	{d} mm outside the hoop	{d} mm fuera del bastidor

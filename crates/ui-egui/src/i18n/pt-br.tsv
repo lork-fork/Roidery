@@ -4000,7 +4000,6 @@ axis	Both	Ambos
 	Satin this wide can snag and pull: split the column or sew it as a fill	Um cetim tão largo pode enganchar e puxar: divida a coluna ou borde como preenchimento
 	Select a path with it to put it on the path	Selecione um caminho junto para pô-lo no caminho
 	Sews as fill	Bordado como preenchimento
-	Show Hoop	Mostrar bastidor
 	Show Jumps and Trims	Mostrar saltos e cortes
 	Show Needle Points	Mostrar pontos da agulha
 	Show Underlay	Mostrar base
@@ -4042,3 +4041,6 @@ axis	Both	Ambos
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Ao abri-lo, ficou de fora o que o Roidery ainda não consegue ler ({what}), então substituí-lo perde isso para sempre. Salve com outro nome para mantê-lo.
 	Roidery copies the fonts to {folder}.	O Roidery copia as fontes para {folder}.
 	Roidery read this script without running it.	O Roidery leu este script sem executá-lo.
+# Roidery: the page is the hoop.
+	Partly outside the hoop	Parcialmente fora do bastidor
+	{d} mm outside the hoop	{d} mm fora do bastidor

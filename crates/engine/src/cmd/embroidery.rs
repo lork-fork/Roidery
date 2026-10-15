@@ -23,7 +23,7 @@ use vectorcraft_geom::BezPath;
 use super::overprint::edit_counted;
 
 mod convert;
-mod design;
+pub(crate) mod design;
 mod guide;
 mod lettering;
 pub(crate) mod machine;
@@ -34,7 +34,7 @@ mod satin_edit;
 mod sequence;
 pub mod trace;
 mod worksheet;
-use design::DesignSettings;
+use design::{DesignSettings, HoopField};
 use parts::{Part, Slot};
 
 use super::*;
@@ -60,7 +60,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Info",
             [],
             None,
-            "{ids?} the embroidery objects in ids or the selection (every one when nothing is selected) in sewing order, with their stitch settings (auto: from the automatic rule) and stitch counts, and the design's totals; type, auto, settings and thread are the first part that sews → {objects: [{id, type, auto, settings, stitches, thread: [r, g, b], whole (Satin Blocks, manual or lettering: no fill part), fill: {type, auto, sews, settings, stitches, thread}, stroke: {…}}], stitches, trims, colorChanges, widthMm, heightMm, sewMinutes (on a home machine: 650 stitches a minute, 5 s a trim, 30 s a colour change), threadMeters: [top thread for each colour block, m], bobbinMeters (estimates: stitch lengths, 0.8 mm take-up a stitch, 15 mm tails, bobbin a third of the top), hoop?: {id, brand, name, widthMm, heightMm, round, fit: \"fits\"|\"rotate\"|\"tooLarge\", overWidthMm?, overHeightMm?} when the design has a hoop, lettering: [{id, lettering: {text, font, height, spacing, lineSpacing, path?}, digitized, fontName, sizeMin?, sizeMax?, multicolor?, error?}] for the lettering objects among ids or the selection (a letter stands for its lettering)}",
+            "{ids?} the embroidery objects in ids or the selection (every one when nothing is selected) in sewing order, with their stitch settings (auto: from the automatic rule) and stitch counts, and the design's totals; type, auto, settings and thread are the first part that sews → {objects: [{id, type, auto, settings, stitches, thread: [r, g, b], whole (Satin Blocks, manual or lettering: no fill part), fill: {type, auto, sews, settings, stitches, thread}, stroke: {…}}], stitches, trims, colorChanges, widthMm, heightMm, sewMinutes (on a home machine: 650 stitches a minute, 5 s a trim, 30 s a colour change), threadMeters: [top thread for each colour block, m], bobbinMeters (estimates: stitch lengths, 0.8 mm take-up a stitch, 15 mm tails, bobbin a third of the top), hoop?: {id, brand, name, widthMm, heightMm, round, fit: \"fits\"|\"outside\"|\"rotate\"|\"tooLarge\", overWidthMm?, overHeightMm?, outsideMm?} when the design has a hoop (the page is the hoop: the fit is checked where the design sits on the first artboard; outside: small enough but partly off the page, by outsideMm), lettering: [{id, lettering: {text, font, height, spacing, lineSpacing, path?}, digitized, fontName, sizeMin?, sizeMax?, multicolor?, error?}] for the lettering objects among ids or the selection (a letter stands for its lettering)}",
             has_doc,
             info
         ),
@@ -78,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export Machine File…",
             [],
             None,
-            "{path?: string, format?: \"dst\"|\"pes\"|\"jef\"|\"exp\"|\"vp3\"|\"xxx\"|\"u01\"|\"tap\" (default: from the path's extension, else dst), name?: string (the design name in the file), trimAt?: mm, tieIn?: bool, tieOff?: bool, travelUnder?: bool (default true: travel where fills sewn later hide it is sewn as running stitches instead of a jump and trim)} sew every visible object in paint order and write the machine file to path (without a path: return it as dataBase64) → {path?, dataBase64?, format, stitches, trims, colorChanges, widthMm, heightMm}",
+            "{path?: string, format?: \"dst\"|\"pes\"|\"jef\"|\"exp\"|\"vp3\"|\"xxx\"|\"u01\"|\"tap\" (default: from the path's extension, else dst), name?: string (the design name in the file), trimAt?: mm, tieIn?: bool, tieOff?: bool, travelUnder?: bool (default true: travel where fills sewn later hide it is sewn as running stitches instead of a jump and trim)} sew every visible object in paint order and write the machine file to path (with a hoop, the needle starts at the first artboard's centre, so the design keeps its place in the hoop; without one, the design is centred) (without a path: return it as dataBase64) → {path?, dataBase64?, format, stitches, trims, colorChanges, widthMm, heightMm}",
             has_doc,
             export
         ),
@@ -150,7 +150,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Embroidery Design",
             [],
             None,
-            "{} the design's fabric and thread chart, the choices for each, and the design's thread colours (first sewn first) with the chart thread each is, or is nearest to → {fabric, fabricLabel, fabrics: [{id, label}], chart: {name, threads: count} | null, charts: [{id, name}], threads: [{rgb, name, code, inChart, nearest: {rgb, name, code, deltaE} | null, objects: [id…]}], hoop: {id, brand, name, widthMm, heightMm, round} | null, hoops: [{id, brand, name, widthMm, heightMm, round}] (sewing fields by machine brand)}",
+            "{} the design's fabric and thread chart, the choices for each, and the design's thread colours (first sewn first) with the chart thread each is, or is nearest to → {fabric, fabricLabel, fabrics: [{id, label}], chart: {name, threads: count} | null, charts: [{id, name}], threads: [{rgb, name, code, inChart, nearest: {rgb, name, code, deltaE} | null, objects: [id…]}], hoop: {id, brand, name, widthMm, heightMm, round} | null (the page is the hoop: a first artboard resized by hand makes it a custom hoop of the page's size), field: {x, y, width, height} | null (the sewing field, the first artboard, in document units), hoops: [{id, brand, name, widthMm, heightMm, round}] (sewing fields by machine brand)}",
             has_doc,
             design::design
         ),
@@ -159,7 +159,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Embroidery Design",
             [],
             None,
-            "{fabric?: \"woven\"|\"knit\"|\"pique\"|\"terry\"|\"fleece\"|\"denim\"|\"twill\"|\"leather\" (sets the density, pull compensation and underlay of automatic objects, and, unless applyToObjects is false, of objects with settings of their own), chart?: \"brother\"|\"janome\"|\"none\"|{name?, threads: [{rgb: [r, g, b], name, code}]}|{name?, text: GIMP palette or CSV}|{name?, path}, applyToObjects?: bool, hoop?: hoop id (see stitch.design)|\"none\"|{width, height, name?, round?} (mm), fitArtboard?: bool (default true: the first artboard takes the hoop's sewing field, about its centre, with its centre mark)} set the design's fabric, thread chart (machine files name threads whose colour is in the chart) and hoop (Stitch Settings and stitch.export say whether the design fits it); one undo step → {fabric, chart, hoop, changed}",
+            "{fabric?: \"woven\"|\"knit\"|\"pique\"|\"terry\"|\"fleece\"|\"denim\"|\"twill\"|\"leather\" (sets the density, pull compensation and underlay of automatic objects, and, unless applyToObjects is false, of objects with settings of their own), chart?: \"brother\"|\"janome\"|\"none\"|{name?, threads: [{rgb: [r, g, b], name, code}]}|{name?, text: GIMP palette or CSV}|{name?, path}, applyToObjects?: bool, hoop?: hoop id (see stitch.design)|\"none\"|{width, height, name?, round?} (mm)} (the first artboard is the hoop: it takes the hoop's sewing field, about its centre, with its centre mark) set the design's fabric, thread chart (machine files name threads whose colour is in the chart) and hoop (Stitch Settings and stitch.export say whether the design fits it); one undo step → {fabric, chart, hoop, changed}",
             has_doc,
             design::set_design
         ),
@@ -730,11 +730,25 @@ fn totals(d: &Design) -> Value {
     })
 }
 
+/// The stitch plan's settings for `d`: when the page is the hoop, the needle starts at the
+/// page's centre, so the design keeps its place in the hoop; otherwise it is centred.
+fn plan_settings(d: &Document) -> PlanSettings {
+    PlanSettings { origin: HoopField::of(d).map(|f| f.origin_mm()), ..PlanSettings::default() }
+}
+
 /// [`totals`], with how the design sits in the document's hoop when it has one
-/// (`hoop: {…, fit, overWidthMm?, overHeightMm?}`).
+/// (`hoop: {…, fit, overWidthMm?, overHeightMm?, outsideMm?}`). `d` is planned with
+/// [`plan_settings`], so where the page is the hoop the fit is checked where the design sits.
 fn totals_in_hoop(doc: &Document, d: &Design) -> Value {
     let mut out = totals(d);
-    if let Some(hoop) = DesignSettings::of(doc).hoop {
+    if let Some(field) = HoopField::of(doc) {
+        let (w, h) = (out["widthMm"].as_f64().unwrap_or(0.0), out["heightMm"].as_f64().unwrap_or(0.0));
+        let mut v = field.hoop.json();
+        if let (Some(o), Value::Object(fit)) = (v.as_object_mut(), field.fit_json(d, w, h)) {
+            o.extend(fit);
+        }
+        out["hoop"] = v;
+    } else if let Some(hoop) = DesignSettings::of(doc).hoop {
         let (w, h) = (out["widthMm"].as_f64().unwrap_or(0.0), out["heightMm"].as_f64().unwrap_or(0.0));
         let mut v = hoop.json();
         if let (Some(o), Value::Object(fit)) = (v.as_object_mut(), hoop.fit_json(w, h)) {
@@ -773,7 +787,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
     let d = &ds.doc;
     let sel = targets(s, p)?;
     let ids = if sel.is_empty() { all_objects(d) } else { objects_in(d, &sel) };
-    let (objs, design) = sew(d, &ids, &PlanSettings::default(), "");
+    let (objs, design) = sew(d, &ids, &plan_settings(d), "");
     let dset = DesignSettings::of(d);
     let rows: Vec<Value> = ids
         .iter()
@@ -814,7 +828,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     if !format.can_write() {
         return Err(bad(C, format!("{} files open in Roidery but can't be written; pick another format", format.label())));
     }
-    let mut ps = PlanSettings::default();
+    let mut ps = plan_settings(&s.doc()?.doc);
     if let Some(v) = p.get("trimAt").and_then(Value::as_f64) {
         ps.trim_at = v;
     }

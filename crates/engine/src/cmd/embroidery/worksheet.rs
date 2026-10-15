@@ -285,7 +285,7 @@ mod tests {
     fn a_small_design_is_drawn_at_actual_size_with_its_colours() {
         let mut s = Session::new();
         design(&mut s, 100.0);
-        s.execute("stitch.setDesign", &json!({"hoop": "brother-5x7", "fitArtboard": false})).unwrap();
+        s.execute("stitch.setDesign", &json!({"hoop": "brother-5x7"})).unwrap();
         let r = s.execute("stitch.worksheet", &json!({"format": "svg", "labels": {"Colors": "Farben"}})).unwrap();
         assert_eq!(r["scale"], 1.0);
         assert_eq!(r["colors"], 2);

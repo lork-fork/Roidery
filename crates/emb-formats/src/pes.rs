@@ -7,7 +7,8 @@
 //! **PES section:** `#PES0001`, the PEC block's offset (u32), then u16 1 (scale to fit), the hoop
 //! (u16: 0 = 100 × 100, 1 = 130 × 180 mm), the object count (u16), `FFFF 0000`, and one
 //! `CEmbOne` object: its name (u16 length, ASCII), eight zero u16s, an affine transform (six
-//! f32s placing the design in a 130 × 180 hoop space where its centre lands at (1000, 1000)),
+//! f32s placing the design in a 130 × 180 hoop space whose centre, (1000, 1000), is the design's
+//! origin),
 //! u16 1, two zero u16s, the width and height (u16, 0.1 mm), eight zero bytes and the segment
 //! count (u16). Then `FFFF 0000`, the `CSewSeg` name and the segments: each is a type (u16: 0
 //! stitches, 1 a jump), a PEC colour number, a point count and the points (i16 pairs, relative
@@ -204,9 +205,10 @@ fn pes_object(out: &mut Vec<u8>, units: &[(i32, i32, Command)], colors: &[u8], (
     u16le(out, name.len() as u16);
     out.extend(name);
     out.extend([0u8; 16]);
-    // Place the design's centre at (1000, 1000) in the hoop space.
-    let tx = 350.0 + 650.0 - f64::from(w) / 2.0;
-    let ty = 100.0 + f64::from(h) + 900.0 - f64::from(h) / 2.0;
+    // Place the design in the hoop space, whose centre (1000, 1000) is the design's origin
+    // (where the needle starts): a design centred on its origin lands in the middle.
+    let tx = 1000.0 + f64::from(left);
+    let ty = 1000.0 + f64::from(bottom);
     for v in [1.0f32, 0.0, 0.0, 1.0, tx as f32, ty as f32] {
         out.extend(v.to_le_bytes());
     }

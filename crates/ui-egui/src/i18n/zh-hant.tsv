@@ -3944,7 +3944,6 @@ lighting	Light	光源
 	Satin this wide can snag and pull: split the column or sew it as a fill	這麼寬的緞紋容易勾線起皺：分割該列或改為填色
 	Select a path with it to put it on the path	同時選取一條路徑即可沿路徑排列
 	Sews as fill	以填色刺繡
-	Show Hoop	顯示繡框
 	Show Jumps and Trims	顯示跳針和剪線
 	Show Needle Points	顯示落針點
 	Show Underlay	顯示底襯
@@ -3982,3 +3981,6 @@ lighting	Light	光源
 	Opening it left out what Roidery can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	開啟時略過了 Roidery 尚無法讀取的內容（{what}），取代該檔案會永久遺失這些內容。若要保留，請以其他名稱儲存。
 	Roidery copies the fonts to {folder}.	Roidery 會將字體複製到 {folder}。
 	Roidery read this script without running it.	Roidery 已讀取此指令碼，但沒有執行。
+# Roidery: the page is the hoop.
+	Partly outside the hoop	部分超出繡框
+	{d} mm outside the hoop	超出繡框 {d} 公釐

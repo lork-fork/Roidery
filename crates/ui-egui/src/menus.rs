@@ -212,7 +212,6 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "",
         "{} toggle a dot where the needle goes in at each stitch (shows Stitch View when the vector art is showing)",
     ),
-    ("view.hoop", "Hoop", "", "{} toggle the hoop's sewing field round the design, centred on it as the machine centres it (in every view)"),
     ("view.underlay", "Underlay", "", "{} toggle whether the stitch views show underlay (off: just the top stitches)"),
     (
         "view.soloColor",
@@ -1172,7 +1171,6 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
             crate::stitchview::show_stitches(app, app.ui.view.needle_points);
             on
         }
-        "view.hoop" => flag(&mut app.ui.view.hoop),
         "view.underlay" => {
             app.ui.view.hide_underlay = !app.ui.view.hide_underlay;
             Ok(json!(!app.ui.view.hide_underlay))
@@ -1695,7 +1693,6 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         "view.densityMap" => v.density,
         "view.jumps" => v.jumps,
         "view.needlePoints" => v.needle_points,
-        "view.hoop" => v.hoop,
         "view.underlay" => !v.hide_underlay,
         "view.soloColor" => v.solo.is_some(),
         "view.pixelPreview" => v.pixel_preview,
@@ -2744,7 +2741,6 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                         c("Needle Points", "view.needlePoints"),
                         c("Underlay", "view.underlay"),
                         c("Current Color Only", "view.soloColor"),
-                        c("Hoop", "view.hoop"),
                     ],
                 ),
                 c("Overprint Preview", "view.overprintPreview"),
