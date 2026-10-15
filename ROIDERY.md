@@ -279,6 +279,11 @@ between rungs.
   angle); lines are left as they are. The Fill Angle tool drives it.
 - `stitch.removeOverlaps {ids?, overlap?}`: cut fills where later fills cover them, keeping
   `overlap` mm (default 1) under the covering edges.
+- `stitch.testSwatches {type?, densities?, pulls?}` (Object › Embroidery › Test Swatches ›
+  Satin or Fill, `swatches.rs`): a grouped grid centred on the first artboard of 14 mm satin rings
+  or tatami squares, rows at each density (labelled D0.3…), columns at each pull compensation
+  (P0…), the labels in Roidery Sans sewn in triple run, to sew once on the machine and fabric at hand and pick the
+  settings from. One undo step.
 - `stitch.swapSides {ids?}`: swap the rails, so each stitch starts from the other side.
   Reversing the sewing direction is VectorCraft's `path.reverse`.
 - `stitch.worksheet {path?, format?, paper?, ppi?, labels?}`: the one-page production sheet

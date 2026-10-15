@@ -2570,6 +2570,13 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                         c("Match to Thread Chart", "stitch.matchThreads"),
                         c("Center in Hoop", "stitch.centerInHoop"),
                         cp("Check Design", "window.panel", json!({"panel": crate::panels::check::ID})),
+                        sub(
+                            "Test Swatches",
+                            vec![
+                                cp("Satin", "stitch.testSwatches", json!({"type": "satin"})),
+                                cp("Fill", "stitch.testSwatches", json!({"type": "fill"})),
+                            ],
+                        ),
                         Sep,
                         c("Add Lettering…", "type.addLettering"),
                         c("Map Lettering to Path", "stitch.mapLettering"),

@@ -4662,3 +4662,6 @@ lighting	Light	ライト
 	Split satin over	サテンを分割する長さ
 	Split Satin	サテンを分割
 	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	これほど長いサテンの針目は緩んで引っかかります。「サテンを分割」で短い針目に分けるか、塗りで刺してください。
+
+# Roidery: test swatches.
+	Test Swatches	テスト見本

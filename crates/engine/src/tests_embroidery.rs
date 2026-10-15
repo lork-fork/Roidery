@@ -1190,3 +1190,40 @@ fn check_design_leaves_satin_borders_and_lettering_alone() {
     let ps = problems(&mut s);
     assert!(!ps.is_empty() && ps.iter().all(|p| p["level"] == "warning"), "{ps:?}");
 }
+
+#[test]
+fn test_swatches_lay_out_a_labelled_grid_in_one_step() {
+    let mut s = session();
+    let r = run(&mut s, "stitch.testSwatches", json!({}));
+    assert_eq!(r["swatches"], 9);
+    run(&mut s, "select.none", json!({}));
+    let i = run(&mut s, "stitch.info", json!({}));
+    let objects = i["objects"].as_array().unwrap();
+    let rings: Vec<&Value> = objects.iter().filter(|o| o["type"] == "satin" && o["settings"]["satin"]["width"] == 4.0).collect();
+    assert_eq!(rings.len(), 9, "{objects:?}");
+    let mut seen: Vec<(String, String)> =
+        rings.iter().map(|o| (o["settings"]["satin"]["density"].to_string(), o["settings"]["satin"]["pullCompensation"].to_string())).collect();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 9, "{seen:?}");
+    // Six labels (three rows, three columns) besides the swatches, in triple run.
+    assert_eq!(objects.len(), 15, "{objects:?}");
+    assert_eq!(objects.iter().filter(|o| o["type"] == "triple").count(), 6, "{objects:?}");
+    // Grouped, centred on the artboard, one undo step.
+    let d = &s.active().unwrap().doc;
+    let b = d.bounds_of(&[NodeId(r["id"].as_u64().unwrap())], false).unwrap();
+    assert!((b.center().x - 150.0).abs() < 15.0 && (b.center().y - 150.0).abs() < 15.0, "{b:?}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(run(&mut s, "stitch.info", json!({}))["objects"].as_array().unwrap().is_empty());
+    // Fills, with values of one's own.
+    let r = run(&mut s, "stitch.testSwatches", json!({"type": "fill", "densities": [0.35], "pulls": [0, 0.1]}));
+    assert_eq!(r["swatches"], 2);
+    run(&mut s, "select.none", json!({}));
+    let i = run(&mut s, "stitch.info", json!({}));
+    let fills: Vec<&Value> = i["objects"].as_array().unwrap().iter().filter(|o| o["type"] == "tatami").collect();
+    assert_eq!(fills.len(), 2);
+    assert!(fills.iter().all(|o| o["settings"]["fill"]["rowSpacing"] == 0.35));
+    for bad in [json!({"type": "rope"}), json!({"densities": []}), json!({"pulls": [1, 2, 3, 4, 5, 6, 7]}), json!({"pulls": ["x"]})] {
+        assert!(s.execute("stitch.testSwatches", &bad).is_err(), "{bad}");
+    }
+}

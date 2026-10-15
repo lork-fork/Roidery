@@ -33,6 +33,7 @@ mod overlaps;
 pub(crate) mod parts;
 mod satin_edit;
 mod sequence;
+mod swatches;
 pub mod trace;
 mod worksheet;
 use design::{DesignSettings, HoopField};
@@ -316,6 +317,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids?, overlap?: mm from 0 to 20 (default 1)} cut the fills in ids or the selection (every fill when nothing is selected) where fills sewn after them cover them, keeping `overlap` mm under the covering shapes' edges so no fabric shows; changes the paths, one undo step → {changed}",
             has_doc,
             overlaps::remove
+        ),
+        cmd!(
+            "stitch.testSwatches",
+            "Test Swatches",
+            [],
+            None,
+            "{type?: \"satin\"|\"fill\" (default satin), densities?: [mm…] (rows, default [0.3, 0.4, 0.5]; satin density or tatami row spacing), pulls?: [mm…] (columns, default [0, 0.2, 0.4]; pull compensation)} add a grid of test swatches to sew out and compare, centred on the first artboard and grouped: 14 mm satin rings or tatami squares in the current stroke colour (else the fill colour), the rows labelled D and the density, the columns P and the pull compensation, in Roidery Sans lettering sewn in triple run; 1 to 6 values per axis → {id: the group, swatches}",
+            has_doc,
+            swatches::test_swatches
         ),
     ]
 }
