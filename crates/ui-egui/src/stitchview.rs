@@ -110,12 +110,13 @@ fn shade(c: [u8; 3], light: f64, sheen: f64) -> Color32 {
 }
 
 /// Paint the current embroidery view over the canvas `rect` (nothing in the vector view), and,
-/// when the page is a hoop, the hoop over any view.
+/// when the page is a hoop, the hoop over any view; Check Design's rings go on top.
 pub fn paint(app: &mut VectorcraftApp, painter: &Painter, xf: &Xf, rect: egui::Rect) {
     if app.ui.view.stitches != 0 {
         paint_stitches(app, painter, xf, rect);
     }
     hoop(app, painter, xf, rect);
+    crate::panels::check::paint(app, painter, xf);
 }
 
 /// Turn on a stitch view (the stitch lines) when `on` and the vector art is showing: the

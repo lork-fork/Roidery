@@ -5052,3 +5052,24 @@ imageTrace	Outline	Körvonal
 # Roidery: the page is the hoop.
 	Partly outside the hoop	Részben a hímzőkereten kívül
 	{d} mm outside the hoop	{d} mm-rel a hímzőkereten kívül
+# Roidery: Check Design.
+	Check Design	Minta ellenőrzése
+	Errors	Hibák
+	No problems found. The design is ready to sew.	Nincs probléma. A minta hímezhető.
+	Outside the hoop	A hímzőkereten kívül
+	Too thin to fill	Túl vékony a kitöltéshez
+	Satin too wide	Túl széles szatén
+	Satin too narrow	Túl keskeny szatén
+	Too small to sew	Túl kicsi a hímzéshez
+	{d} mm too large	{d} mm-rel túl nagy
+	{d} layers of thread	{d} réteg cérna
+	{d} mm wide	{d} mm széles
+	{d} mm across	{d} mm átmérő
+	Sew as Running Stitch	Hímzés egyenes öltéssel
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	A gép nem ér túl a hímzőkeret szélén. Tegye a mintát az oldalra, vagy kattintson a Középre a hímzőkeretben gombra.
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	A minta nagyobb a hímzőkeretnél. Válasszon nagyobb keretet, vagy kicsinyítse a mintát.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Itt egymásra kerülnek az objektumok, és ilyen vastag cérna eltörheti a tűt. Az Átfedések eltávolítása kivágja a takart részeket.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Az ilyen vékony kitöltés néhány rongyos sorként hímződik. Alakítsa inkább szaténná.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Az ilyen hosszú szaténöltések lazák és beakadnak. Hímezze kitöltésként, vagy ossza keskenyebb oszlopokra.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Az ilyen keskeny szatén csomóba gyűrődik. Hímezze inkább egyenes öltéssel.
+	This is too small to sew cleanly. Make it bigger, or delete it.	Ez túl kicsi a tiszta hímzéshez. Nagyítsa meg, vagy törölje.

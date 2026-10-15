@@ -4635,3 +4635,24 @@ lighting	Light	ライト
 # Roidery: the page is the hoop.
 	Partly outside the hoop	一部が枠からはみ出しています
 	{d} mm outside the hoop	枠から {d} mm はみ出します
+# Roidery: Check Design.
+	Check Design	デザインをチェック
+	Errors	エラー
+	No problems found. The design is ready to sew.	問題は見つかりません。このデザインは刺しゅうできます。
+	Outside the hoop	枠からはみ出し
+	Too thin to fill	塗りには細すぎます
+	Satin too wide	サテンが太すぎます
+	Satin too narrow	サテンが細すぎます
+	Too small to sew	小さすぎて刺しゅうできません
+	{d} mm too large	{d} mm 大きすぎます
+	{d} layers of thread	糸が {d} 層
+	{d} mm wide	幅 {d} mm
+	{d} mm across	大きさ {d} mm
+	Sew as Running Stitch	ランニングステッチで刺す
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	ミシンは枠の外には届きません。デザインをページ内に移動するか、［フープの中央に配置］をクリックしてください。
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	デザインが枠より大きいです。大きい枠を選ぶか、デザインを縮小してください。
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	ここでオブジェクトが重なっており、糸が厚すぎて針が折れるおそれがあります。［重なりを除去］で隠れた部分を切り取れます。
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	これほど細い塗りは、ほつれた数本の列になります。サテンに変換してください。
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	これほど長いサテンの針目は緩んで引っかかります。塗りで刺すか、細い列に分けてください。
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	これほど細いサテンは糸が絡まって玉になります。ランニングステッチで刺してください。
+	This is too small to sew cleanly. Make it bigger, or delete it.	小さすぎてきれいに刺しゅうできません。大きくするか、削除してください。

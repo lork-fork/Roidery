@@ -4200,3 +4200,24 @@ lighting	Light	光源
 # Roidery: the page is the hoop.
 	Partly outside the hoop	部分超出绣框
 	{d} mm outside the hoop	超出绣框 {d} 毫米
+# Roidery: Check Design.
+	Check Design	检查设计
+	Errors	错误
+	No problems found. The design is ready to sew.	未发现问题。设计可以开始绣了。
+	Outside the hoop	超出绣框
+	Too thin to fill	太细，无法填色
+	Satin too wide	缎纹太宽
+	Satin too narrow	缎纹太窄
+	Too small to sew	太小，无法刺绣
+	{d} mm too large	大了 {d} 毫米
+	{d} layers of thread	{d} 层线
+	{d} mm wide	宽 {d} 毫米
+	{d} mm across	大小 {d} 毫米
+	Sew as Running Stitch	改用平针绣
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	绣花机够不到绣框边缘以外。请把设计移到页面内，或点按“在绷框中居中”。
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	设计比绣框大。请选择更大的绣框，或缩小设计。
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	这里的对象互相叠压，线太厚可能折断机针。“移除重叠”会剪掉被覆盖的部分。
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	这么细的填色会绣成几行参差不齐的线。请改为转换为缎纹。
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	这么长的缎纹针脚松散，容易勾线。请改用填色，或拆成更窄的列。
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	这么窄的缎纹会缠成线结。请改用平针绣。
+	This is too small to sew cleanly. Make it bigger, or delete it.	太小，无法绣得整齐。请放大或删除。

@@ -4638,3 +4638,24 @@ theme	Appearance	Giao diện
 # Roidery: the page is the hoop.
 	Partly outside the hoop	Một phần nằm ngoài khung thêu
 	{d} mm outside the hoop	Ra ngoài khung thêu {d} mm
+# Roidery: Check Design.
+	Check Design	Kiểm tra mẫu thêu
+	Errors	Lỗi
+	No problems found. The design is ready to sew.	Không có vấn đề nào. Mẫu thêu đã sẵn sàng để thêu.
+	Outside the hoop	Ra ngoài khung thêu
+	Too thin to fill	Quá mảnh để tô
+	Satin too wide	Satin quá rộng
+	Satin too narrow	Satin quá hẹp
+	Too small to sew	Quá nhỏ để thêu
+	{d} mm too large	Lớn hơn {d} mm
+	{d} layers of thread	{d} lớp chỉ
+	{d} mm wide	Rộng {d} mm
+	{d} mm across	Cỡ {d} mm
+	Sew as Running Stitch	Thêu bằng mũi chạy
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Máy không với tới ngoài mép khung thêu. Hãy dời mẫu vào trang, hoặc bấm Căn giữa trong khung thêu.
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Mẫu thêu lớn hơn khung. Hãy chọn khung lớn hơn hoặc thu nhỏ mẫu.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Các đối tượng chồng lên nhau ở đây, chỉ dày như vậy có thể làm gãy kim. Loại bỏ chồng lấn sẽ cắt bỏ các phần bị che.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Phần tô mảnh như vậy sẽ thêu thành vài hàng lởm chởm. Hãy chuyển nó thành satin.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Mũi satin dài như vậy sẽ lỏng và dễ vướng. Hãy thêu nó dạng tô, hoặc chia thành các cột hẹp hơn.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Satin hẹp như vậy sẽ rối thành nút. Hãy thêu bằng mũi chạy.
+	This is too small to sew cleanly. Make it bigger, or delete it.	Quá nhỏ để thêu gọn. Hãy làm to hơn hoặc xóa đi.

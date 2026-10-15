@@ -5012,3 +5012,24 @@ mark-style	Japanese	Japonesas
 # Roidery: the page is the hoop.
 	Partly outside the hoop	Parcialmente fuera del bastidor
 	{d} mm outside the hoop	{d} mm fuera del bastidor
+# Roidery: Check Design.
+	Check Design	Revisar diseño
+	Errors	Errores
+	No problems found. The design is ready to sew.	No se encontraron problemas. El diseño está listo para bordar.
+	Outside the hoop	Fuera del bastidor
+	Too thin to fill	Demasiado fino para rellenar
+	Satin too wide	Satén demasiado ancho
+	Satin too narrow	Satén demasiado estrecho
+	Too small to sew	Demasiado pequeño para bordar
+	{d} mm too large	{d} mm demasiado grande
+	{d} layers of thread	{d} capas de hilo
+	{d} mm wide	{d} mm de ancho
+	{d} mm across	{d} mm de lado a lado
+	Sew as Running Stitch	Bordar con puntada recta
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	La máquina no llega más allá del borde del bastidor. Mueva el diseño dentro de la página o haga clic en Centrar en el bastidor.
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	El diseño es más grande que el bastidor. Elija un bastidor más grande o reduzca el diseño.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Aquí se apilan objetos, y tanto hilo puede romper la aguja. Quitar superposiciones recorta las partes tapadas.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Un relleno tan fino se borda como unas pocas filas irregulares. Conviértalo en satén.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Puntadas de satén tan largas quedan sueltas y se enganchan. Bórdelo como relleno o divídalo en columnas más estrechas.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Un satén tan estrecho se amontona en un nudo. Bórdelo con puntada recta.
+	This is too small to sew cleanly. Make it bigger, or delete it.	Es demasiado pequeño para bordarse limpiamente. Agrándelo o elimínelo.

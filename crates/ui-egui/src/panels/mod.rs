@@ -11,6 +11,7 @@ pub mod asset_export;
 pub mod attributes;
 pub mod brushes;
 pub mod character;
+pub mod check;
 pub mod color;
 pub mod color_guide;
 pub mod color_themes;
@@ -179,6 +180,7 @@ pub fn show_icon_panel(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
         css_properties::ID => css_properties::show(app, ui),
         stitch_settings::ID => stitch_settings::show(app, ui),
         threads::ID => threads::show(app, ui),
+        check::ID => check::show(app, ui),
         _ => {
             dim_label(ui, tl!("This panel is on the roadmap (see the parity plan)."));
         }

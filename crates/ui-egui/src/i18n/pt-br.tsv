@@ -4044,3 +4044,24 @@ axis	Both	Ambos
 # Roidery: the page is the hoop.
 	Partly outside the hoop	Parcialmente fora do bastidor
 	{d} mm outside the hoop	{d} mm fora do bastidor
+# Roidery: Check Design.
+	Check Design	Verificar desenho
+	Errors	Erros
+	No problems found. The design is ready to sew.	Nenhum problema encontrado. O desenho está pronto para bordar.
+	Outside the hoop	Fora do bastidor
+	Too thin to fill	Fino demais para preencher
+	Satin too wide	Cetim largo demais
+	Satin too narrow	Cetim estreito demais
+	Too small to sew	Pequeno demais para bordar
+	{d} mm too large	{d} mm grande demais
+	{d} layers of thread	{d} camadas de linha
+	{d} mm wide	{d} mm de largura
+	{d} mm across	{d} mm de tamanho
+	Sew as Running Stitch	Bordar com ponto reto
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	A máquina não alcança além da borda do bastidor. Mova o desenho para dentro da página ou clique em Centralizar no bastidor.
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	O desenho é maior que o bastidor. Escolha um bastidor maior ou reduza o desenho.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Aqui os objetos se empilham, e tanta linha pode quebrar a agulha. Remover sobreposições corta as partes cobertas.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Um preenchimento tão fino é bordado como poucas fileiras irregulares. Converta-o em cetim.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Pontos de cetim tão longos ficam soltos e enroscam. Borde como preenchimento ou divida em colunas mais estreitas.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Um cetim tão estreito embola num nó. Borde com ponto reto.
+	This is too small to sew cleanly. Make it bigger, or delete it.	É pequeno demais para bordar com perfeição. Aumente ou exclua.

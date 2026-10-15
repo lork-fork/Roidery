@@ -5087,3 +5087,24 @@ mark-style	Japanese	Japonské
 # Roidery: the page is the hoop.
 	Partly outside the hoop	Částečně mimo rámeček
 	{d} mm outside the hoop	{d} mm mimo rámeček
+# Roidery: Check Design.
+	Check Design	Kontrola návrhu
+	Errors	Chyby
+	No problems found. The design is ready to sew.	Žádné problémy. Návrh je připraven k vyšívání.
+	Outside the hoop	Mimo rámeček
+	Too thin to fill	Příliš tenké na výplň
+	Satin too wide	Satén je příliš široký
+	Satin too narrow	Satén je příliš úzký
+	Too small to sew	Příliš malé na vyšití
+	{d} mm too large	O {d} mm příliš velký
+	{d} layers of thread	{d} vrstev nitě
+	{d} mm wide	Šířka {d} mm
+	{d} mm across	{d} mm napříč
+	Sew as Running Stitch	Vyšít rovným stehem
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Stroj nedosáhne za okraj rámečku. Přesuňte návrh na stránku, nebo klikněte na Vycentrovat v rámečku.
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Návrh je větší než rámeček. Vyberte větší rámeček, nebo návrh zmenšete.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Objekty se tu překrývají a takto silná vrstva nitě může zlomit jehlu. Odstranit překryvy vyřízne zakryté části.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Takto tenká výplň se vyšije jako několik roztřepených řad. Převeďte ji raději na satén.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Takto dlouhé saténové stehy leží volně a zachytávají se. Vyšijte ji jako výplň, nebo ji rozdělte na užší sloupce.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Takto úzký satén se smotá do uzlu. Vyšijte ho raději rovným stehem.
+	This is too small to sew cleanly. Make it bigger, or delete it.	Toto je příliš malé na čisté vyšití. Zvětšete to, nebo to smažte.

@@ -3984,3 +3984,24 @@ lighting	Light	光源
 # Roidery: the page is the hoop.
 	Partly outside the hoop	部分超出繡框
 	{d} mm outside the hoop	超出繡框 {d} 公釐
+# Roidery: Check Design.
+	Check Design	檢查設計
+	Errors	錯誤
+	No problems found. The design is ready to sew.	未發現問題。設計可以開始繡了。
+	Outside the hoop	超出繡框
+	Too thin to fill	太細，無法填色
+	Satin too wide	緞紋太寬
+	Satin too narrow	緞紋太窄
+	Too small to sew	太小，無法刺繡
+	{d} mm too large	大了 {d} 公釐
+	{d} layers of thread	{d} 層線
+	{d} mm wide	寬 {d} 公釐
+	{d} mm across	大小 {d} 公釐
+	Sew as Running Stitch	改用平針繡
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	繡花機搆不到繡框邊緣以外。請把設計移到頁面內，或按一下「在繡框中置中」。
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	設計比繡框大。請選擇更大的繡框，或縮小設計。
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	這裡的物件互相疊壓，線太厚可能折斷機針。「移除重疊」會剪掉被覆蓋的部分。
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	這麼細的填色會繡成幾行參差不齊的線。請改為轉換為緞紋。
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	這麼長的緞紋針腳鬆散，容易勾線。請改用填色，或拆成更窄的欄。
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	這麼窄的緞紋會纏成線結。請改用平針繡。
+	This is too small to sew cleanly. Make it bigger, or delete it.	太小，無法繡得整齊。請放大或刪除。

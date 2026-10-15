@@ -4656,3 +4656,24 @@ lighting	Light	Luce
 # Roidery: the page is the hoop.
 	Partly outside the hoop	In parte fuori dal telaio
 	{d} mm outside the hoop	{d} mm fuori dal telaio
+# Roidery: Check Design.
+	Check Design	Controlla disegno
+	Errors	Errori
+	No problems found. The design is ready to sew.	Nessun problema. Il disegno è pronto da ricamare.
+	Outside the hoop	Fuori dal telaio
+	Too thin to fill	Troppo sottile per un riempimento
+	Satin too wide	Satin troppo largo
+	Satin too narrow	Satin troppo stretto
+	Too small to sew	Troppo piccolo da ricamare
+	{d} mm too large	{d} mm di troppo
+	{d} layers of thread	{d} strati di filo
+	{d} mm wide	{d} mm di larghezza
+	{d} mm across	{d} mm di lato
+	Sew as Running Stitch	Ricama a punto filza
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	La macchina non arriva oltre il bordo del telaio. Sposta il disegno nella pagina o fai clic su Centra nel telaio.
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Il disegno è più grande del telaio. Scegli un telaio più grande o rimpicciolisci il disegno.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Qui gli oggetti si sovrappongono e così tanto filo può rompere l’ago. Rimuovi sovrapposizioni ritaglia le parti coperte.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Un riempimento così sottile si ricama in poche file sfilacciate. Convertilo invece in satin.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Punti satin così lunghi restano lenti e si impigliano. Ricamalo come riempimento o dividilo in colonne più strette.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Un satin così stretto si aggroviglia in un nodo. Ricamalo invece a punto filza.
+	This is too small to sew cleanly. Make it bigger, or delete it.	È troppo piccolo per essere ricamato in modo pulito. Ingrandiscilo o eliminalo.

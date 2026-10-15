@@ -4611,3 +4611,24 @@ theme	Appearance	Erscheinungsbild
 # Roidery: the page is the hoop.
 	Partly outside the hoop	Teilweise außerhalb des Stickrahmens
 	{d} mm outside the hoop	{d} mm außerhalb des Stickrahmens
+# Roidery: Check Design.
+	Check Design	Design prüfen
+	Errors	Fehler
+	No problems found. The design is ready to sew.	Keine Probleme gefunden. Das Design kann gestickt werden.
+	Outside the hoop	Außerhalb des Stickrahmens
+	Too thin to fill	Zu schmal für eine Füllung
+	Satin too wide	Satin zu breit
+	Satin too narrow	Satin zu schmal
+	Too small to sew	Zu klein zum Sticken
+	{d} mm too large	{d} mm zu groß
+	{d} layers of thread	{d} Lagen Garn
+	{d} mm wide	{d} mm breit
+	{d} mm across	{d} mm groß
+	Sew as Running Stitch	Als Steppstich sticken
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Die Maschine erreicht nichts jenseits des Stickrahmens. Verschieben Sie das Design auf die Seite oder klicken Sie auf Im Stickrahmen zentrieren.
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Das Design ist größer als der Stickrahmen. Wählen Sie einen größeren Rahmen oder verkleinern Sie das Design.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Hier liegen Objekte übereinander, und so dickes Garn kann die Nadel brechen. Überlappungen entfernen schneidet die verdeckten Teile weg.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Eine so schmale Füllung wird zu ein paar ausgefransten Reihen. Wandeln Sie sie stattdessen in Satin um.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	So lange Satinstiche liegen lose und bleiben hängen. Sticken Sie es als Füllung oder teilen Sie es in schmalere Säulen.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Ein so schmaler Satin verknäuelt sich. Sticken Sie ihn stattdessen als Steppstich.
+	This is too small to sew cleanly. Make it bigger, or delete it.	Das ist zu klein, um sauber gestickt zu werden. Vergrößern oder löschen Sie es.

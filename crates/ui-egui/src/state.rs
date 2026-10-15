@@ -108,6 +108,7 @@ pub const ICON_PANELS: &[(&str, &str, &str)] = &[
     // Roidery.
     (crate::panels::stitch_settings::ID, "Stitch Settings", "spool"),
     (crate::panels::threads::ID, "Threads", "rainbow"),
+    (crate::panels::check::ID, "Check Design", "triangle-alert"),
     ("color", "Color", "palette"),
     ("colorGuide", "Color Guide", "dc-color-guide"),
     ("swatches", "Swatches", "swatch-book"),
@@ -165,7 +166,7 @@ pub const ICON_PANEL_GROUPS: &[&[&str]] = &[
     &["character", "paragraph", "glyphs"],
     &["history", "actions", "info", "navigator"],
     &["variables"],
-    &[crate::panels::stitch_settings::ID, crate::panels::threads::ID],
+    &[crate::panels::stitch_settings::ID, crate::panels::threads::ID, crate::panels::check::ID],
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

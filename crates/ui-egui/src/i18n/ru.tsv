@@ -4652,3 +4652,24 @@ lighting	Light	Свет
 # Roidery: the page is the hoop.
 	Partly outside the hoop	Частично за пределами пялец
 	{d} mm outside the hoop	{d} мм за пределами пялец
+# Roidery: Check Design.
+	Check Design	Проверить дизайн
+	Errors	Ошибки
+	No problems found. The design is ready to sew.	Проблем не найдено. Дизайн готов к вышивке.
+	Outside the hoop	За пределами пялец
+	Too thin to fill	Слишком узко для заливки
+	Satin too wide	Слишком широкая гладь
+	Satin too narrow	Слишком узкая гладь
+	Too small to sew	Слишком мало для вышивки
+	{d} mm too large	Больше на {d} мм
+	{d} layers of thread	Слоёв нити: {d}
+	{d} mm wide	Ширина {d} мм
+	{d} mm across	Размер {d} мм
+	Sew as Running Stitch	Вышить прямым стежком
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Машина не достаёт за край пялец. Переместите дизайн на страницу или нажмите «По центру пялец».
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Дизайн больше пялец. Выберите пяльцы побольше или уменьшите дизайн.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Здесь объекты лежат друг на друге, и такой толстый слой нити может сломать иглу. «Убрать перекрытия» вырежет закрытые части.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Такая узкая заливка вышьется несколькими рваными рядами. Лучше преобразуйте её в гладь.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Такие длинные стежки глади лежат свободно и цепляются. Вышейте это заливкой или разделите на более узкие столбцы.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Такая узкая гладь сбивается в узел. Лучше вышейте её прямым стежком.
+	This is too small to sew cleanly. Make it bigger, or delete it.	Это слишком мало для аккуратной вышивки. Увеличьте или удалите.

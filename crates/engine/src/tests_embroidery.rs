@@ -1068,3 +1068,118 @@ fn new_document_offers_every_hoop_and_sets_it() {
     assert!(run(&mut s, "stitch.design", json!({}))["hoop"].is_null());
     assert!(s.execute("file.new", &json!({"width": 300, "height": 300, "hoop": "nope"})).is_err());
 }
+
+fn problems(s: &mut Session) -> Vec<Value> {
+    run(s, "stitch.check", json!({}))["problems"].as_array().unwrap().clone()
+}
+
+fn kinds(s: &mut Session) -> Vec<String> {
+    problems(s).iter().map(|p| p["kind"].as_str().unwrap().to_string()).collect()
+}
+
+/// Run a problem's fix as the Check Design panel does.
+fn fix(s: &mut Session, p: &Value) {
+    let f = &p["fix"];
+    s.execute(f["command"].as_str().unwrap(), &f["params"]).unwrap();
+}
+
+#[test]
+fn check_design_finds_thin_tiny_and_dense_objects_and_fixes_them() {
+    let mut s = session();
+    rect(&mut s, 10.0);
+    run(&mut s, "select.none", json!({}));
+    assert!(problems(&mut s).is_empty(), "{:?}", kinds(&mut s));
+    // A sliver 0.7 mm wide, and a dot 1 mm across.
+    let thin = NodeId(run(&mut s, "shape.rectangle", json!({"x": 10, "y": 100, "width": 150, "height": 2}))["id"].as_u64().unwrap());
+    let dot = NodeId(run(&mut s, "shape.rectangle", json!({"x": 10, "y": 120, "width": 3, "height": 3}))["id"].as_u64().unwrap());
+    run(&mut s, "select.none", json!({}));
+    let ps = problems(&mut s);
+    let thin_p = ps.iter().find(|p| p["kind"] == "thinFill").unwrap();
+    assert_eq!((thin_p["ids"].clone(), thin_p["level"].clone()), (json!([thin.0]), json!("warning")));
+    assert!(thin_p["value"].as_f64().unwrap() < 1.0 && thin_p["x"].as_f64().unwrap() > 50.0, "{thin_p}");
+    assert_eq!(thin_p["fix"]["command"], "stitch.convertToSatin");
+    assert_eq!(ps.iter().find(|p| p["kind"] == "tiny").unwrap()["ids"], json!([dot.0]));
+    // Converting the sliver to satin leaves it sewing fine.
+    let p = thin_p.clone();
+    fix(&mut s, &p);
+    run(&mut s, "select.none", json!({}));
+    assert!(!kinds(&mut s).contains(&"thinFill".to_string()), "{:?}", kinds(&mut s));
+    // Three fills stacked: thread piles up where they overlap, and Remove Overlaps clears it.
+    let mut s = session();
+    for x in [10.0, 30.0, 50.0] {
+        rect(&mut s, x);
+    }
+    run(&mut s, "select.none", json!({}));
+    let ps = problems(&mut s);
+    let dense = ps.iter().find(|p| p["kind"] == "tooDense").unwrap().clone();
+    assert_eq!(dense["level"], "error");
+    assert!(dense["value"].as_f64().unwrap() > 4.0 && dense["ids"].as_array().unwrap().len() == 3, "{dense}");
+    assert_eq!(dense["fix"]["command"], "stitch.removeOverlaps");
+    fix(&mut s, &dense);
+    run(&mut s, "select.none", json!({}));
+    assert!(!kinds(&mut s).contains(&"tooDense".to_string()), "{:?}", kinds(&mut s));
+    assert_eq!(run(&mut s, "stitch.check", json!({}))["errors"], 0);
+}
+
+#[test]
+fn check_design_measures_satin_width() {
+    let mut s = session();
+    let a = rect(&mut s, 10.0);
+    run(&mut s, "stitch.set", json!({"ids": [a.0], "part": "stroke", "type": "satin", "settings": {"satin": {"width": 12}}}));
+    run(&mut s, "select.none", json!({}));
+    let ps = problems(&mut s);
+    let wide = ps.iter().find(|p| p["kind"] == "wideSatin").unwrap();
+    assert!(wide["value"].as_f64().unwrap() > 10.0, "{wide}");
+    run(&mut s, "stitch.set", json!({"ids": [a.0], "part": "stroke", "type": "satin", "settings": {"satin": {"width": 0.4}}}));
+    run(&mut s, "select.none", json!({}));
+    let ps = problems(&mut s);
+    let narrow = ps.iter().find(|p| p["kind"] == "narrowSatin").unwrap().clone();
+    assert_eq!(narrow["fix"]["params"]["type"], "run");
+    fix(&mut s, &narrow);
+    assert!(kinds(&mut s).is_empty(), "{:?}", kinds(&mut s));
+}
+
+#[test]
+fn check_design_flags_the_hoop_and_center_in_hoop_fixes_it() {
+    let mut s = session();
+    run(&mut s, "stitch.setDesign", json!({"hoop": "brother-4x4"}));
+    let right = s.doc().unwrap().doc.artboards[0].rect.x1;
+    rect(&mut s, right - 40.0);
+    run(&mut s, "select.none", json!({}));
+    let ps = problems(&mut s);
+    let out = ps.first().unwrap().clone();
+    assert_eq!((out["kind"].clone(), out["level"].clone()), (json!("outsideHoop"), json!("error")));
+    assert!(out["x"].as_f64().unwrap() > right, "{out}");
+    fix(&mut s, &out);
+    run(&mut s, "select.none", json!({}));
+    assert!(problems(&mut s).is_empty(), "{:?}", kinds(&mut s));
+    // Wider than the hoop: nothing to click, pick a bigger hoop.
+    run(&mut s, "shape.rectangle", json!({"x": 0, "y": 200, "width": 340, "height": 20}));
+    run(&mut s, "select.none", json!({}));
+    let ps = problems(&mut s);
+    assert_eq!(ps.first().unwrap()["kind"], "tooLarge");
+    assert!(ps.first().unwrap().get("fix").is_none());
+}
+
+#[test]
+fn check_design_leaves_satin_borders_and_lettering_alone() {
+    // One object's own dense spots (a satin's corners, lettering) are how it sews.
+    let mut s = session();
+    let a = rect(&mut s, 10.0);
+    run(&mut s, "stitch.set", json!({"ids": [a.0], "part": "stroke", "type": "satin", "settings": {"satin": {"width": 3}}}));
+    run(&mut s, "stitch.createLettering", json!({"text": "Hello", "height": 10, "x": 20, "y": 150}));
+    run(&mut s, "select.none", json!({}));
+    assert!(problems(&mut s).is_empty(), "{:?}", problems(&mut s));
+    // Another fill laid over it is flagged where they stack.
+    let b = rect(&mut s, 30.0);
+    run(&mut s, "select.none", json!({}));
+    let ps = problems(&mut s);
+    assert!(!ps.is_empty() && ps.iter().all(|p| p["kind"] == "tooDense" && p["ids"] == json!([a.0, b.0])), "{ps:?}");
+    // Two plain fills overlapping are a warning; three stacked, an error (the test above).
+    let mut s = session();
+    rect(&mut s, 10.0);
+    rect(&mut s, 30.0);
+    run(&mut s, "select.none", json!({}));
+    let ps = problems(&mut s);
+    assert!(!ps.is_empty() && ps.iter().all(|p| p["level"] == "warning"), "{ps:?}");
+}

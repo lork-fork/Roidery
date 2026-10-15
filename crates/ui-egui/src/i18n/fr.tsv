@@ -5084,3 +5084,24 @@ theme	Appearance	Apparence
 # Roidery: the page is the hoop.
 	Partly outside the hoop	En partie hors du cadre
 	{d} mm outside the hoop	{d} mm hors du cadre
+# Roidery: Check Design.
+	Check Design	Vérifier le motif
+	Errors	Erreurs
+	No problems found. The design is ready to sew.	Aucun problème. Le motif est prêt à broder.
+	Outside the hoop	Hors du cadre
+	Too thin to fill	Trop fin pour un remplissage
+	Satin too wide	Satin trop large
+	Satin too narrow	Satin trop étroit
+	Too small to sew	Trop petit pour être brodé
+	{d} mm too large	{d} mm de trop
+	{d} layers of thread	{d} couches de fil
+	{d} mm wide	{d} mm de large
+	{d} mm across	{d} mm de côté
+	Sew as Running Stitch	Broder au point droit
+	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	La machine ne peut pas aller au-delà du bord du cadre. Déplacez le motif sur la page ou cliquez sur Centrer dans le cadre.
+	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Le motif est plus grand que le cadre. Choisissez un cadre plus grand ou réduisez le motif.
+	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Des objets s’empilent ici, et une telle épaisseur de fil peut casser l’aiguille. Supprimer les chevauchements découpe les parties recouvertes.
+	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Un remplissage aussi fin se brode en quelques rangs irréguliers. Convertissez-le plutôt en satin.
+	Satin stitches this long lie loose and snag. Sew it as a fill, or split it into narrower columns.	Des points de satin aussi longs restent lâches et s’accrochent. Brodez-le en remplissage ou divisez-le en colonnes plus étroites.
+	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Un satin aussi étroit s’emmêle en nœud. Brodez-le plutôt au point droit.
+	This is too small to sew cleanly. Make it bigger, or delete it.	C’est trop petit pour être brodé proprement. Agrandissez-le ou supprimez-le.

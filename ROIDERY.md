@@ -80,6 +80,15 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   its hoop. `stitchview::hoop` draws the frame round the page (round hoops shade the corners),
   and stitches past the edge in red; `stitch.info` reports fit `outside` with `outsideMm`.
   Documents with no hoop are centred on the needle as before.
+- Check Design (`embroidery/check.rs`, `stitch.check`; the panel `panels/check.rs`, Object ›
+  Embroidery › Check Design and Window › Check Design): what will sew badly, errors first, each
+  with where it is and, when one command fixes it, that command: the design past the hoop's edge
+  (Center in Hoop) or too large for it; spots where objects stack past 2.6 layers of thread
+  (an error past 4; Remove Overlaps when fills overlap; one object's own dense spots, such as a
+  satin's corners, are left alone); fills under 1.5 mm wide on average (Convert to Satin);
+  satins over 10 mm (loose, snag) or under 1 mm (Sew as Running Stitch); objects under 1.5 mm.
+  Clicking a problem selects its objects and brings it into view; while the panel is open the
+  canvas rings each problem.
 - `crates/ui-egui/src/stitchview.rs`: View › Stitch View (Cmd+Y) cycles the vector art, the stitches
   as lines, and realistic thread; Outline moved off Cmd+Y to make room. View › Sew-Out Player
   (`view.sewOut`) sews the design stitch by stitch with play, step, scrub and speed.

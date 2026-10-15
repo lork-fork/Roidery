@@ -22,6 +22,7 @@ use vectorcraft_geom::BezPath;
 
 use super::overprint::edit_counted;
 
+mod check;
 mod convert;
 pub(crate) mod design;
 mod guide;
@@ -297,6 +298,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids?} move the objects in ids or the selection (everything unlocked when nothing is selected) together so their middle sits in the middle of the artboard they are on, which in Roidery is the hoop's sewing field; one undo step → {dx, dy} (document units)",
             has_doc,
             center_in_hoop
+        ),
+        cmd!(
+            query "stitch.check",
+            "Check Design",
+            [],
+            None,
+            "{ids?} what will sew badly in ids or the selection (every object when nothing is selected or ids is empty), errors first → {problems: [{kind: \"outsideHoop\" (value: mm past the edge)|\"tooLarge\" (value: mm too big)|\"tooDense\" (value: layers of thread, over 2.6)|\"thinFill\" (value: mean width mm, under 1.5)|\"wideSatin\" (value: mm, over 10)|\"narrowSatin\" (value: mm, under 1)|\"tiny\" (value: mm, under 1.5), level: \"error\"|\"warning\", ids: the objects involved, value, x?, y?, radius? (where, document units), fix?: {command, params} (the command that fixes it)}], errors, warnings}",
+            has_doc,
+            check::check
         ),
         cmd!(
             "stitch.removeOverlaps",

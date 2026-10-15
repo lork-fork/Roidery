@@ -276,6 +276,7 @@ pub static ICONS: &[(&str, &[u8])] = &[
     ("tornado", include_bytes!("../../../assets/icons/tornado.svg")),
     ("trash-2", include_bytes!("../../../assets/icons/trash-2.svg")),
     ("triangle", include_bytes!("../../../assets/icons/triangle.svg")),
+    ("triangle-alert", include_bytes!("../../../assets/icons/triangle-alert.svg")),
     ("type", include_bytes!("../../../assets/icons/type.svg")),
     ("undo-2", include_bytes!("../../../assets/icons/undo-2.svg")),
     ("ungroup", include_bytes!("../../../assets/icons/ungroup.svg")),
