@@ -5082,3 +5082,9 @@ imageTrace	Outline	Körvonal
 
 # Roidery: test swatches.
 	Test Swatches	Próbaminták
+
+# Roidery: Stitch Settings sections.
+	Stitching	Öltések
+	Compensation	Kompenzáció
+	Curves and Splits	Ívek és felosztás
+	Sew underlay	Alátöltés varrása

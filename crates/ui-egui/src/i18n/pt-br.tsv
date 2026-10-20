@@ -4074,3 +4074,9 @@ axis	Both	Ambos
 
 # Roidery: test swatches.
 	Test Swatches	Amostras de teste
+
+# Roidery: Stitch Settings sections.
+	Stitching	Pontos
+	Compensation	Compensação
+	Curves and Splits	Curvas e divisões
+	Sew underlay	Bordar base

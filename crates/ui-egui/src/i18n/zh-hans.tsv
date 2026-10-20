@@ -4230,3 +4230,9 @@ lighting	Light	光源
 
 # Roidery: test swatches.
 	Test Swatches	测试样片
+
+# Roidery: Stitch Settings sections.
+	Stitching	针法
+	Compensation	补偿
+	Curves and Splits	弯曲与拆分
+	Sew underlay	绣打底

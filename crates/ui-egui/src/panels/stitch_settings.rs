@@ -6,6 +6,9 @@
 //! Basic shows what most designs need (type, width, density, angle, stitch length, underlay);
 //! Advanced adds pull compensation, fractional spacing, staggers and each underlay pass's own
 //! settings (`stitch.settingsMode`).
+//!
+//! Under each part's stitch type its settings fold into sections: Stitching, Compensation, Curves
+//! and Splits (satin) and Underlay, each open until clicked shut (`group_header`).
 
 use egui::Ui;
 use serde_json::{Value, json};
@@ -124,6 +127,33 @@ fn underlay_fields(ty: &str) -> Vec<(&'static str, &'static str, f64)> {
 /// Satin underlay passes: (label, underlay type), sewn in this order.
 pub(crate) fn satin_underlays() -> [(&'static str, &'static str); 3] {
     [(tl!("Center walk"), "centerWalk"), (tl!("Edge walk"), "contour"), (tl!("Zigzag"), "zigZag")]
+}
+
+/// The sections a part's settings fold into, in panel order, as (id, title). The underlay has
+/// its own section after these.
+fn groups() -> [(&'static str, &'static str); 3] {
+    [("stitches", tl!("Stitching")), ("compensation", tl!("Compensation")), ("curves", tl!("Curves and Splits"))]
+}
+
+/// The section a setting's key belongs to.
+fn group_of(key: &str) -> &'static str {
+    match key {
+        "pullCompensation" | "fractionalSpacing" => "compensation",
+        "shortStitchInset" | "shortStitchDistance" | "splitLength" => "curves",
+        _ => "stitches",
+    }
+}
+
+/// A section's folding header, open until it is clicked shut (remembered per part and section).
+/// Whether it is open.
+fn group_header(ui: &mut Ui, part: &str, group: &str, title: &str) -> bool {
+    let id = egui::Id::new(("stitch-settings-group", part, group));
+    let mut open = ui.ctx().data_mut(|d| *d.get_persisted_mut_or(id, true));
+    if widgets::section_toggle(ui, title, open) {
+        open = !open;
+        ui.ctx().data_mut(|d| d.insert_persisted(id, open));
+    }
+    open
 }
 
 /// `stitch.info` for the selection, recomputed only when the document or the selection changes
@@ -358,7 +388,11 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, info: &Value) {
             continue;
         }
         let values: Vec<Value> = objects.iter().map(|o| o[part].clone()).collect();
-        widgets::subheader(ui, if part == "fill" { tl!("Fill") } else { tl!("Stroke") });
+        if part == "stroke" && !whole {
+            widgets::divider(ui);
+        }
+        // The part heads its sections: larger and bolder than their folding headers.
+        ui.label(egui::RichText::new(if part == "fill" { tl!("Fill") } else { tl!("Stroke") }).size(14.0).strong());
         ui.push_id(part, |ui| part_section(app, ui, part, &values, advanced));
     }
     widgets::divider(ui);
@@ -423,47 +457,61 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
         return;
     }
     let settings: Vec<Value> = objects.iter().map(|o| o["settings"].clone()).collect();
-    if kind == "motif" {
-        let patterns = motif_patterns();
-        let current = shared(&settings, &["motif", "pattern"]).and_then(Value::as_str).unwrap_or("");
-        let labels: Vec<&str> = patterns.iter().map(|p| p.1).collect();
-        let current_label = patterns.iter().find(|p| p.0 == current).map_or("", |p| p.1);
-        let mut chosen = None;
-        widgets::label_row(ui, tl!("Pattern"), LABEL_W, |ui| {
-            chosen = widgets::dropdown(ui, "stitch-motif", current_label, &labels, ui.available_width().min(150.0));
-        });
-        if let Some((id, _)) = chosen.and_then(|i| patterns.get(i)) {
-            set_part(app, part, json!({"settings": {"motif": {"pattern": id}}}));
-        }
-    }
-    for (label, section, key, suffix, decimals, adv) in fields(kind) {
-        if adv && !advanced {
+    let visible: Vec<Field> = fields(kind).into_iter().filter(|f| advanced || !f.5).collect();
+    for (group, title) in groups() {
+        let rows: Vec<&Field> = visible.iter().filter(|f| group_of(f.2) == group).collect();
+        let extra = group == "stitches" && kind == "motif";
+        if rows.is_empty() && !extra {
             continue;
         }
-        let value = shared(&settings, &[section, key]).and_then(Value::as_f64);
-        let mut edit = None;
-        widgets::label_row(ui, label, LABEL_W, |ui| {
-            edit = widgets::mixed_field(ui, ("stitch", section, key), value, suffix, decimals, FIELD_W);
-        });
-        if let Some(v) = edit.filter(|v| v.is_finite()) {
-            // Staggers and passes are whole numbers.
-            let v = if decimals == 0 { json!(v.round().clamp(1.0, 64.0) as u32) } else { json!(v) };
-            set_part(app, part, json!({"settings": {section: {key: v}}}));
+        if !group_header(ui, part, group, title) {
+            continue;
         }
-    }
-    if kind == "motif" {
-        let on = shared(&settings, &["motif", "triple"]).and_then(Value::as_bool);
-        widgets::label_row(ui, tl!("Triple Run"), LABEL_W, |ui| {
-            if widgets::check3(ui, "", on, true) {
-                set_part(app, part, json!({"settings": {"motif": {"triple": on != Some(true)}}}));
+        ui.indent(("stitch-group", part, group), |ui| {
+            if extra {
+                let patterns = motif_patterns();
+                let current = shared(&settings, &["motif", "pattern"]).and_then(Value::as_str).unwrap_or("");
+                let labels: Vec<&str> = patterns.iter().map(|p| p.1).collect();
+                let current_label = patterns.iter().find(|p| p.0 == current).map_or("", |p| p.1);
+                let mut chosen = None;
+                widgets::label_row(ui, tl!("Pattern"), LABEL_W, |ui| {
+                    chosen = widgets::dropdown(ui, "stitch-motif", current_label, &labels, ui.available_width().min(150.0));
+                });
+                if let Some((id, _)) = chosen.and_then(|i| patterns.get(i)) {
+                    set_part(app, part, json!({"settings": {"motif": {"pattern": id}}}));
+                }
+            }
+            for &&(label, section, key, suffix, decimals, _) in &rows {
+                let value = shared(&settings, &[section, key]).and_then(Value::as_f64);
+                let mut edit = None;
+                widgets::label_row(ui, label, LABEL_W, |ui| {
+                    edit = widgets::mixed_field(ui, ("stitch", section, key), value, suffix, decimals, FIELD_W);
+                });
+                if let Some(v) = edit.filter(|v| v.is_finite()) {
+                    // Staggers and passes are whole numbers.
+                    let v = if decimals == 0 { json!(v.round().clamp(1.0, 64.0) as u32) } else { json!(v) };
+                    set_part(app, part, json!({"settings": {section: {key: v}}}));
+                }
+            }
+            if extra {
+                let on = shared(&settings, &["motif", "triple"]).and_then(Value::as_bool);
+                widgets::label_row(ui, tl!("Triple Run"), LABEL_W, |ui| {
+                    if widgets::check3(ui, "", on, true) {
+                        set_part(app, part, json!({"settings": {"motif": {"triple": on != Some(true)}}}));
+                    }
+                });
             }
         });
     }
+    if matches!(kind, "tatami" | "contour" | "circular" | "guided" | "satin" | "satinBlocks") && !group_header(ui, part, "underlay", tl!("Underlay"))
+    {
+        return;
+    }
     // Underlay.
-    match kind {
+    ui.indent(("stitch-group", part, "underlay"), |ui| match kind {
         "tatami" | "contour" | "circular" | "guided" => {
             let on = shared(&settings, &["fill", "underlay"]).and_then(Value::as_bool);
-            widgets::label_row(ui, tl!("Underlay"), LABEL_W, |ui| {
+            widgets::label_row(ui, tl!("Sew underlay"), LABEL_W, |ui| {
                 if widgets::check3(ui, "", on, true) {
                     set_part(app, part, json!({"settings": {"fill": {"underlay": on != Some(true)}}}));
                 }
@@ -486,8 +534,8 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
             let has = |ty: &str| lists.as_ref().map(|l| l.iter().any(|u| u["type"] == json!(ty)));
             let mut toggled = None;
             let mut changed: Option<(&str, &str, f64)> = None;
-            for (i, (label, ty)) in satin_underlays().into_iter().enumerate() {
-                widgets::label_row(ui, if i == 0 { tl!("Underlay") } else { "" }, LABEL_W, |ui| {
+            for (label, ty) in satin_underlays() {
+                widgets::label_row(ui, "", LABEL_W, |ui| {
                     if widgets::check3(ui, label, has(ty), true) {
                         toggled = Some(ty);
                     }
@@ -541,7 +589,7 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
             }
         }
         _ => {}
-    }
+    });
 }
 
 #[cfg(test)]
@@ -729,6 +777,50 @@ mod tests {
         assert!(app.run("stitch.settingsMode", json!({"advanced": "yes"})).is_err());
         app.run("stitch.settingsMode", json!({"advanced": false})).unwrap();
         assert!(!frame(&mut app).iter().any(|t| t == "Fractional spacing"));
+    }
+
+    #[test]
+    fn settings_fold_into_sections() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        run(&mut app, "file.new", json!({"width": 200, "height": 200}));
+        run(&mut app, "path.create", json!({"d": "M 10 10 L 150 10"}));
+        run(&mut app, "stitch.set", json!({"type": "satin"}));
+        let texts = frame(&mut app);
+        let at = |t: &str| texts.iter().position(|x| x == t).unwrap_or_else(|| panic!("{t} in {texts:?}"));
+        // Each section's header comes before its rows, in panel order.
+        assert!(at("Stitching") < at("Density") && at("Density") < at("Curves and Splits"));
+        assert!(at("Curves and Splits") < at("Split satin over") && at("Split satin over") < at("Underlay"));
+        assert!(at("Underlay") < at("Center walk"));
+        // Compensation is all Advanced, so Basic leaves its header out.
+        assert!(!texts.iter().any(|t| t == "Compensation"), "{texts:?}");
+        app.run("stitch.settingsMode", json!({"advanced": true})).unwrap();
+        let texts = frame(&mut app);
+        let at = |t: &str| texts.iter().position(|x| x == t).unwrap_or_else(|| panic!("{t} in {texts:?}"));
+        assert!(at("Compensation") < at("Pull compensation") && at("Pull compensation") < at("Curves and Splits"));
+        assert_eq!((group_of("splitLength"), group_of("fractionalSpacing"), group_of("angle")), ("curves", "compensation", "stitches"));
+    }
+
+    #[test]
+    fn a_closed_section_hides_its_rows() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        run(&mut app, "file.new", json!({"width": 200, "height": 200}));
+        run(&mut app, "shape.rectangle", json!({"x": 0, "y": 0, "width": 60, "height": 40}));
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::new(("stitch-settings-group", "fill", "stitches")), false));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| show(&mut app, ui));
+        out.textures_delta.clear();
+        fn texts(s: &egui::Shape, out: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut v = vec![];
+        out.shapes.iter().for_each(|c| texts(&c.shape, &mut v));
+        assert!(v.iter().any(|t| t == "Stitching") && v.iter().any(|t| t == "Sew underlay"), "{v:?}");
+        assert!(!v.iter().any(|t| t == "Angle" || t == "Density"), "{v:?}");
     }
 
     #[test]

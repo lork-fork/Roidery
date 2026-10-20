@@ -5042,3 +5042,9 @@ mark-style	Japanese	Japonesas
 
 # Roidery: test swatches.
 	Test Swatches	Muestras de prueba
+
+# Roidery: Stitch Settings sections.
+	Stitching	Puntadas
+	Compensation	Compensación
+	Curves and Splits	Curvas y divisiones
+	Sew underlay	Bordar base

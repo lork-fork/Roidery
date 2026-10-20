@@ -4682,3 +4682,9 @@ lighting	Light	Свет
 
 # Roidery: test swatches.
 	Test Swatches	Пробные образцы
+
+# Roidery: Stitch Settings sections.
+	Stitching	Стежки
+	Compensation	Компенсация
+	Curves and Splits	Изгибы и деление
+	Sew underlay	Шить подложку

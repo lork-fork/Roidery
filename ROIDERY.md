@@ -117,7 +117,8 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   icon column, and the Embroidery section at the top of the Properties panel. Both are the
   Embroidery workspace's: the others show the icon last and keep VectorCraft's Properties
   (`embroidery_workspace::icon_groups`). Basic and Advanced tabs (`stitch.settingsMode`,
-  remembered in `UiState::stitch_advanced`).
+  remembered in `UiState::stitch_advanced`). Under each part's stitch type the settings fold into
+  sections (Stitching, Compensation, Curves and Splits, Underlay), each remembered open or shut.
 - `crates/ui-egui/src/embroidery_workspace.rs`: the Embroidery workspace, Roidery's first-run
   default: its Basic toolbar, millimetres as the General unit, and what it trims (hidden, never
   removed: commands still run by id and every other workspace shows them all):

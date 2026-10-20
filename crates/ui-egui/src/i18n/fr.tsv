@@ -5114,3 +5114,9 @@ theme	Appearance	Apparence
 
 # Roidery: test swatches.
 	Test Swatches	Échantillons de test
+
+# Roidery: Stitch Settings sections.
+	Stitching	Points
+	Compensation	Compensation
+	Curves and Splits	Courbes et divisions
+	Sew underlay	Broder la sous-couche

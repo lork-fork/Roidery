@@ -4665,3 +4665,9 @@ lighting	Light	ライト
 
 # Roidery: test swatches.
 	Test Swatches	テスト見本
+
+# Roidery: Stitch Settings sections.
+	Stitching	縫い方
+	Compensation	補正
+	Curves and Splits	カーブと分割
+	Sew underlay	下縫いする

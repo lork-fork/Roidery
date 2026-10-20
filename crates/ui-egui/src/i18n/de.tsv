@@ -4641,3 +4641,9 @@ theme	Appearance	Erscheinungsbild
 
 # Roidery: test swatches.
 	Test Swatches	Stickproben
+
+# Roidery: Stitch Settings sections.
+	Stitching	Stiche
+	Compensation	Kompensation
+	Curves and Splits	Kurven und Teilung
+	Sew underlay	Unterlage sticken

@@ -5117,3 +5117,9 @@ mark-style	Japanese	Japonské
 
 # Roidery: test swatches.
 	Test Swatches	Testovací vzorky
+
+# Roidery: Stitch Settings sections.
+	Stitching	Prošívání
+	Compensation	Kompenzace
+	Curves and Splits	Křivky a dělení
+	Sew underlay	Vyšít podklad

@@ -4650,3 +4650,9 @@ lighting	Light	광원
 
 # Roidery: test swatches.
 	Test Swatches	테스트 견본
+
+# Roidery: Stitch Settings sections.
+	Stitching	땀 설정
+	Compensation	보정
+	Curves and Splits	곡선과 분할
+	Sew underlay	언더레이 수놓기

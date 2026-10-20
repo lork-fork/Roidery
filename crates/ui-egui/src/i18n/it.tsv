@@ -4686,3 +4686,9 @@ lighting	Light	Luce
 
 # Roidery: test swatches.
 	Test Swatches	Campioni di prova
+
+# Roidery: Stitch Settings sections.
+	Stitching	Punti
+	Compensation	Compensazione
+	Curves and Splits	Curve e divisioni
+	Sew underlay	Ricama il sottopunto

@@ -4014,3 +4014,9 @@ lighting	Light	光源
 
 # Roidery: test swatches.
 	Test Swatches	測試樣片
+
+# Roidery: Stitch Settings sections.
+	Stitching	針法
+	Compensation	補償
+	Curves and Splits	彎曲與拆分
+	Sew underlay	繡打底

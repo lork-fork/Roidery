@@ -4668,3 +4668,9 @@ theme	Appearance	Giao diện
 
 # Roidery: test swatches.
 	Test Swatches	Mẫu thử
+
+# Roidery: Stitch Settings sections.
+	Stitching	Mũi thêu
+	Compensation	Bù trừ
+	Curves and Splits	Đường cong và chia
+	Sew underlay	Thêu mũi lót
