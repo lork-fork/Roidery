@@ -4850,7 +4850,6 @@ mark-style	Japanese	Japonské
 	Install	Nainstalovat
 	Satin Blocks Tool	Nástroj Saténové bloky
 	Export Machine File…	Exportovat soubor pro stroj…
-	Satin Blocks	Saténové bloky
 	Stitch Info	Informace o stezích
 	Stitch Settings	Nastavení stehů
 	Sew-Out Player	Přehrávač vyšívání
@@ -4921,8 +4920,8 @@ mark-style	Japanese	Japonské
 	Letter height	Výška písmen
 	Letter spacing	Rozestup písmen
 	The lettering font has no {chars}	Písmo pro nápisy nemá {chars}
-	Convert to Satin (Centerline)	Převést na satén (středová linie)
-	Convert to Satin (Classic)	Převést na satén (klasicky)
+	Convert to Satin Fill (Centerline)	Převést na saténovou výplň (středová linie)
+	Convert to Satin Fill (Classic)	Převést na saténovou výplň (klasicky)
 	Swap Satin Sides	Prohodit strany saténu
 	Reverse Sewing Direction	Obrátit směr šití
 	Add Lettering	Přidat nápis
@@ -5016,7 +5015,7 @@ mark-style	Japanese	Japonské
 	Pull comp.	Komp. tahu
 	Put on Path	Umístit na cestu
 	Remove Overlaps: cut fills where later ones cover them	Odstranit překryvy: ořízne výplně tam, kde je zakrývají pozdější
-	Satin this wide can snag and pull: split the column or sew it as a fill	Takto široký satén se může zachytávat a stahovat: rozdělte sloupec nebo ho vyšijte jako výplň
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Takto široký satén se může zachytávat a stahovat: rozdělte sloupec nebo ho vyšijte jako výplň tatami
 	Select a path with it to put it on the path	Vyberte s ním cestu, abyste ho umístili na cestu
 	Sews as fill	Vyšívá se jako výplň
 	Show Jumps and Trims	Zobrazit skoky a střihy
@@ -5045,7 +5044,7 @@ mark-style	Japanese	Japonské
 
 # Roidery: messages.
 	Start	Začátek
-	Convert to Satin	Převést na satén
+	Convert to Satin Fill	Převést na saténovou výplň
 @msg	`.{ext}` is not a machine embroidery format	`.{ext}` není formát pro strojové vyšívání
 @msg	`advanced` must be true or false	`advanced` musí být true nebo false
 @msg	`{h}` is not a #rrggbb colour	`{h}` není barva ve tvaru #rrggbb
@@ -5104,7 +5103,7 @@ mark-style	Japanese	Japonské
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Stroj nedosáhne za okraj rámečku. Přesuňte návrh na stránku, nebo klikněte na Vycentrovat v rámečku.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Návrh je větší než rámeček. Vyberte větší rámeček, nebo návrh zmenšete.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Objekty se tu překrývají a takto silná vrstva nitě může zlomit jehlu. Odstranit překryvy vyřízne zakryté části.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Takto tenká výplň se vyšije jako několik roztřepených řad. Převeďte ji raději na satén.
+	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Takto tenká výplň se vyšije jako několik roztřepených řad. Převeďte ji raději na saténovou výplň.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Takto úzký satén se smotá do uzlu. Vyšijte ho raději rovným stehem.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Toto je příliš malé na čisté vyšití. Zvětšete to, nebo to smažte.
 
@@ -5113,7 +5112,7 @@ mark-style	Japanese	Japonské
 	Short stitch distance	Vzdálenost krátkých stehů
 	Split satin over	Dělit satén nad
 	Split Satin	Rozdělit satén
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Takto dlouhé saténové stehy leží volně a zachytávají se. Rozdělit satén je rozdělí na kratší stehy, nebo ji vyšijte jako výplň.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	Takto dlouhé saténové stehy leží volně a zachytávají se. Rozdělit satén je rozdělí na kratší stehy, nebo ji vyšijte jako výplň tatami.
 
 # Roidery: test swatches.
 	Test Swatches	Testovací vzorky
@@ -5123,3 +5122,7 @@ mark-style	Japanese	Japonské
 	Compensation	Kompenzace
 	Curves and Splits	Křivky a dělení
 	Sew underlay	Vyšít podklad
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Saténový tah
+	Satin Fill	Saténová výplň
+	Thread color: click for swatches, Shift-click for the color mixer	Barva nitě: kliknutím otevřete vzorník, Shift+kliknutím míchání barev

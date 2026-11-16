@@ -15,9 +15,10 @@ pub enum StitchType {
     Run,
     /// Triple (bean) run: each stitch sewn forward, back and forward again.
     Triple,
-    /// Satin of a fixed width along a path.
+    /// Satin Stroke: satin of a fixed width along a path (the id stays `satin`).
     Satin,
-    /// Satin Blocks: two rails with rungs between them.
+    /// Satin Fill: two rails with rungs between them, filling the shape between them, as Convert
+    /// to Satin Fill and the Satin Blocks tool make it (the id stays `satinBlocks`).
     SatinBlocks,
     /// Tatami fill.
     Tatami,
@@ -81,8 +82,8 @@ impl StitchType {
             Self::None => "None",
             Self::Run => "Single Run",
             Self::Triple => "Triple Run",
-            Self::Satin => "Satin",
-            Self::SatinBlocks => "Satin Blocks",
+            Self::Satin => "Satin Stroke",
+            Self::SatinBlocks => "Satin Fill",
             Self::Tatami => "Tatami Fill",
             Self::Contour => "Contour Fill",
             Self::Circular => "Circular Fill",
@@ -108,9 +109,15 @@ impl StitchType {
         })
     }
 
-    /// Whether this type fills an area (as opposed to following a line).
+    /// Whether this type fills an area with rows (as opposed to following a line).
     pub fn is_fill(self) -> bool {
         matches!(self, Self::Tatami | Self::Contour | Self::Circular | Self::Gradient | Self::Motif | Self::Guided)
+    }
+
+    /// Whether this type sews an object's fill part: the row fills, and Satin Fill, which covers
+    /// the area between its rails. The rest follow a line and sew the stroke part.
+    pub fn sews_fill(self) -> bool {
+        self.is_fill() || self == Self::SatinBlocks
     }
 }
 
@@ -448,6 +455,10 @@ mod tests {
     fn parses_ids_labels_and_aliases() {
         assert_eq!(StitchType::parse("satinBlocks"), Some(StitchType::SatinBlocks));
         assert_eq!(StitchType::parse("Satin Blocks"), Some(StitchType::SatinBlocks));
+        assert_eq!(StitchType::parse("Satin Fill"), Some(StitchType::SatinBlocks));
+        assert_eq!(StitchType::parse("satin"), Some(StitchType::Satin));
+        assert_eq!(StitchType::parse("Satin Stroke"), Some(StitchType::Satin));
+        assert!(StitchType::SatinBlocks.sews_fill() && !StitchType::SatinBlocks.is_fill() && !StitchType::Satin.sews_fill());
         assert_eq!(StitchType::parse("fill"), Some(StitchType::Tatami));
         assert_eq!(StitchType::parse("bean"), Some(StitchType::Triple));
         assert_eq!(StitchType::parse("nope"), None);

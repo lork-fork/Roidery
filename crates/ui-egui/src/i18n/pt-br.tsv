@@ -3827,7 +3827,6 @@ axis	Both	Ambos
 	Install	Instalar
 	Satin Blocks Tool	Ferramenta Blocos de Cetim
 	Export Machine File…	Exportar arquivo de máquina…
-	Satin Blocks	Blocos de Cetim
 	Stitch Info	Informações de pontos
 	Stitch Settings	Configurações de ponto
 	Sew-Out Player	Reprodutor de bordado
@@ -3898,8 +3897,8 @@ axis	Both	Ambos
 	Letter height	Altura da letra
 	Letter spacing	Espaçamento entre letras
 	The lettering font has no {chars}	A fonte de letreiro não tem {chars}
-	Convert to Satin (Centerline)	Converter em cetim (linha central)
-	Convert to Satin (Classic)	Converter em cetim (clássico)
+	Convert to Satin Fill (Centerline)	Converter em preenchimento de cetim (linha central)
+	Convert to Satin Fill (Classic)	Converter em preenchimento de cetim (clássico)
 	Swap Satin Sides	Trocar lados do cetim
 	Reverse Sewing Direction	Inverter direção da costura
 	Add Lettering	Adicionar letreiro
@@ -3997,7 +3996,7 @@ axis	Both	Ambos
 	Pull comp.	Comp. de puxada
 	Put on Path	Pôr no caminho
 	Remove Overlaps: cut fills where later ones cover them	Remover sobreposições: corta preenchimentos onde os posteriores os cobrem
-	Satin this wide can snag and pull: split the column or sew it as a fill	Um cetim tão largo pode enganchar e puxar: divida a coluna ou borde como preenchimento
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Um cetim tão largo pode enganchar e puxar: divida a coluna ou borde como preenchimento tatami
 	Select a path with it to put it on the path	Selecione um caminho junto para pô-lo no caminho
 	Sews as fill	Bordado como preenchimento
 	Show Jumps and Trims	Mostrar saltos e cortes
@@ -4025,7 +4024,7 @@ axis	Both	Ambos
 	No stitches yet	Ainda sem pontos
 
 # Roidery: messages.
-	Convert to Satin	Converter em cetim
+	Convert to Satin Fill	Converter em preenchimento de cetim
 
 # Roidery: Image Trace in the Embroidery bar.
 	Image	Imagem
@@ -4061,7 +4060,7 @@ axis	Both	Ambos
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	A máquina não alcança além da borda do bastidor. Mova o desenho para dentro da página ou clique em Centralizar no bastidor.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	O desenho é maior que o bastidor. Escolha um bastidor maior ou reduza o desenho.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Aqui os objetos se empilham, e tanta linha pode quebrar a agulha. Remover sobreposições corta as partes cobertas.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Um preenchimento tão fino é bordado como poucas fileiras irregulares. Converta-o em cetim.
+	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Um preenchimento tão fino é bordado como poucas fileiras irregulares. Converta-o em preenchimento de cetim.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Um cetim tão estreito embola num nó. Borde com ponto reto.
 	This is too small to sew cleanly. Make it bigger, or delete it.	É pequeno demais para bordar com perfeição. Aumente ou exclua.
 
@@ -4070,7 +4069,7 @@ axis	Both	Ambos
 	Short stitch distance	Distância dos pontos curtos
 	Split satin over	Dividir cetim acima de
 	Split Satin	Dividir cetim
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Pontos de cetim tão longos ficam soltos e enroscam. Dividir cetim os quebra em pontos mais curtos, ou borde como preenchimento.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	Pontos de cetim tão longos ficam soltos e enroscam. Dividir cetim os quebra em pontos mais curtos, ou borde como preenchimento tatami.
 
 # Roidery: test swatches.
 	Test Swatches	Amostras de teste
@@ -4080,3 +4079,7 @@ axis	Both	Ambos
 	Compensation	Compensação
 	Curves and Splits	Curvas e divisões
 	Sew underlay	Bordar base
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Traçado de cetim
+	Satin Fill	Preenchimento de cetim
+	Thread color: click for swatches, Shift-click for the color mixer	Cor da linha: clique para amostras, Shift+clique para o misturador de cores

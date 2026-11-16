@@ -4417,7 +4417,6 @@ lighting	Light	Luce
 	Install	Installa
 	Satin Blocks Tool	Strumento Blocchi satin
 	Export Machine File…	Esporta file macchina…
-	Satin Blocks	Blocchi satin
 	Stitch Info	Info punti
 	Stitch Settings	Impostazioni punto
 	Sew-Out Player	Simulatore di ricamo
@@ -4488,9 +4487,9 @@ lighting	Light	Luce
 	Letter height	Altezza lettere
 	Letter spacing	Spaziatura lettere
 	The lettering font has no {chars}	Il font della scritta non contiene {chars}
-	Convert to Satin	Converti in satin
-	Convert to Satin (Centerline)	Converti in satin (linea centrale)
-	Convert to Satin (Classic)	Converti in satin (classico)
+	Convert to Satin Fill	Converti in riempimento satin
+	Convert to Satin Fill (Centerline)	Converti in riempimento satin (linea centrale)
+	Convert to Satin Fill (Classic)	Converti in riempimento satin (classico)
 	Swap Satin Sides	Inverti i lati del satin
 	Reverse Sewing Direction	Inverti direzione di ricamo
 	Add Lettering	Aggiungi scritta
@@ -4585,7 +4584,7 @@ lighting	Light	Luce
 	Pull comp.	Comp. trazione
 	Put on Path	Metti sul tracciato
 	Remove Overlaps: cut fills where later ones cover them	Rimuovi sovrapposizioni: taglia i riempimenti dove quelli successivi li coprono
-	Satin this wide can snag and pull: split the column or sew it as a fill	Un satin così largo può impigliarsi e tirare: dividi la colonna o ricamala come riempimento
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Un satin così largo può impigliarsi e tirare: dividi la colonna o ricamala come riempimento tatami
 	Select a path with it to put it on the path	Selezionala insieme a un tracciato per metterla sul tracciato
 	Sews as fill	Ricamato come riempimento
 	Show Jumps and Trims	Mostra salti e tagli filo
@@ -4673,7 +4672,7 @@ lighting	Light	Luce
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	La macchina non arriva oltre il bordo del telaio. Sposta il disegno nella pagina o fai clic su Centra nel telaio.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Il disegno è più grande del telaio. Scegli un telaio più grande o rimpicciolisci il disegno.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Qui gli oggetti si sovrappongono e così tanto filo può rompere l’ago. Rimuovi sovrapposizioni ritaglia le parti coperte.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Un riempimento così sottile si ricama in poche file sfilacciate. Convertilo invece in satin.
+	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Un riempimento così sottile si ricama in poche file sfilacciate. Convertilo invece in riempimento satin.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Un satin così stretto si aggroviglia in un nodo. Ricamalo invece a punto filza.
 	This is too small to sew cleanly. Make it bigger, or delete it.	È troppo piccolo per essere ricamato in modo pulito. Ingrandiscilo o eliminalo.
 
@@ -4682,7 +4681,7 @@ lighting	Light	Luce
 	Short stitch distance	Distanza punti corti
 	Split satin over	Dividi il satin oltre
 	Split Satin	Dividi satin
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Punti satin così lunghi restano lenti e si impigliano. Dividi satin li spezza in punti più corti, oppure ricamalo come riempimento.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	Punti satin così lunghi restano lenti e si impigliano. Dividi satin li spezza in punti più corti, oppure ricamalo come riempimento tatami.
 
 # Roidery: test swatches.
 	Test Swatches	Campioni di prova
@@ -4692,3 +4691,7 @@ lighting	Light	Luce
 	Compensation	Compensazione
 	Curves and Splits	Curve e divisioni
 	Sew underlay	Ricama il sottopunto
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Traccia satin
+	Satin Fill	Riempimento satin
+	Thread color: click for swatches, Shift-click for the color mixer	Colore del filo: fai clic per i campioni, Shift+clic per il miscelatore colori

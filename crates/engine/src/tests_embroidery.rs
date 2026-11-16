@@ -749,10 +749,18 @@ fn single_part_settings_read_and_write_as_before() {
     run(&mut s, "stitch.set", json!({"part": "stroke", "type": "run"}));
     let stored = s.doc().unwrap().doc.node(id).unwrap().extras().attrs.as_ref().unwrap().stitch.clone().unwrap();
     assert_eq!((stored["fill"]["type"].clone(), stored["stroke"]["type"].clone()), (json!("contour"), json!("run")));
-    // A whole-object type (Satin Blocks) has no fill part.
+    // Satin Fill (`satinBlocks`) is the whole object, in the fill part: the stroke doesn't sew.
     run(&mut s, "stitch.set", json!({"type": "satinBlocks"}));
     let o = &run(&mut s, "stitch.info", json!({}))["objects"][0];
-    assert_eq!((o["whole"].clone(), o["fill"]["sews"].clone()), (json!(true), json!(false)));
+    assert_eq!(
+        (o["whole"].clone(), o["wholePart"].clone(), o["fill"]["type"].clone(), o["stroke"]["sews"].clone()),
+        (json!(true), json!("fill"), json!("satinBlocks"), json!(false))
+    );
+    let stored = s.doc().unwrap().doc.node(id).unwrap().extras().attrs.as_ref().unwrap().stitch.clone().unwrap();
+    assert_eq!(stored["type"], "satinBlocks", "stored as one setting, as before: {stored}");
+    // It is a fill type, not a stroke one.
+    assert!(s.execute("stitch.set", &json!({"part": "stroke", "type": "satinBlocks"})).is_err());
+    run(&mut s, "stitch.set", json!({"part": "fill", "type": "satinBlocks"}));
 }
 
 #[test]
@@ -812,9 +820,18 @@ fn convert_to_satin_makes_satin_blocks_and_hides_the_shape() {
         [(bar.0, false), (ids[0], true)]
     );
     assert_eq!(objects[1]["type"], "satinBlocks");
+    assert_eq!(objects[1]["part"], "fill", "a Satin Fill sews as the fill: {}", objects[1]);
     assert_eq!(objects[1]["thread"], json!([42, 125, 225]));
     assert_eq!(seq["colors"].as_array().unwrap().len(), 1);
     assert_eq!(s.doc().unwrap().selection.objects, vec![NodeId(ids[0])]);
+    // It is filled in that colour, between its rails, with no stroke; its fill colour is its thread.
+    let n = s.doc().unwrap().doc.node(NodeId(ids[0])).unwrap().clone();
+    assert!(!n.appearance.fill_paint().is_none() && n.appearance.stroke().is_none_or(|st| st.paint.is_none()));
+    let band = n.satin_band().expect("filled between the rails");
+    assert!(vectorcraft_geom::hit::fill_contains(&band, vectorcraft_geom::FillRule::NonZero, vectorcraft_geom::Point::new(70.0, 26.0)));
+    run(&mut s, "paint.setFill", json!({"color": "#ff0000"}));
+    assert_eq!(run(&mut s, "stitch.sequence", json!({}))["objects"][1]["thread"], json!([255, 0, 0]));
+    run(&mut s, "edit.undo", json!({}));
     // Its rails run the bar's length, its rungs across it.
     let r0 = &rails(&s, NodeId(ids[0]));
     assert!(r0[0].iter().all(|p| (p.1 - 20.0).abs() < 0.2 || (p.1 - 32.0).abs() < 0.2), "{r0:?}");

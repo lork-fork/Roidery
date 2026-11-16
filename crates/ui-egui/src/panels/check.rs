@@ -63,8 +63,8 @@ fn hint(kind: &str) -> &'static str {
         "outsideHoop" => tl!("The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop."),
         "tooLarge" => tl!("The design is bigger than the hoop. Pick a bigger hoop, or scale the design down."),
         "tooDense" => tl!("Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered."),
-        "thinFill" => tl!("A fill this thin sews as a few ragged rows. Convert it to satin instead."),
-        "wideSatin" => tl!("Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill."),
+        "thinFill" => tl!("A fill this thin sews as a few ragged rows. Convert it to a satin fill instead."),
+        "wideSatin" => tl!("Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill."),
         "narrowSatin" => tl!("A satin this narrow bunches up into a knot. Sew it as a running stitch instead."),
         _ => tl!("This is too small to sew cleanly. Make it bigger, or delete it."),
     }
@@ -75,7 +75,7 @@ fn fix_label(fix: &Value) -> &'static str {
     match fix["command"].as_str().unwrap_or("") {
         "stitch.centerInHoop" => tl!("Center in Hoop"),
         "stitch.removeOverlaps" => tl!("Remove Overlaps"),
-        "stitch.convertToSatin" => tl!("Convert to Satin"),
+        "stitch.convertToSatin" => tl!("Convert to Satin Fill"),
         _ if fix["params"]["settings"].is_object() => tl!("Split Satin"),
         _ => tl!("Sew as Running Stitch"),
     }

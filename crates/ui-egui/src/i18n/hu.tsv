@@ -4814,7 +4814,6 @@ imageTrace	Outline	Körvonal
 	Install	Telepítés
 	Satin Blocks Tool	Szaténblokkok
 	Export Machine File…	Gépi hímzőfájl exportálása…
-	Satin Blocks	Szaténblokkok
 	Stitch Info	Öltésadatok
 	Stitch Settings	Öltésbeállítások
 	Sew-Out Player	Hímzéslejátszó
@@ -4885,9 +4884,9 @@ imageTrace	Outline	Körvonal
 	Letter height	Betűmagasság
 	Letter spacing	Betűköz
 	The lettering font has no {chars}	A felirat betűtípusából hiányzik: {chars}
-	Convert to Satin	Átalakítás szaténná
-	Convert to Satin (Centerline)	Átalakítás szaténná (középvonal)
-	Convert to Satin (Classic)	Átalakítás szaténná (klasszikus)
+	Convert to Satin Fill	Átalakítás szatén kitöltéssé
+	Convert to Satin Fill (Centerline)	Átalakítás szatén kitöltéssé (középvonal)
+	Convert to Satin Fill (Classic)	Átalakítás szatén kitöltéssé (klasszikus)
 	Swap Satin Sides	Szatén oldalainak felcserélése
 	Reverse Sewing Direction	Hímzési irány megfordítása
 	Add Lettering	Felirat hozzáadása
@@ -4982,7 +4981,7 @@ imageTrace	Outline	Körvonal
 	Pull comp.	Húzáskomp.
 	Put on Path	Útvonalra helyezés
 	Remove Overlaps: cut fills where later ones cover them	Átfedések eltávolítása: a kitöltések kivágása ott, ahol későbbiek takarják őket
-	Satin this wide can snag and pull: split the column or sew it as a fill	Ilyen széles szatén beakadhat és húzódhat: oszd fel az oszlopot, vagy hímezd kitöltésként
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Ilyen széles szatén beakadhat és húzódhat: oszd fel az oszlopot, vagy hímezd tatami kitöltésként
 	Select a path with it to put it on the path	Jelölj ki vele együtt egy útvonalat, hogy az útvonalra helyezd
 	Sews as fill	Kitöltésként hímeződik
 	Show Jumps and Trims	Ugrások és cérnavágások megjelenítése
@@ -5069,7 +5068,7 @@ imageTrace	Outline	Körvonal
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	A gép nem ér túl a hímzőkeret szélén. Tegye a mintát az oldalra, vagy kattintson a Középre a hímzőkeretben gombra.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	A minta nagyobb a hímzőkeretnél. Válasszon nagyobb keretet, vagy kicsinyítse a mintát.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Itt egymásra kerülnek az objektumok, és ilyen vastag cérna eltörheti a tűt. Az Átfedések eltávolítása kivágja a takart részeket.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Az ilyen vékony kitöltés néhány rongyos sorként hímződik. Alakítsa inkább szaténná.
+	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Az ilyen vékony kitöltés néhány rongyos sorként hímződik. Alakítsa inkább szatén kitöltéssé.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Az ilyen keskeny szatén csomóba gyűrődik. Hímezze inkább egyenes öltéssel.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Ez túl kicsi a tiszta hímzéshez. Nagyítsa meg, vagy törölje.
 
@@ -5078,7 +5077,7 @@ imageTrace	Outline	Körvonal
 	Short stitch distance	Rövid öltés távolsága
 	Split satin over	Szatén felosztása e fölött
 	Split Satin	Szatén felosztása
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Az ilyen hosszú szaténöltések lazák és beakadnak. A Szatén felosztása rövidebb öltésekre bontja őket, vagy hímezze kitöltésként.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	Az ilyen hosszú szaténöltések lazák és beakadnak. A Szatén felosztása rövidebb öltésekre bontja őket, vagy hímezze tatami kitöltésként.
 
 # Roidery: test swatches.
 	Test Swatches	Próbaminták
@@ -5088,3 +5087,7 @@ imageTrace	Outline	Körvonal
 	Compensation	Kompenzáció
 	Curves and Splits	Ívek és felosztás
 	Sew underlay	Alátöltés varrása
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Szatén körvonal
+	Satin Fill	Szatén kitöltés
+	Thread color: click for swatches, Shift-click for the color mixer	Cérnaszín: kattintás – színminták, Shift+kattintás – színkeverő

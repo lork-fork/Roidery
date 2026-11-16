@@ -4372,7 +4372,6 @@ theme	Appearance	Erscheinungsbild
 	Install	Installieren
 	Satin Blocks Tool	Satinblock-Werkzeug
 	Export Machine File…	Maschinendatei exportieren…
-	Satin Blocks	Satinblöcke
 	Stitch Info	Stichinfo
 	Stitch Settings	Sticheinstellungen
 	Sew-Out Player	Stickablauf-Player
@@ -4443,9 +4442,9 @@ theme	Appearance	Erscheinungsbild
 	Letter height	Buchstabenhöhe
 	Letter spacing	Buchstabenabstand
 	The lettering font has no {chars}	Der Schrift des Schriftzugs fehlt {chars}
-	Convert to Satin	In Satin umwandeln
-	Convert to Satin (Centerline)	In Satin umwandeln (Mittellinie)
-	Convert to Satin (Classic)	In Satin umwandeln (klassisch)
+	Convert to Satin Fill	In Satinfläche umwandeln
+	Convert to Satin Fill (Centerline)	In Satinfläche umwandeln (Mittellinie)
+	Convert to Satin Fill (Classic)	In Satinfläche umwandeln (klassisch)
 	Swap Satin Sides	Satinseiten tauschen
 	Reverse Sewing Direction	Stickrichtung umkehren
 	Add Lettering	Schriftzug hinzufügen
@@ -4540,7 +4539,7 @@ theme	Appearance	Erscheinungsbild
 	Pull comp.	Zugkomp.
 	Put on Path	Auf Pfad setzen
 	Remove Overlaps: cut fills where later ones cover them	Überlappungen entfernen: Füllungen dort ausschneiden, wo spätere sie verdecken
-	Satin this wide can snag and pull: split the column or sew it as a fill	Ein so breiter Satin kann hängen bleiben und ziehen: Teilen Sie die Säule oder sticken Sie sie als Füllung
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Ein so breiter Satin kann hängen bleiben und ziehen: Teilen Sie die Säule oder sticken Sie sie als Tatami-Füllung
 	Select a path with it to put it on the path	Wählen Sie zusätzlich einen Pfad aus, um den Schriftzug auf den Pfad zu setzen
 	Sews as fill	Wird als Füllung gestickt
 	Show Jumps and Trims	Sprungstiche und Fadenschnitte einblenden
@@ -4628,7 +4627,7 @@ theme	Appearance	Erscheinungsbild
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Die Maschine erreicht nichts jenseits des Stickrahmens. Verschieben Sie das Design auf die Seite oder klicken Sie auf Im Stickrahmen zentrieren.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Das Design ist größer als der Stickrahmen. Wählen Sie einen größeren Rahmen oder verkleinern Sie das Design.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Hier liegen Objekte übereinander, und so dickes Garn kann die Nadel brechen. Überlappungen entfernen schneidet die verdeckten Teile weg.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Eine so schmale Füllung wird zu ein paar ausgefransten Reihen. Wandeln Sie sie stattdessen in Satin um.
+	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Eine so schmale Füllung wird zu ein paar ausgefransten Reihen. Wandeln Sie sie stattdessen in eine Satinfläche um.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Ein so schmaler Satin verknäuelt sich. Sticken Sie ihn stattdessen als Steppstich.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Das ist zu klein, um sauber gestickt zu werden. Vergrößern oder löschen Sie es.
 
@@ -4637,7 +4636,7 @@ theme	Appearance	Erscheinungsbild
 	Short stitch distance	Abstand für kurze Stiche
 	Split satin over	Satin teilen ab
 	Split Satin	Satin teilen
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	So lange Satinstiche liegen lose und bleiben hängen. Satin teilen zerlegt sie in kürzere Stiche, oder sticken Sie es als Füllung.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	So lange Satinstiche liegen lose und bleiben hängen. Satin teilen zerlegt sie in kürzere Stiche, oder sticken Sie es als Tatami-Füllung.
 
 # Roidery: test swatches.
 	Test Swatches	Stickproben
@@ -4647,3 +4646,7 @@ theme	Appearance	Erscheinungsbild
 	Compensation	Kompensation
 	Curves and Splits	Kurven und Teilung
 	Sew underlay	Unterlage sticken
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Satinkontur
+	Satin Fill	Satinfläche
+	Thread color: click for swatches, Shift-click for the color mixer	Garnfarbe: Klicken für Farbfelder, Shift-Klick für den Farbmischer

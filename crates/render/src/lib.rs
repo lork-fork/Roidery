@@ -1409,6 +1409,15 @@ impl Renderer {
             AppearanceItem::Stroke(st) => !solid(&st.paint),
         });
         let bounds = if needs_bounds { bp.bounding_box() } else { Rect::ZERO };
+        // Roidery: a Satin Fill's fill covers the area between its two rails.
+        let band = n
+            .appearance
+            .items
+            .iter()
+            .any(|i| matches!(i, AppearanceItem::Fill(fl) if fl.visible && !fl.paint.is_none()))
+            .then(|| n.satin_band())
+            .flatten();
+        let area = band.as_ref().unwrap_or(bp);
         for item in &n.appearance.items {
             match item {
                 AppearanceItem::Fill(fl) => {
@@ -1424,7 +1433,7 @@ impl Renderer {
                     if paint::set_paint(ctx, &fl.paint, bounds, f) {
                         self.fold_alpha(ctx, f.ink, &fl.paint);
                         ctx.set_fill_rule(fill_rule(rule));
-                        ctx.fill_path(bp);
+                        ctx.fill_path(area);
                     }
                     if layered {
                         ctx.pop_layer();

@@ -4413,7 +4413,6 @@ lighting	Light	Свет
 	Install	Установить
 	Satin Blocks Tool	Инструмент «Блоки глади»
 	Export Machine File…	Экспорт файла для машины…
-	Satin Blocks	Блоки глади
 	Stitch Info	Сведения о стежках
 	Stitch Settings	Параметры стежков
 	Sew-Out Player	Симулятор вышивания
@@ -4484,9 +4483,9 @@ lighting	Light	Свет
 	Letter height	Высота букв
 	Letter spacing	Межбуквенный интервал
 	The lettering font has no {chars}	В шрифте надписи нет символов {chars}
-	Convert to Satin	Преобразовать в гладь
-	Convert to Satin (Centerline)	Преобразовать в гладь (по осевой линии)
-	Convert to Satin (Classic)	Преобразовать в гладь (классически)
+	Convert to Satin Fill	Преобразовать в гладь-заливку
+	Convert to Satin Fill (Centerline)	Преобразовать в гладь-заливку (по осевой линии)
+	Convert to Satin Fill (Classic)	Преобразовать в гладь-заливку (классически)
 	Swap Satin Sides	Поменять стороны глади
 	Reverse Sewing Direction	Обратить направление вышивания
 	Add Lettering	Добавить надпись
@@ -4581,7 +4580,7 @@ lighting	Light	Свет
 	Pull comp.	Комп. стяжки
 	Put on Path	Поместить на контур
 	Remove Overlaps: cut fills where later ones cover them	Убрать перекрытия: обрезать заливки там, где их перекрывают более поздние
-	Satin this wide can snag and pull: split the column or sew it as a fill	Такая широкая гладь может цепляться и стягивать ткань: разделите столбик или вышейте его заливкой
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Такая широкая гладь может цепляться и стягивать ткань: разделите столбик или вышейте его заливкой татами
 	Select a path with it to put it on the path	Выделите вместе с ней контур, чтобы поместить её на контур
 	Sews as fill	Вышивается заливкой
 	Show Jumps and Trims	Показать переходы и обрезки
@@ -4669,7 +4668,7 @@ lighting	Light	Свет
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Машина не достаёт за край пялец. Переместите дизайн на страницу или нажмите «По центру пялец».
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Дизайн больше пялец. Выберите пяльцы побольше или уменьшите дизайн.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Здесь объекты лежат друг на друге, и такой толстый слой нити может сломать иглу. «Убрать перекрытия» вырежет закрытые части.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Такая узкая заливка вышьется несколькими рваными рядами. Лучше преобразуйте её в гладь.
+	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Такая узкая заливка вышьется несколькими рваными рядами. Лучше преобразуйте её в гладь-заливку.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Такая узкая гладь сбивается в узел. Лучше вышейте её прямым стежком.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Это слишком мало для аккуратной вышивки. Увеличьте или удалите.
 
@@ -4678,7 +4677,7 @@ lighting	Light	Свет
 	Short stitch distance	Расстояние для коротких стежков
 	Split satin over	Делить гладь длиннее
 	Split Satin	Разделить гладь
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Такие длинные стежки глади лежат свободно и цепляются. «Разделить гладь» разобьёт их на более короткие стежки, или вышейте это заливкой.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	Такие длинные стежки глади лежат свободно и цепляются. «Разделить гладь» разобьёт их на более короткие стежки, или вышейте это заливкой татами.
 
 # Roidery: test swatches.
 	Test Swatches	Пробные образцы
@@ -4688,3 +4687,7 @@ lighting	Light	Свет
 	Compensation	Компенсация
 	Curves and Splits	Изгибы и деление
 	Sew underlay	Шить подложку
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Гладь по обводке
+	Satin Fill	Гладь-заливка
+	Thread color: click for swatches, Shift-click for the color mixer	Цвет нити: щёлкните для образцов, Shift+щелчок — для смесителя цветов

@@ -55,12 +55,16 @@ enum Hit {
     Rung(usize),
 }
 
-/// The one selected Satin Blocks object and its two rails, cut to the rungs both have.
+/// The one selected Satin Fill and its two rails, cut to the rungs both have.
 fn edited(cx: &ToolContext) -> Option<(NodeId, SubPath, SubPath)> {
     let [id] = cx.selection.objects.as_slice() else { return None };
     let n = cx.doc.node(*id)?;
-    let kind = n.extras().attrs.as_ref()?.stitch.as_ref()?.get("type")?.as_str()?;
-    if kind != "satinBlocks" {
+    let stitch = n.extras().attrs.as_ref()?.stitch.as_ref()?;
+    // One setting, or a part's (the fill's; the stroke's in documents from before Satin Fill was a fill).
+    let satin = [None, Some("fill"), Some("stroke")]
+        .into_iter()
+        .any(|part| part.map_or(Some(stitch), |p| stitch.get(p)).and_then(|v| v.get("type")).and_then(|t| t.as_str()) == Some("satinBlocks"));
+    if !satin {
         return None;
     }
     let NodeKind::Path { path, .. } = &n.kind else { return None };

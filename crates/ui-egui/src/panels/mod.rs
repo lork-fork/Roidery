@@ -387,17 +387,23 @@ pub(crate) fn proxy(app: &mut VectorcraftApp, ui: &mut Ui, size: f32) {
 /// brings that proxy forward and opens a popover with the Swatches panel; Shift-click (or the
 /// popover's toggle) shows the Color panel's mixer instead.
 pub(crate) fn paint_chip(app: &mut VectorcraftApp, ui: &mut Ui, stroke: bool, size: f32, chevron: bool) {
+    paint_chip_as(app, ui, stroke, size, chevron, None);
+}
+
+/// Roidery: [`paint_chip`] drawn solid with its own tooltip `tip`, for a stroke that is the colour
+/// of what fills a shape (a Satin Fill's rails).
+pub(crate) fn paint_chip_as(app: &mut VectorcraftApp, ui: &mut Ui, stroke: bool, size: f32, chevron: bool, tip: Option<&str>) {
     let (fill, stroke_paint) = current_paints(app);
     let mixed = mixed_paints(app, ui.ctx());
     let (paint, mixed) = if stroke { (stroke_paint, mixed.1) } else { (fill, mixed.0) };
     let resp = crate::widgets::chip_button(ui, size, chevron, |ui, chip| {
-        crate::widgets::proxy_chip(ui, chip, &paint, mixed, stroke.then_some(size * 0.25));
+        crate::widgets::proxy_chip(ui, chip, &paint, mixed, (stroke && tip.is_none()).then_some(size * 0.25));
     });
-    let resp = resp.on_hover_text(if stroke {
+    let resp = resp.on_hover_text(tip.unwrap_or(if stroke {
         "Stroke: click for swatches, Shift-click for the color mixer"
     } else {
         "Fill: click for swatches, Shift-click for the color mixer"
-    });
+    }));
     if resp.clicked() {
         app.run("paint.toggleActive", json!({ "fill": !stroke })).ok();
         set_pstate(ui.ctx(), MIXER, ui.input(|i| i.modifiers.shift));

@@ -30,10 +30,10 @@ pub(crate) fn types() -> [(&'static str, &'static str); 15] {
         ("gradient", tl!("Gradient Fill")),
         ("motif", tl!("Motif Fill")),
         ("guided", tl!("Guided Fill")),
-        ("satin", tl!("Satin")),
-        ("satinBlocks", tl!("Satin Blocks")),
+        ("satinBlocks", tl!("Satin Fill")),
         ("run", tl!("Single Run")),
         ("triple", tl!("Triple Run")),
+        ("satin", tl!("Satin Stroke")),
         ("eStitch", tl!("E-Stitch")),
         ("rope", tl!("Rope")),
         ("manual", tl!("Manual")),
@@ -382,9 +382,10 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, info: &Value) {
         widgets::dim_label(ui, &crate::i18n::fmt(tl!("{n} stitches"), &[("n", &stitches.to_string())]));
         return;
     }
-    let whole = objects.iter().all(|o| o["whole"] == json!(true));
+    // A Satin Fill is all fill, manual stitches and lettering all stroke: just that part shows.
+    let whole = shared(&objects, &["wholePart"]).and_then(Value::as_str).map(str::to_string);
     for part in ["fill", "stroke"] {
-        if part == "fill" && whole {
+        if whole.as_deref().is_some_and(|w| w != part) {
             continue;
         }
         let values: Vec<Value> = objects.iter().map(|o| o[part].clone()).collect();
@@ -400,10 +401,10 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, info: &Value) {
     widgets::dim_label(ui, &crate::i18n::fmt(tl!("{n} stitches"), &[("n", &stitches.to_string())]));
 }
 
-/// Whether a part's menu offers stitch type `id`: fills offer fill stitches, strokes line
-/// stitches (Satin Blocks and manual stitches are the whole object, so they're in the stroke's).
+/// Whether a part's menu offers stitch type `id`: fills offer fill stitches and Satin Fill,
+/// strokes line stitches and Satin Stroke (manual stitches are the whole object, in the stroke's).
 pub(crate) fn allowed(part: &str, id: &str) -> bool {
-    const FILLS: [&str; 6] = ["tatami", "contour", "circular", "gradient", "motif", "guided"];
+    const FILLS: [&str; 7] = ["tatami", "contour", "circular", "gradient", "motif", "guided", "satinBlocks"];
     matches!(id, "auto" | "none") || (part == "fill") == FILLS.contains(&id)
 }
 
@@ -439,7 +440,12 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
         );
     });
     if let Some((id, _)) = chosen.and_then(|i| types.get(i)) {
-        set_part(app, part, if *id == "auto" { json!({"reset": true}) } else { json!({"type": id}) });
+        if *id == "satinBlocks" && kind != "satinBlocks" {
+            // A Satin Fill sews between rails: picking it converts the shapes.
+            crate::embroidery_bar::convert(app, "stitch.convertToSatin");
+        } else {
+            set_part(app, part, if *id == "auto" { json!({"reset": true}) } else { json!({"type": id}) });
+        }
         return;
     }
     if kind.is_empty() {
@@ -638,10 +644,26 @@ mod tests {
         // Satin shows its underlay passes.
         run(&mut app, "stitch.set", json!({"type": "satin"}));
         let texts = frame(&mut app);
-        for want in ["Satin", "Width", "Center walk", "Edge walk", "Zigzag"] {
+        for want in ["Satin Stroke", "Width", "Center walk", "Edge walk", "Zigzag"] {
             assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
         }
         assert!(!texts.iter().any(|t| t == "Angle"));
+    }
+
+    #[test]
+    fn convert_to_satin_fill_shows_as_a_fill_not_a_stroke() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        run(&mut app, "file.new", json!({"width": 200, "height": 200}));
+        run(&mut app, "shape.rectangle", json!({"x": 20, "y": 20, "width": 100, "height": 12}));
+        run(&mut app, "stitch.convertToSatin", json!({}));
+        let texts = frame(&mut app);
+        for want in ["Fill", "Satin Fill", "Density", "Center walk"] {
+            assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
+        }
+        assert!(!texts.iter().any(|t| t == "Stroke"), "no stroke section: {texts:?}");
+        // The fill menu offers Satin Fill; the stroke menu Satin Stroke and not Satin Fill.
+        assert!(allowed("fill", "satinBlocks") && !allowed("stroke", "satinBlocks"));
+        assert!(allowed("stroke", "satin") && !allowed("fill", "satin"));
     }
 
     #[test]
@@ -684,7 +706,7 @@ mod tests {
         run(&mut app, "file.new", json!({"width": 200, "height": 200}));
         run(&mut app, "stitch.createLettering", json!({"text": "Abc"}));
         let texts = frame(&mut app);
-        for want in ["Text", "Abc", "Letter height", "10 mm", "Satin"] {
+        for want in ["Text", "Abc", "Letter height", "10 mm", "Satin Stroke"] {
             assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
         }
         lettering_set(&mut app, json!({"text": "A€"}));
@@ -727,7 +749,7 @@ mod tests {
         // The stroke as a satin: the fill keeps its tatami.
         set_part(&mut app, "stroke", json!({"type": "satin"}));
         let texts = frame(&mut app);
-        for want in ["Satin", "Width", "Angle"] {
+        for want in ["Satin Stroke", "Width", "Angle"] {
             assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
         }
         // No fill: the fill section says how to add one.

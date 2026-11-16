@@ -228,7 +228,12 @@ fn piece_node(d: &mut Document, p: &roidery_fonts::PlacedPiece, color: Option<[u
     n.appearance = Appearance::basic(paint(fill, p.fill_rgb), paint(p.stroke.is_some(), p.stroke_rgb), THREAD_MM / MM_PER_PT).into();
     round(&mut n.appearance);
     let slot = |s: &Option<StitchSettings>| s.clone().map_or_else(|| Slot::Set(StitchSettings::of(StitchType::None)), Slot::Set);
-    parts::write(&mut n, &Slots::only(slot(&p.fill), slot(&p.stroke)), true);
+    // A satin column is a Satin Fill, the fill part, drawn by its rails' stroke.
+    let slots = match &p.stroke {
+        Some(s) if s.kind == StitchType::SatinBlocks => Slots::only(slot(&p.stroke), slot(&None)),
+        _ => Slots::only(slot(&p.fill), slot(&p.stroke)),
+    };
+    parts::write(&mut n, &slots, true);
     n
 }
 

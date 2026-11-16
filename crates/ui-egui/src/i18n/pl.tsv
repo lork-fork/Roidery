@@ -4690,7 +4690,6 @@ mark-style	Japanese	Japońskie
 	Install	Zainstaluj
 	Satin Blocks Tool	Narzędzie Bloki satynowe
 	Export Machine File…	Eksportuj plik maszynowy…
-	Satin Blocks	Bloki satynowe
 	Stitch Info	Informacje o ściegach
 	Stitch Settings	Ustawienia ściegu
 	Sew-Out Player	Symulacja haftowania
@@ -4761,9 +4760,9 @@ mark-style	Japanese	Japońskie
 	Letter height	Wysokość liter
 	Letter spacing	Odstęp między literami
 	The lettering font has no {chars}	Czcionka napisu nie zawiera znaków {chars}
-	Convert to Satin	Konwertuj na satynę
-	Convert to Satin (Centerline)	Konwertuj na satynę (linia środkowa)
-	Convert to Satin (Classic)	Konwertuj na satynę (klasycznie)
+	Convert to Satin Fill	Konwertuj na wypełnienie satynowe
+	Convert to Satin Fill (Centerline)	Konwertuj na wypełnienie satynowe (linia środkowa)
+	Convert to Satin Fill (Classic)	Konwertuj na wypełnienie satynowe (klasycznie)
 	Swap Satin Sides	Zamień strony satyny
 	Reverse Sewing Direction	Odwróć kierunek haftowania
 	Add Lettering	Dodaj napis
@@ -4858,7 +4857,7 @@ mark-style	Japanese	Japońskie
 	Pull comp.	Kompens. ściąg.
 	Put on Path	Umieść na ścieżce
 	Remove Overlaps: cut fills where later ones cover them	Usuń nakładanie: przytnij wypełnienia tam, gdzie zakrywają je późniejsze
-	Satin this wide can snag and pull: split the column or sew it as a fill	Tak szeroka satyna może zaczepiać się i ściągać materiał: podziel kolumnę lub haftuj ją jako wypełnienie
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Tak szeroka satyna może zaczepiać się i ściągać materiał: podziel kolumnę lub haftuj ją jako wypełnienie tatami
 	Select a path with it to put it on the path	Zaznacz razem z nim ścieżkę, aby umieścić go na ścieżce
 	Sews as fill	Haftowane jako wypełnienie
 	Show Jumps and Trims	Pokaż przeskoki i obcięcia
@@ -4946,7 +4945,7 @@ mark-style	Japanese	Japońskie
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Maszyna nie sięga poza krawędź tamborka. Przesuń projekt na stronę albo kliknij Wyśrodkuj w tamborku.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Projekt jest większy niż tamborek. Wybierz większy tamborek albo zmniejsz projekt.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Obiekty nakładają się tutaj, a tak gruba warstwa nici może złamać igłę. Usuń nakładanie wycina zakryte części.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Tak cienkie wypełnienie wyhaftuje się jako kilka postrzępionych rzędów. Zamiast tego przekonwertuj je na satynę.
+	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Tak cienkie wypełnienie wyhaftuje się jako kilka postrzępionych rzędów. Zamiast tego przekonwertuj je na wypełnienie satynowe.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Tak wąska satyna zbija się w supeł. Zamiast tego wyhaftuj ją ściegiem prostym.
 	This is too small to sew cleanly. Make it bigger, or delete it.	To jest za małe, by wyhaftować to czysto. Powiększ to albo usuń.
 
@@ -4955,7 +4954,7 @@ mark-style	Japanese	Japońskie
 	Short stitch distance	Odległość krótkich ściegów
 	Split satin over	Dziel satynę powyżej
 	Split Satin	Podziel satynę
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Tak długie ściegi satynowe leżą luźno i zaczepiają się. Podziel satynę rozbije je na krótsze ściegi, albo wyhaftuj to jako wypełnienie.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	Tak długie ściegi satynowe leżą luźno i zaczepiają się. Podziel satynę rozbije je na krótsze ściegi, albo wyhaftuj to jako wypełnienie tatami.
 
 # Roidery: test swatches.
 	Test Swatches	Próbki testowe
@@ -4965,3 +4964,7 @@ mark-style	Japanese	Japońskie
 	Compensation	Kompensacja
 	Curves and Splits	Łuki i podział
 	Sew underlay	Szyj podkład
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Obrys satynowy
+	Satin Fill	Wypełnienie satynowe
+	Thread color: click for swatches, Shift-click for the color mixer	Kolor nici: kliknij, aby wybrać próbkę, z Shift — mikser kolorów
