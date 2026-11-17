@@ -1,7 +1,7 @@
-//! Roidery: Convert to Satin Fill. Each closed shape becomes Satin Fill columns (two rails with
+//! Roidery: Convert to Satin Rails. Each closed shape becomes Satin Rails columns (two rails with
 //! rungs, stitch type `satinBlocks`) along its spine (`roidery_stitch::medial`), filled and sewn in
 //! the shape's colour just above it; the shape stays, hidden, so showing it again goes back. A
-//! Satin Fill is the object's fill part: it covers the shape, as tatami would.
+//! Satin Rails is the object's fill part: it covers the shape, as tatami would.
 
 use roidery_stitch::medial::{self, WIDE_MM};
 use roidery_stitch::{StitchSettings, StitchType};
@@ -47,11 +47,11 @@ fn convert_by(s: &mut Session, p: &Value, c: &'static str, method: medial::Metho
         plans.push((id, columns, rgb));
     }
     if plans.is_empty() {
-        return Err(bad(c, "nothing to convert: Convert to Satin Fill works on closed shapes"));
+        return Err(bad(c, "nothing to convert: Convert to Satin Rails works on closed shapes"));
     }
     let stitch = serde_json::to_value(StitchSettings::of(StitchType::SatinBlocks)).map_err(|e| bad(c, e.to_string()))?;
     let looks: Vec<_> = plans.iter().map(|(.., rgb)| s.new_art_look(Paint::solid(Color::rgb8(rgb[0], rgb[1], rgb[2])), Paint::None, 1.0)).collect();
-    let made = s.edit("Convert to Satin Fill", |d, sel| {
+    let made = s.edit("Convert to Satin Rails", |d, sel| {
         let mut made = vec![];
         for ((id, columns, _), look) in plans.into_iter().zip(looks) {
             let Some((parent, index, _)) = d.position(id) else { continue };
@@ -61,7 +61,7 @@ fn convert_by(s: &mut Session, p: &Value, c: &'static str, method: medial::Metho
                 let nid = d.alloc_id();
                 let mut n = Node::new(nid, super::super::create::path_kind(path, None));
                 look.apply(d, &mut n);
-                n.name = Some(if k == 0 { "Satin Fill".into() } else { format!("Satin Fill {}", k + 1) });
+                n.name = Some(if k == 0 { "Satin Rails".into() } else { format!("Satin Rails {}", k + 1) });
                 n.extras_mut().attrs = Some(Box::new(vectorcraft_doc::ObjectAttributes { stitch: Some(stitch.clone()), ..Default::default() }));
                 // Sewn just after the shape, in order.
                 d.insert(parent, index + 1 + k, n)?;
@@ -77,7 +77,7 @@ fn convert_by(s: &mut Session, p: &Value, c: &'static str, method: medial::Metho
     let mut out = json!({ "ids": made.iter().map(|id| id.0).collect::<Vec<_>>(), "skipped": skipped, "widestMm": widest });
     if widest > WIDE_MM {
         out["warning"] = json!(format!(
-            "Converted to a satin fill, but part of it is {widest:.1} mm wide: satin over {WIDE_MM:.0} mm sews loose stitches. Split it, or keep a tatami fill there."
+            "Converted to satin rails, but part of it is {widest:.1} mm wide: satin over {WIDE_MM:.0} mm sews loose stitches. Split it, or keep a tatami fill there."
         ));
     }
     Ok(out)

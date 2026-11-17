@@ -4469,9 +4469,6 @@ theme	Appearance	Giao diện
 	Letter height	Chiều cao chữ
 	Letter spacing	Khoảng cách chữ
 	The lettering font has no {chars}	Phông chữ thêu không có {chars}
-	Convert to Satin Fill	Chuyển thành tô satin
-	Convert to Satin Fill (Centerline)	Chuyển thành tô satin (đường tâm)
-	Convert to Satin Fill (Classic)	Chuyển thành tô satin (cổ điển)
 	Swap Satin Sides	Đảo hai cạnh satin
 	Reverse Sewing Direction	Đảo hướng thêu
 	Add Lettering	Thêm chữ thêu
@@ -4654,7 +4651,6 @@ theme	Appearance	Giao diện
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Máy không với tới ngoài mép khung thêu. Hãy dời mẫu vào trang, hoặc bấm Căn giữa trong khung thêu.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Mẫu thêu lớn hơn khung. Hãy chọn khung lớn hơn hoặc thu nhỏ mẫu.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Các đối tượng chồng lên nhau ở đây, chỉ dày như vậy có thể làm gãy kim. Loại bỏ chồng lấn sẽ cắt bỏ các phần bị che.
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Phần tô mảnh như vậy sẽ thêu thành vài hàng lởm chởm. Hãy chuyển nó thành tô satin.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Satin hẹp như vậy sẽ rối thành nút. Hãy thêu bằng mũi chạy.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Quá nhỏ để thêu gọn. Hãy làm to hơn hoặc xóa đi.
 
@@ -4677,3 +4673,12 @@ theme	Appearance	Giao diện
 	Satin Stroke	Nét satin
 	Satin Fill	Tô satin
 	Thread color: click for swatches, Shift-click for the color mixer	Màu chỉ: bấm để xem mẫu màu, Shift-bấm để trộn màu
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Ray satin
+	Convert to Satin Rails	Chuyển thành ray satin
+	Convert to Satin Rails (Centerline)	Chuyển thành ray satin (đường tâm)
+	Convert to Satin Rails (Classic)	Chuyển thành ray satin (cổ điển)
+	Automatic spacing	Khoảng cách tự động
+	Sew as Satin Fill	Thêu dạng tô satin
+	Keep New Objects with Their Color	Đối tượng mới theo màu của nó
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Vùng tô mảnh như vậy sẽ thêu thành vài hàng lởm chởm. Hãy thêu nó dạng tô satin.

@@ -4483,9 +4483,6 @@ lighting	Light	Свет
 	Letter height	Высота букв
 	Letter spacing	Межбуквенный интервал
 	The lettering font has no {chars}	В шрифте надписи нет символов {chars}
-	Convert to Satin Fill	Преобразовать в гладь-заливку
-	Convert to Satin Fill (Centerline)	Преобразовать в гладь-заливку (по осевой линии)
-	Convert to Satin Fill (Classic)	Преобразовать в гладь-заливку (классически)
 	Swap Satin Sides	Поменять стороны глади
 	Reverse Sewing Direction	Обратить направление вышивания
 	Add Lettering	Добавить надпись
@@ -4668,7 +4665,6 @@ lighting	Light	Свет
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Машина не достаёт за край пялец. Переместите дизайн на страницу или нажмите «По центру пялец».
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Дизайн больше пялец. Выберите пяльцы побольше или уменьшите дизайн.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Здесь объекты лежат друг на друге, и такой толстый слой нити может сломать иглу. «Убрать перекрытия» вырежет закрытые части.
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Такая узкая заливка вышьется несколькими рваными рядами. Лучше преобразуйте её в гладь-заливку.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Такая узкая гладь сбивается в узел. Лучше вышейте её прямым стежком.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Это слишком мало для аккуратной вышивки. Увеличьте или удалите.
 
@@ -4691,3 +4687,12 @@ lighting	Light	Свет
 	Satin Stroke	Гладь по обводке
 	Satin Fill	Гладь-заливка
 	Thread color: click for swatches, Shift-click for the color mixer	Цвет нити: щёлкните для образцов, Shift+щелчок — для смесителя цветов
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Атласные направляющие
+	Convert to Satin Rails	Преобразовать в атласные направляющие
+	Convert to Satin Rails (Centerline)	Преобразовать в атласные направляющие (осевая линия)
+	Convert to Satin Rails (Classic)	Преобразовать в атласные направляющие (классически)
+	Automatic spacing	Автоматический интервал
+	Sew as Satin Fill	Вышивать атласной заливкой
+	Keep New Objects with Their Color	Новые объекты к их цвету
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Такая тонкая заливка вышьется несколькими рваными рядами. Вышейте её лучше атласной заливкой.

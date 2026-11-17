@@ -63,6 +63,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("plugins", Class::Layer(2)),
     // Roidery embroidery crates.
     ("roidery-formats", Class::Standalone),
+    // StitchFoundry's embroidery core, vendored.
+    ("sf-core", Class::Standalone),
     // Stitch generators use pathops' Offset Path (contour fill), so they sit above it.
     ("roidery-stitch", Class::Layer(3)),
     ("roidery-plan", Class::Layer(4)),

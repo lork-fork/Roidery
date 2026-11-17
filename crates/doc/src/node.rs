@@ -592,7 +592,7 @@ impl PartialEq for Extras {
 }
 
 impl Node {
-    /// Roidery: whether this is a Satin Fill (stitch type `satinBlocks`, as the one setting or in
+    /// Roidery: whether this is Satin Rails (stitch type `satinBlocks`, as the one setting or in
     /// either part).
     pub fn is_satin_fill(&self) -> bool {
         let Some(v) = self.extras().attrs.as_ref().and_then(|a| a.stitch.as_ref()) else { return false };
@@ -600,8 +600,8 @@ impl Node {
         is(Some(v)) || is(v.get("fill")) || is(v.get("stroke"))
     }
 
-    /// Roidery: the area a Satin Fill's fill covers, between its two rails (the left one, then
-    /// the right one backwards, closed), or `None` when it isn't a Satin Fill of two open rails.
+    /// Roidery: the area the fill of Satin Rails covers, between its two rails (the left one, then
+    /// the right one backwards, closed), or `None` when it isn't Satin Rails of two open rails.
     pub fn satin_band(&self) -> Option<BezPath> {
         let NodeKind::Path { path, .. } = &self.kind else { return None };
         let [l, r] = path.subpaths.as_slice() else { return None };

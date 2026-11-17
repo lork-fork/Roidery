@@ -56,7 +56,8 @@ fn type_label(kind: &str) -> &'static str {
         "motif" => tl!("Motif Fill"),
         "guided" => tl!("Guided Fill"),
         "satin" => tl!("Satin Stroke"),
-        "satinBlocks" => tl!("Satin Fill"),
+        "satinFill" => tl!("Satin Fill"),
+        "satinBlocks" => tl!("Satin Rails"),
         "run" => tl!("Single Run"),
         "triple" => tl!("Triple Run"),
         "manual" => tl!("Manual"),
@@ -745,6 +746,16 @@ pub(crate) fn sort(app: &mut VectorcraftApp) {
 pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
     if widgets::menu_item(ui, "Sort by Color", app.session.active().is_some(), false) {
         sort(app);
+        ui.close();
+    }
+    // A new object in a thread colour the design already sews joins that colour's block.
+    let q = crate::panels::threads::design(app, ui.ctx());
+    let join = q.as_ref().is_some_and(|q| q["joinColors"] == json!(true));
+    let hoop = q.as_ref().is_some_and(|q| q["hoop"].is_object());
+    if widgets::menu_item_name(ui, tl!("Keep New Objects with Their Color"), hoop, join) {
+        if let Err(e) = app.run("stitch.setDesign", json!({ "joinColors": !join })) {
+            app.status(e);
+        }
         ui.close();
     }
     // The selected objects' fill and stroke, either way round.

@@ -17,9 +17,14 @@ pub enum StitchType {
     Triple,
     /// Satin Stroke: satin of a fixed width along a path (the id stays `satin`).
     Satin,
-    /// Satin Fill: two rails with rungs between them, filling the shape between them, as Convert
-    /// to Satin Fill and the Satin Blocks tool make it (the id stays `satinBlocks`).
+    /// Satin Rails: two rails with rungs between them, filling the shape between them, as Convert
+    /// to Satin Rails and the Satin Blocks tool make it (the id stays `satinBlocks`; it was
+    /// called Satin Fill before `satinFill` took the name).
     SatinBlocks,
+    /// Satin Fill: satin across a closed shape, turning with it, worked out from the outline
+    /// alone (StitchFoundry's engine, [`crate::foundry`]). No rails: it follows the shape as the
+    /// shape changes.
+    SatinFill,
     /// Tatami fill.
     Tatami,
     /// Contour fill: rows following the outline inwards.
@@ -41,12 +46,13 @@ pub enum StitchType {
 }
 
 impl StitchType {
-    pub const ALL: [StitchType; 14] = [
+    pub const ALL: [StitchType; 15] = [
         Self::None,
         Self::Run,
         Self::Triple,
         Self::Satin,
         Self::SatinBlocks,
+        Self::SatinFill,
         Self::Tatami,
         Self::Contour,
         Self::Circular,
@@ -65,6 +71,7 @@ impl StitchType {
             Self::Triple => "triple",
             Self::Satin => "satin",
             Self::SatinBlocks => "satinBlocks",
+            Self::SatinFill => "satinFill",
             Self::Tatami => "tatami",
             Self::Contour => "contour",
             Self::Circular => "circular",
@@ -83,7 +90,8 @@ impl StitchType {
             Self::Run => "Single Run",
             Self::Triple => "Triple Run",
             Self::Satin => "Satin Stroke",
-            Self::SatinBlocks => "Satin Fill",
+            Self::SatinBlocks => "Satin Rails",
+            Self::SatinFill => "Satin Fill",
             Self::Tatami => "Tatami Fill",
             Self::Contour => "Contour Fill",
             Self::Circular => "Circular Fill",
@@ -105,17 +113,18 @@ impl StitchType {
             "bean" => Some(Self::Triple),
             "single" | "running" => Some(Self::Run),
             "blanket" | "blanketstitch" => Some(Self::EStitch),
+            "satinblocks" => Some(Self::SatinBlocks),
             _ => None,
         })
     }
 
     /// Whether this type fills an area with rows (as opposed to following a line).
     pub fn is_fill(self) -> bool {
-        matches!(self, Self::Tatami | Self::Contour | Self::Circular | Self::Gradient | Self::Motif | Self::Guided)
+        matches!(self, Self::Tatami | Self::Contour | Self::Circular | Self::Gradient | Self::Motif | Self::Guided | Self::SatinFill)
     }
 
-    /// Whether this type sews an object's fill part: the row fills, and Satin Fill, which covers
-    /// the area between its rails. The rest follow a line and sew the stroke part.
+    /// Whether this type sews an object's fill part: the row fills, Satin Fill, and Satin Rails,
+    /// which cover the area between their rails. The rest follow a line and sew the stroke part.
     pub fn sews_fill(self) -> bool {
         self.is_fill() || self == Self::SatinBlocks
     }
@@ -202,6 +211,12 @@ pub struct SatinSettings {
     /// Split satin: a top stitch longer than this (mm) is split into shorter ones, staggered so
     /// the splits don't line up into a groove. 0 never splits.
     pub split_length: f64,
+    /// Satin Fill: open the spacing up on narrow columns (a quarter more at 1 mm, as set from
+    /// 3 mm up), so thin strokes and small letters don't sew stiff.
+    pub auto_spacing: bool,
+    /// Satin Fill: choose the underlay from each column's width (none under 1 mm, a centre run
+    /// to 2.2 mm, edge runs to 4.5 mm, edge runs and a zig-zag wider) instead of `underlays`.
+    pub auto_underlay: bool,
 }
 
 impl Default for SatinSettings {
@@ -215,6 +230,8 @@ impl Default for SatinSettings {
             short_stitch_inset: 15.0,
             short_stitch_distance: 0.25,
             split_length: 7.0,
+            auto_spacing: true,
+            auto_underlay: true,
         }
     }
 }
@@ -455,7 +472,10 @@ mod tests {
     fn parses_ids_labels_and_aliases() {
         assert_eq!(StitchType::parse("satinBlocks"), Some(StitchType::SatinBlocks));
         assert_eq!(StitchType::parse("Satin Blocks"), Some(StitchType::SatinBlocks));
-        assert_eq!(StitchType::parse("Satin Fill"), Some(StitchType::SatinBlocks));
+        assert_eq!(StitchType::parse("Satin Rails"), Some(StitchType::SatinBlocks));
+        assert_eq!(StitchType::parse("Satin Fill"), Some(StitchType::SatinFill));
+        assert_eq!(StitchType::parse("satinFill"), Some(StitchType::SatinFill));
+        assert!(StitchType::SatinFill.is_fill() && StitchType::SatinFill.sews_fill());
         assert_eq!(StitchType::parse("satin"), Some(StitchType::Satin));
         assert_eq!(StitchType::parse("Satin Stroke"), Some(StitchType::Satin));
         assert!(StitchType::SatinBlocks.sews_fill() && !StitchType::SatinBlocks.is_fill() && !StitchType::Satin.sews_fill());

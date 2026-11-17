@@ -4917,9 +4917,6 @@ theme	Appearance	Apparence
 	Letter height	Hauteur des lettres
 	Letter spacing	Espacement des lettres
 	The lettering font has no {chars}	La police de lettrage ne contient pas {chars}
-	Convert to Satin Fill	Convertir en fond satin
-	Convert to Satin Fill (Centerline)	Convertir en fond satin (ligne centrale)
-	Convert to Satin Fill (Classic)	Convertir en fond satin (classique)
 	Swap Satin Sides	Inverser les côtés du satin
 	Reverse Sewing Direction	Inverser le sens de broderie
 	Add Lettering	Ajouter un lettrage
@@ -5100,7 +5097,6 @@ theme	Appearance	Apparence
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	La machine ne peut pas aller au-delà du bord du cadre. Déplacez le motif sur la page ou cliquez sur Centrer dans le cadre.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Le motif est plus grand que le cadre. Choisissez un cadre plus grand ou réduisez le motif.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Des objets s’empilent ici, et une telle épaisseur de fil peut casser l’aiguille. Supprimer les chevauchements découpe les parties recouvertes.
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Un remplissage aussi fin se brode en quelques rangs irréguliers. Convertissez-le plutôt en fond satin.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Un satin aussi étroit s’emmêle en nœud. Brodez-le plutôt au point droit.
 	This is too small to sew cleanly. Make it bigger, or delete it.	C’est trop petit pour être brodé proprement. Agrandissez-le ou supprimez-le.
 
@@ -5123,3 +5119,12 @@ theme	Appearance	Apparence
 	Satin Stroke	Contour satin
 	Satin Fill	Fond satin
 	Thread color: click for swatches, Shift-click for the color mixer	Couleur du fil : cliquez pour le nuancier, Maj+clic pour le mélangeur de couleurs
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Rails satin
+	Convert to Satin Rails	Convertir en rails satin
+	Convert to Satin Rails (Centerline)	Convertir en rails satin (ligne centrale)
+	Convert to Satin Rails (Classic)	Convertir en rails satin (classique)
+	Automatic spacing	Espacement automatique
+	Sew as Satin Fill	Broder en fond satin
+	Keep New Objects with Their Color	Nouveaux objets avec leur couleur
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Un remplissage aussi fin se brode en quelques rangs irréguliers. Brodez-le plutôt en fond satin.

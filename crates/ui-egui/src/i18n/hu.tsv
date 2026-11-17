@@ -4884,9 +4884,6 @@ imageTrace	Outline	Körvonal
 	Letter height	Betűmagasság
 	Letter spacing	Betűköz
 	The lettering font has no {chars}	A felirat betűtípusából hiányzik: {chars}
-	Convert to Satin Fill	Átalakítás szatén kitöltéssé
-	Convert to Satin Fill (Centerline)	Átalakítás szatén kitöltéssé (középvonal)
-	Convert to Satin Fill (Classic)	Átalakítás szatén kitöltéssé (klasszikus)
 	Swap Satin Sides	Szatén oldalainak felcserélése
 	Reverse Sewing Direction	Hímzési irány megfordítása
 	Add Lettering	Felirat hozzáadása
@@ -5068,7 +5065,6 @@ imageTrace	Outline	Körvonal
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	A gép nem ér túl a hímzőkeret szélén. Tegye a mintát az oldalra, vagy kattintson a Középre a hímzőkeretben gombra.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	A minta nagyobb a hímzőkeretnél. Válasszon nagyobb keretet, vagy kicsinyítse a mintát.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Itt egymásra kerülnek az objektumok, és ilyen vastag cérna eltörheti a tűt. Az Átfedések eltávolítása kivágja a takart részeket.
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Az ilyen vékony kitöltés néhány rongyos sorként hímződik. Alakítsa inkább szatén kitöltéssé.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Az ilyen keskeny szatén csomóba gyűrődik. Hímezze inkább egyenes öltéssel.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Ez túl kicsi a tiszta hímzéshez. Nagyítsa meg, vagy törölje.
 
@@ -5091,3 +5087,12 @@ imageTrace	Outline	Körvonal
 	Satin Stroke	Szatén körvonal
 	Satin Fill	Szatén kitöltés
 	Thread color: click for swatches, Shift-click for the color mixer	Cérnaszín: kattintás – színminták, Shift+kattintás – színkeverő
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Szatén sínek
+	Convert to Satin Rails	Átalakítás szatén sínekké
+	Convert to Satin Rails (Centerline)	Átalakítás szatén sínekké (középvonal)
+	Convert to Satin Rails (Classic)	Átalakítás szatén sínekké (klasszikus)
+	Automatic spacing	Automatikus térköz
+	Sew as Satin Fill	Varrás szatén kitöltésként
+	Keep New Objects with Their Color	Új objektumok a színükhöz
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Ilyen vékony kitöltés néhány rojtos sorként varródik. Varrja inkább szatén kitöltésként.

@@ -19,8 +19,8 @@ pub struct Piece {
     pub path: BezPath,
     /// The fill part's settings, `None` when the fill doesn't sew.
     pub fill: Option<StitchSettings>,
-    /// The stroke part's settings, or a satin column's Satin Fill (`satinBlocks`, which Roidery
-    /// sews as the fill part, drawn by the rails' stroke); a Satin Fill or manual stitches are the
+    /// The stroke part's settings, or a satin column's Satin Rails (`satinBlocks`, which Roidery
+    /// sews as the fill part, drawn by the rails' stroke); Satin Rails or manual stitches are the
     /// whole object.
     pub stroke: Option<StitchSettings>,
     pub fill_rgb: Option<[u8; 3]>,

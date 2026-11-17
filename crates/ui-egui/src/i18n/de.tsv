@@ -4442,9 +4442,6 @@ theme	Appearance	Erscheinungsbild
 	Letter height	Buchstabenhöhe
 	Letter spacing	Buchstabenabstand
 	The lettering font has no {chars}	Der Schrift des Schriftzugs fehlt {chars}
-	Convert to Satin Fill	In Satinfläche umwandeln
-	Convert to Satin Fill (Centerline)	In Satinfläche umwandeln (Mittellinie)
-	Convert to Satin Fill (Classic)	In Satinfläche umwandeln (klassisch)
 	Swap Satin Sides	Satinseiten tauschen
 	Reverse Sewing Direction	Stickrichtung umkehren
 	Add Lettering	Schriftzug hinzufügen
@@ -4627,7 +4624,6 @@ theme	Appearance	Erscheinungsbild
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Die Maschine erreicht nichts jenseits des Stickrahmens. Verschieben Sie das Design auf die Seite oder klicken Sie auf Im Stickrahmen zentrieren.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Das Design ist größer als der Stickrahmen. Wählen Sie einen größeren Rahmen oder verkleinern Sie das Design.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Hier liegen Objekte übereinander, und so dickes Garn kann die Nadel brechen. Überlappungen entfernen schneidet die verdeckten Teile weg.
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Eine so schmale Füllung wird zu ein paar ausgefransten Reihen. Wandeln Sie sie stattdessen in eine Satinfläche um.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Ein so schmaler Satin verknäuelt sich. Sticken Sie ihn stattdessen als Steppstich.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Das ist zu klein, um sauber gestickt zu werden. Vergrößern oder löschen Sie es.
 
@@ -4650,3 +4646,12 @@ theme	Appearance	Erscheinungsbild
 	Satin Stroke	Satinkontur
 	Satin Fill	Satinfläche
 	Thread color: click for swatches, Shift-click for the color mixer	Garnfarbe: Klicken für Farbfelder, Shift-Klick für den Farbmischer
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Satinschienen
+	Convert to Satin Rails	In Satinschienen umwandeln
+	Convert to Satin Rails (Centerline)	In Satinschienen umwandeln (Mittellinie)
+	Convert to Satin Rails (Classic)	In Satinschienen umwandeln (klassisch)
+	Automatic spacing	Automatischer Abstand
+	Sew as Satin Fill	Als Satinfläche sticken
+	Keep New Objects with Their Color	Neue Objekte zu ihrer Farbe
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Eine so schmale Füllung wird zu ein paar ausgefransten Reihen. Sticken Sie sie stattdessen als Satinfläche.

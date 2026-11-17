@@ -1409,7 +1409,7 @@ impl Renderer {
             AppearanceItem::Stroke(st) => !solid(&st.paint),
         });
         let bounds = if needs_bounds { bp.bounding_box() } else { Rect::ZERO };
-        // Roidery: a Satin Fill's fill covers the area between its two rails.
+        // Roidery: the fill of Satin Rails covers the area between its two rails.
         let band = n
             .appearance
             .items

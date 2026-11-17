@@ -3897,8 +3897,6 @@ axis	Both	Ambos
 	Letter height	Altura da letra
 	Letter spacing	Espaçamento entre letras
 	The lettering font has no {chars}	A fonte de letreiro não tem {chars}
-	Convert to Satin Fill (Centerline)	Converter em preenchimento de cetim (linha central)
-	Convert to Satin Fill (Classic)	Converter em preenchimento de cetim (clássico)
 	Swap Satin Sides	Trocar lados do cetim
 	Reverse Sewing Direction	Inverter direção da costura
 	Add Lettering	Adicionar letreiro
@@ -4024,7 +4022,6 @@ axis	Both	Ambos
 	No stitches yet	Ainda sem pontos
 
 # Roidery: messages.
-	Convert to Satin Fill	Converter em preenchimento de cetim
 
 # Roidery: Image Trace in the Embroidery bar.
 	Image	Imagem
@@ -4060,7 +4057,6 @@ axis	Both	Ambos
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	A máquina não alcança além da borda do bastidor. Mova o desenho para dentro da página ou clique em Centralizar no bastidor.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	O desenho é maior que o bastidor. Escolha um bastidor maior ou reduza o desenho.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Aqui os objetos se empilham, e tanta linha pode quebrar a agulha. Remover sobreposições corta as partes cobertas.
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Um preenchimento tão fino é bordado como poucas fileiras irregulares. Converta-o em preenchimento de cetim.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Um cetim tão estreito embola num nó. Borde com ponto reto.
 	This is too small to sew cleanly. Make it bigger, or delete it.	É pequeno demais para bordar com perfeição. Aumente ou exclua.
 
@@ -4083,3 +4079,12 @@ axis	Both	Ambos
 	Satin Stroke	Traçado de cetim
 	Satin Fill	Preenchimento de cetim
 	Thread color: click for swatches, Shift-click for the color mixer	Cor da linha: clique para amostras, Shift+clique para o misturador de cores
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Trilhos de cetim
+	Convert to Satin Rails	Converter em trilhos de cetim
+	Convert to Satin Rails (Centerline)	Converter em trilhos de cetim (linha central)
+	Convert to Satin Rails (Classic)	Converter em trilhos de cetim (clássico)
+	Automatic spacing	Espaçamento automático
+	Sew as Satin Fill	Bordar como preenchimento cetim
+	Keep New Objects with Their Color	Novos objetos junto à sua cor
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Um preenchimento tão fino é bordado em poucas fileiras irregulares. Borde-o como preenchimento cetim.

@@ -4471,9 +4471,6 @@ lighting	Light	ライト
 	Letter height	文字の高さ
 	Letter spacing	文字間隔
 	The lettering font has no {chars}	文字刺繍フォントに {chars} がありません
-	Convert to Satin Fill	サテン塗りに変換
-	Convert to Satin Fill (Centerline)	サテン塗りに変換（センターライン）
-	Convert to Satin Fill (Classic)	サテン塗りに変換（クラシック）
 	Swap Satin Sides	サテンの左右を入れ替え
 	Reverse Sewing Direction	縫い方向を反転
 	Add Lettering	文字を追加
@@ -4651,7 +4648,6 @@ lighting	Light	ライト
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	ミシンは枠の外には届きません。デザインをページ内に移動するか、［フープの中央に配置］をクリックしてください。
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	デザインが枠より大きいです。大きい枠を選ぶか、デザインを縮小してください。
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	ここでオブジェクトが重なっており、糸が厚すぎて針が折れるおそれがあります。［重なりを除去］で隠れた部分を切り取れます。
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	これほど細い塗りは、ほつれた数本の列になります。サテン塗りに変換してください。
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	これほど細いサテンは糸が絡まって玉になります。ランニングステッチで刺してください。
 	This is too small to sew cleanly. Make it bigger, or delete it.	小さすぎてきれいに刺しゅうできません。大きくするか、削除してください。
 
@@ -4674,3 +4670,12 @@ lighting	Light	ライト
 	Satin Stroke	サテン線
 	Satin Fill	サテン塗り
 	Thread color: click for swatches, Shift-click for the color mixer	糸の色: クリックでスウォッチ、Shift キーを押しながらクリックでカラーミキサー
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	サテンレール
+	Convert to Satin Rails	サテンレールに変換
+	Convert to Satin Rails (Centerline)	サテンレールに変換（センターライン）
+	Convert to Satin Rails (Classic)	サテンレールに変換（クラシック）
+	Automatic spacing	自動間隔
+	Sew as Satin Fill	サテン塗りで縫う
+	Keep New Objects with Their Color	新しいオブジェクトを同じ色にまとめる
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	これほど細い塗りは、ほつれた数本の列になります。サテン塗りで縫ってください。

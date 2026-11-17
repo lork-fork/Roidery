@@ -320,7 +320,7 @@ fn hit_leaf(n: &Node, p: Point, opt: HitOptions, symbols: &SymbolBoxes) -> Optio
                 return Some(k);
             }
             let filled = !n.appearance.fill_paint().is_none();
-            // Roidery: a Satin Fill's fill covers the area between its rails.
+            // Roidery: the fill of Satin Rails covers the area between its rails.
             let area = if filled { n.satin_band() } else { None };
             if !opt.outline && !opt.path_only && filled && fill_contains(area.as_ref().unwrap_or(&bp), *rule, p) {
                 return Some(HitKind::Fill);

@@ -4848,9 +4848,6 @@ mark-style	Japanese	Japonesas
 	Letter height	Altura de letra
 	Letter spacing	Espaciado de letras
 	The lettering font has no {chars}	La fuente de rotulación no tiene {chars}
-	Convert to Satin Fill	Convertir en relleno de satén
-	Convert to Satin Fill (Centerline)	Convertir en relleno de satén (línea central)
-	Convert to Satin Fill (Classic)	Convertir en relleno de satén (clásico)
 	Swap Satin Sides	Intercambiar lados del satén
 	Reverse Sewing Direction	Invertir dirección de costura
 	Add Lettering	Añadir rotulación
@@ -5028,7 +5025,6 @@ mark-style	Japanese	Japonesas
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	La máquina no llega más allá del borde del bastidor. Mueva el diseño dentro de la página o haga clic en Centrar en el bastidor.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	El diseño es más grande que el bastidor. Elija un bastidor más grande o reduzca el diseño.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Aquí se apilan objetos, y tanto hilo puede romper la aguja. Quitar superposiciones recorta las partes tapadas.
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	Un relleno tan fino se borda como unas pocas filas irregulares. Conviértalo en un relleno de satén.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Un satén tan estrecho se amontona en un nudo. Bórdelo con puntada recta.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Es demasiado pequeño para bordarse limpiamente. Agrándelo o elimínelo.
 
@@ -5051,3 +5047,12 @@ mark-style	Japanese	Japonesas
 	Satin Stroke	Trazo de satén
 	Satin Fill	Relleno de satén
 	Thread color: click for swatches, Shift-click for the color mixer	Color del hilo: clic para muestras, Shift+clic para el mezclador de colores
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Rieles de satén
+	Convert to Satin Rails	Convertir en rieles de satén
+	Convert to Satin Rails (Centerline)	Convertir en rieles de satén (línea central)
+	Convert to Satin Rails (Classic)	Convertir en rieles de satén (clásico)
+	Automatic spacing	Espaciado automático
+	Sew as Satin Fill	Bordar como relleno satén
+	Keep New Objects with Their Color	Nuevos objetos junto a su color
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Un relleno tan fino se borda en unas pocas filas irregulares. Bórdelo mejor como relleno satén.

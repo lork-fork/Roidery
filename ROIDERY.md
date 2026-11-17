@@ -10,10 +10,11 @@ interface and keyboard shortcuts are VectorCraft's, and embroidery is added on t
 | Crate | Path | What it does |
 | --- | --- | --- |
 | `roidery-formats` | `crates/emb-formats` | Machine files: read and write Tajima DST and TAP, Brother PES (PES v1 with its PEC block and thumbnails), Janome JEF, Melco EXP, Husqvarna Viking VP3, Singer XXX and Barudan U01; read Barudan DSB, ZSK DSZ and Husqvarna Viking HUS; the hoop library (sewing fields by machine brand) and the fit check; thread charts (Brother and Janome built in, GIMP palette and CSV import) with colour matching in Lab. |
-| `roidery-stitch` | `crates/emb-stitch` | Stitch generators: single and triple run, Satin Stroke (satin along a path, stitch type `satin`; a Satin Column when its stroke has a width profile), Satin Fill (stitch type `satinBlocks`: two rails with rungs, steerable like Ember's Satin Blocks tool), tatami fill with stagger and underlay, gradient fill (tatami fading from dense to open), contour fill (rows following the outline inwards, built on VectorCraft's Offset Path), circular fill (rings round a centre you can move), motif fill (rows of zigzags, waves, diamonds or scales in single or triple run), E-stitch and rope, manual stitches; lettering in Roidery Sans, an original centre-line satin font drawn for Roidery; fabric presets (density, pull compensation and underlay per fabric). |
+| `roidery-stitch` | `crates/emb-stitch` | Stitch generators: single and triple run, Satin Stroke (satin along a path, stitch type `satin`; a Satin Column when its stroke has a width profile), Satin Fill (stitch type `satinFill`: satin across a closed shape that turns with it and follows every change to it, with no rails; StitchFoundry's engine through `foundry.rs`), Satin Rails (stitch type `satinBlocks`: two rails with rungs, steerable like Ember's Satin Blocks tool), tatami fill with stagger and underlay, gradient fill (tatami fading from dense to open), contour fill (rows following the outline inwards, built on VectorCraft's Offset Path), circular fill (rings round a centre you can move), motif fill (rows of zigzags, waves, diamonds or scales in single or triple run), E-stitch and rope, manual stitches; lettering in Roidery Sans, an original centre-line satin font drawn for Roidery; fabric presets (density, pull compensation and underlay per fabric). |
+| `sf-core` | `crates/sf-core` | StitchFoundry's embroidery core, vendored from [StitchFoundry](https://github.com/StitchFoundry/StitchFoundry) (MIT OR Apache-2.0, see `crates/sf-core/VENDORED.md`) without its `ai` module. Roidery uses its rail-less satin: the shape is cut into simple columns (holes slit where the shape is thinnest, branches cut at sharp inside corners), each column's sides are paired, and the stitches turn from pair to pair, with its automatic spacing and underlay. |
 | `roidery-plan` | `crates/emb-plan` | The stitch plan: sewing order, tie-ins and tie-offs, jumps and trims, colour changes, placing the design in the hoop (centred, or kept where it sits on the page); reviewing a design (sew time, thread density map). |
 | `roidery-mockup` | `crates/emb-mockup` | Mockups: fabric textures (woven, knit, piqué, terry, fleece, denim, twill, leather), soft light, and realistic thread drawn on the CPU (the Stitch View's thread shader ported, with shadows), so a design can be shown sewn on a garment. |
-| `roidery-fonts` | `crates/emb-fonts` | Digitized embroidery fonts in Ink/Stitch's font format (a folder with `font.json` and an SVG with one layer per letter): reads each letter's pieces with their stitch parameters (satin columns become Satin Fills with paired rails, fills tatami, strokes running stitches), lays text out with the font's kerning and ligatures, and finds the font library (`library`). The format is read from its published files; no Ink/Stitch code is used. |
+| `roidery-fonts` | `crates/emb-fonts` | Digitized embroidery fonts in Ink/Stitch's font format (a folder with `font.json` and an SVG with one layer per letter): reads each letter's pieces with their stitch parameters (satin columns become Satin Rails with paired rails, fills tatami, strokes running stitches), lays text out with the font's kerning and ligatures, and finds the font library (`library`). The format is read from its published files; no Ink/Stitch code is used. |
 
 In VectorCraft's own crates the changes are kept small so upstream merges stay easy:
 
@@ -22,15 +23,15 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
 - `crates/engine/src/cmd/embroidery.rs`: the commands below, registered in `cmd/mod.rs`, and
   `stitch_preview`, the stitches the canvas draws.
 - `crates/tools/src/satinblocks.rs`: the Satin Blocks tool (1), in the toolbar's Embroidery group,
-  which draws a Satin Fill block by block.
+  which draws Satin Rails block by block.
   Click and drag pulls curve handles out of a point, as the Pen tool does (Alt: only the outgoing
   handle), and the stitches fan round the curved rails (`satin::blocks_curved`, which walks both
   rails together into rungs 0.4 mm apart, paired by the fraction of each rail's length). With one
-  Satin Fill selected it edits it: drag a rung's end (its handles move with it), click a
+  Satin Rails selected it edits it: drag a rung's end (its handles move with it), click a
   rail to add a rung (a curved rail keeps its shape), Alt-click a rung to delete it; rung 0 is
   marked Start; Direct Selection edits the handles. Engine side:
   `crates/engine/src/cmd/embroidery/satin_edit.rs`.
-- `crates/emb-stitch/src/medial.rs`: Convert to Satin Fill (`stitch.convertToSatin`, Object ›
+- `crates/emb-stitch/src/medial.rs`: Convert to Satin Rails (`stitch.convertToSatin`, Object ›
   Embroidery, engine side `crates/engine/src/cmd/embroidery/convert.rs`). The shape's exact
   medial axis (a Voronoi diagram of the outline, from the `centerline` crate) is drawn into a grid
   one cell wide, or, for an outline that crosses itself, the shape is drawn into the grid and
@@ -39,14 +40,14 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   outline at its ends; rungs are cast square to it, fanned where a bend is tighter than the column
   is wide, sent to the outline's corners where a rail would cut one off (open ends close in on
   their tips), and thinned to the ones a straight block doesn't already give. Arms the spine leaves (a
-  Y, a star) become more columns. The shape stays, hidden, under the new Satin Fill.
-  Convert to Satin Fill (Classic) (`stitch.convertToSatinClassic`, `medial::Method::Classic`) keeps the
+  Y, a star) become more columns. The shape stays, hidden, under the new Satin Rails.
+  Convert to Satin Rails (Classic) (`stitch.convertToSatinClassic`, `medial::Method::Classic`) keeps the
   first way next to it so the two can be compared by hand: always thinning, and no extra rungs to
   corners and tips (arms aren't bisected into the column they leave either).
 - `crates/tools/src/fillangle.rs`: the Fill Angle tool (2), next to Satin Blocks. Dragging across
   the selection previews `stitch.setAngle` live and commits on release; Shift snaps to 15°,
   Escape puts the angle back.
-- `crates/ui-egui/src/menus.rs`: Object › Embroidery (Stitch Settings, Convert to Satin Fill (Centerline), Convert to Satin Fill (Classic), Swap Satin Sides, Reverse
+- `crates/ui-egui/src/menus.rs`: Object › Embroidery (Stitch Settings, Convert to Satin Rails (Centerline), Convert to Satin Rails (Classic), Swap Satin Sides, Reverse
   Sewing Direction, Remove Overlaps, Sort by Color, Match to Thread Chart, Add Lettering). Remove
   Overlaps (`stitch.removeOverlaps`, `crates/engine/src/cmd/embroidery/overlaps.rs`) cuts fills
   where later fills cover them, keeping 1 mm under the edges. File › Export Machine File…,
@@ -54,9 +55,9 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
 - `crates/ui-egui/src/embroidery_bar.rs`: the embroidery bar, across the top of the Embroidery
   workspace in place of the Control bar (Window › Embroidery Bar). Its left side follows the
   selection: the design with nothing selected (Add Lettering, Place Artwork, fabric, Sort by Color,
-  Match to Thread Chart, Center in Hoop), a fill (fill type, Convert to Satin Fill with Classic under
-  its chevron, angle and the Fill Angle tool, density, underlay, colour, border, Remove Overlaps),
-  a line (stitch, width or length, Reverse), a Satin Fill (density, pull compensation, underlay
+  Match to Thread Chart, Center in Hoop), a fill (fill type (Satin Fill needs no converting; Satin
+  Rails are listed only for objects that already are them), angle and the Fill Angle tool, density, underlay, colour, border, Remove Overlaps),
+  a line (stitch, width or length, Reverse), Satin Rails (density, pull compensation, underlay
   passes, Edit Rungs, Swap Sides, a warning over 10 mm), lettering (text, font, height amber
   outside the font's range, spacing, Put on Path with a path selected), computer-font text (font,
   size, Use an Embroidery Font…), a placed image (Image Trace: `stitch.traceImage` traces it with
@@ -86,7 +87,7 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
   with where it is and, when one command fixes it, that command: the design past the hoop's edge
   (Center in Hoop) or too large for it; spots where objects stack past 2.6 layers of thread
   (an error past 4; Remove Overlaps when fills overlap; one object's own dense spots, such as a
-  satin's corners, are left alone); fills under 1.5 mm wide on average (Convert to Satin Fill);
+  satin's corners, are left alone); fills under 1.5 mm wide on average (Sew as Satin Fill);
   satins over 10 mm (loose, snag; Split Satin) or under 1 mm (Sew as Running Stitch); objects
   under 1.5 mm.
   Clicking a problem selects its objects and brings it into view; while the panel is open the
@@ -193,7 +194,7 @@ In VectorCraft's own crates the changes are kept small so upstream merges stay e
 - `crates/ui-egui/src/i18n/*.tsv`: a `# Roidery` section at the end of each catalog.
 - `crates/doc/src/hit.rs`: `HitOptions::inside` (Preferences › Selection & Anchor Display ›
   Select Inside Unfilled Shapes, on by default): a click inside an unfilled closed shape, or
-  between a Satin Fill's rails, picks it once no edge or fill is hit, and open paths take
+  between the rails of Satin Rails, picks it once no edge or fill is hit, and open paths take
   a click twice the tolerance away. Embroidery outlines are often stroke only.
 - `crates/pathops/src/offset.rs`: a bug fix, which Roidery should offer upstream. Offset Path
   dropped an inset of a shape with a hole as "spurious" when the deep point it tested landed in
@@ -215,22 +216,22 @@ contours merged, and stays editable; Remove Overlaps cuts what text covers but n
 Each object starts near where the needle ended the one before (`roidery_stitch::route`): run,
 triple and satin lines sew their parts nearest first from the nearer end, closed lines and
 E-stitch or rope edges start at their nearest point, and tatami starts from the nearer side.
-Lettering, Satin Fills, manual stitches and width-profiled columns keep their own start.
+Lettering, Satin Rails, manual stitches and width-profiled columns keep their own start.
 
 Each object has two parts (`crates/engine/src/cmd/embroidery/parts.rs`): its fill sews first,
 with a fill stitch (tatami, contour, circular, gradient, motif, guided, Satin Fill) in the fill
 colour, then its stroke, with a line stitch (run, triple, Satin Stroke, E-stitch, rope) in the
 stroke colour, as its border. Without settings of its own, a fill is tatami and a stroke a running
-stitch. A Satin Fill, manual stitches and lettering are the whole object: a Satin Fill is the fill
-part (it covers the shape, as Convert to Satin Fill makes it, and sews in its fill colour, which
+stitch. Satin Rails, manual stitches and lettering are the whole object: Satin Rails is the fill
+part (it covers the shape, as Convert to Satin Rails makes it, and sews in its fill colour, which
 fills the area between its rails in Vector view), manual stitches and lettering the stroke part.
-Documents saved before Satin Fill was a fill open as they were: its one setting (`{"type":
+Documents saved before Satin Rails was a fill open as they were: its one setting (`{"type":
 "satinBlocks", …}`) is read into the fill part and written back the same way, and one with only
 its rails' stroke sews in that colour. The stroke weight is the sewn width of a Satin
 Stroke, E-stitch or rope stroke, both ways: the Stroke panel, the Width tool
 and Stitch Settings change one number. A running stitch set in Stitch Settings shows at thread
 thickness (0.4 mm). `ObjectAttributes::stitch` holds `{fill?, stroke?}`, or a single setting
-(older documents, and one part with the other off). A Satin Fill is a path with two
+(older documents, and one part with the other off). Satin Rails is a path with two
 subpaths, the left and right rails, where anchor `i` of each forms rung `i`; the rails may curve
 between rungs.
 
@@ -256,7 +257,7 @@ between rungs.
 - `stitch.matchThreads {ids?}`: change colours to their nearest chart thread.
 - A Satin Stroke (satin along a path) is a Satin Column: the stroke's width profile (the Width tool's) scales
   its width along the path (`roidery_stitch::Shape::Column`), whose width is the stroke weight.
-- Every satin (Satin Stroke, Satin Fill, lettering) sews short stitches and splits long ones
+- Every satin (Satin Stroke, Satin Rails, lettering) sews short stitches and splits long ones
   (`satin.rs`, `short_stitches` and `split`). Where a tight curve crowds the inside edge's
   penetrations closer than `shortStitchDistance` (0.25 mm), every other one stops
   `shortStitchInset` (15%) of the way across, so the thread doesn't pile up there. A top stitch
@@ -272,13 +273,13 @@ between rungs.
   on it, turned with it); the path is stored with the lettering and removed unless `keep`.
 - `stitch.setLettering {text?, height?, spacing?, lineSpacing?, font?, path?, ids?}`: change lettering
   and lay it out again where it is.
-- `stitch.createSatinBlocks {left, right, settings?}`: a Satin Fill from its rails (the
+- `stitch.createSatinBlocks {left, right, settings?}`: Satin Rails from its rails (the
   tool previews and commits through it); a rail point may be `{p, in?, out?}` with curve handles.
-- `stitch.convertToSatin {ids?}`: closed shapes to Satin Fills along their spines (above),
+- `stitch.convertToSatin {ids?}`: closed shapes to Satin Rails along their spines (above),
   → `{ids, skipped, widestMm, warning?}` (a column over 10 mm wide warns; the app shows it in the
   status bar). `stitch.convertToSatinClassic {ids?}` does the same the classic way (above).
 - `stitch.moveRung {id, index, left?, right?}`, `stitch.insertRung {id, index, t?}`,
-  `stitch.deleteRung {id, index}`: edit a Satin Fill's rungs (the tool drives them).
+  `stitch.deleteRung {id, index}`: edit the rungs of Satin Rails (the tool drives them).
 - `stitch.setGuide {ids?, guide?, keep?}`: make fills guided fills whose rows are parallel
   offsets of an open path (the one selected with them), stored with each fill as fractions of
   its bounds so it moves and scales with it; the path is removed unless `keep`.
@@ -383,9 +384,32 @@ groups, Edit Toolbar, Affinity files and many fixes.
 Roidery's history keeps VectorCraft's: build from a clone of the Roidery repository and `git pull`
 to update, rather than applying patches, so merges from VectorCraft arrive as they are.
 
+## Satin Fill, Satin Rails and the hoop (R5)
+
+- Satin Fill (`satinFill`, a fill type) sews satin across a closed shape with StitchFoundry's
+  engine (`crates/sf-core`, bridged by `crates/emb-stitch/src/foundry.rs`): no rails, worked out
+  again from the outline whenever the shape changes. Its settings: density, pull compensation,
+  split length, Automatic spacing (`autoSpacing`), Short stitches and Automatic underlay
+  (`autoUnderlay`; off, the satin underlay passes apply). Check Design's thin-fill fix sets it.
+- Satin Rails (`satinBlocks`) is what was called Satin Fill: shapes become Satin Rails only through
+  Object › Embroidery › Convert to Satin Rails (Centerline) / (Classic). The embroidery bar has no
+  Convert button.
+- An object that sews past the hoop's edge gets a red box round its bounds on the canvas
+  (`StitchPreview::outside`), and the field's edge turns red; its stitches keep their colours.
+- A new object (drawn, pasted or duplicated, one at a time) in a thread colour the design already
+  sews is put straight after the last object of that colour, so the colour isn't threaded twice,
+  unless something sewn in between overlaps it (`embroidery/join.rs`, in the same undo step).
+  Designs with a hoop only; Sequencer ≡ › Keep New Objects with Their Color (`stitch.setDesign
+  {joinColors}`) turns it off.
+- Stitch Settings and Properties › Embroidery read as levels: each part (Fill, Stroke) is a band
+  with its thread colour and stitch count, its sections have small capitals headers with a rule,
+  and their rows sit in under them along a guide line.
+
 ## Licences
 
-Roidery's own code is MIT OR Apache-2.0 like VectorCraft. The embroidery algorithms follow the
+Roidery's own code is MIT OR Apache-2.0 like VectorCraft. `crates/sf-core` is StitchFoundry's
+(Copyright (c) 2026 Bruce Wattendorf (SiteSentrix) and the StitchFoundry contributors), under the same
+MIT OR Apache-2.0 licence; see `NOTICE`. The embroidery algorithms follow the
 published behaviour of stitchjs (MIT) and the format notes of libembroidery (zlib) and
 pyembroidery (MIT), which are also the test oracles for the machine files (outside the repo). The
 PES and JEF thread charts list the manufacturers' published colour numbers, names and RGB values;

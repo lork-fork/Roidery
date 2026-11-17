@@ -21,7 +21,9 @@ const LABEL_W: f32 = 116.0;
 const FIELD_W: f32 = 80.0;
 
 /// The stitch types the menu offers, as (`stitch.set` type, label); "auto" resets to the rule.
-pub(crate) fn types() -> [(&'static str, &'static str); 15] {
+/// Satin Rails (`satinBlocks`) are listed for objects that already are them: shapes become Satin
+/// Rails through Object → Embroidery → Convert to Satin Rails.
+pub(crate) fn types() -> [(&'static str, &'static str); 16] {
     [
         ("auto", tl!("Automatic")),
         ("tatami", tl!("Tatami")),
@@ -30,7 +32,8 @@ pub(crate) fn types() -> [(&'static str, &'static str); 15] {
         ("gradient", tl!("Gradient Fill")),
         ("motif", tl!("Motif Fill")),
         ("guided", tl!("Guided Fill")),
-        ("satinBlocks", tl!("Satin Fill")),
+        ("satinFill", tl!("Satin Fill")),
+        ("satinBlocks", tl!("Satin Rails")),
         ("run", tl!("Single Run")),
         ("triple", tl!("Triple Run")),
         ("satin", tl!("Satin Stroke")),
@@ -55,6 +58,13 @@ pub(crate) fn fields(kind: &str) -> Vec<Field> {
             (tl!("Density"), "rope", "spacing", " mm", 2, false),
             (tl!("Passes"), "rope", "passes", "", 0, false),
             (tl!("Slant"), "rope", "slant", " mm", 2, true),
+        ],
+        // Satin Fill: StitchFoundry's engine spaces and underlays each column itself unless told
+        // not to (`satinFill_toggles`), and sews short stitches on curves or not.
+        "satinFill" => vec![
+            (tl!("Density"), "satin", "density", " mm", 2, false),
+            (tl!("Pull compensation"), "satin", "pullCompensation", " mm", 2, false),
+            (tl!("Split satin over"), "satin", "splitLength", " mm", 2, false),
         ],
         "satin" | "satinBlocks" => {
             let mut v = vec![];
@@ -145,15 +155,74 @@ fn group_of(key: &str) -> &'static str {
 }
 
 /// A section's folding header, open until it is clicked shut (remembered per part and section).
-/// Whether it is open.
+/// Whether it is open. Smaller and dimmer than the part's header above it, with a rule out to the
+/// panel's edge, so the part, its sections and their rows read as three levels.
 fn group_header(ui: &mut Ui, part: &str, group: &str, title: &str) -> bool {
     let id = egui::Id::new(("stitch-settings-group", part, group));
     let mut open = ui.ctx().data_mut(|d| *d.get_persisted_mut_or(id, true));
-    if widgets::section_toggle(ui, title, open) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    ui.add_space(2.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 3.0, t.hover);
+    }
+    let strong = if resp.hovered() { t.text_strong } else { t.text_dim };
+    let chevron = egui::Rect::from_center_size(egui::pos2(rect.left() + 7.0, rect.center().y), egui::vec2(10.0, 10.0));
+    crate::icons::paint(ui, if open { "chevron-down" } else { "chevron-right" }, chevron, strong);
+    let text =
+        ui.painter().text(egui::pos2(rect.left() + 16.0, rect.center().y), egui::Align2::LEFT_CENTER, title, crate::theme::semibold(10.5), strong);
+    if text.right() + 8.0 < rect.right() - 2.0 {
+        let y = rect.center().y.round() + 0.5;
+        ui.painter().line_segment([egui::pos2(text.right() + 8.0, y), egui::pos2(rect.right() - 2.0, y)], egui::Stroke::new(1.0, t.divider));
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, title));
+    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
         open = !open;
         ui.ctx().data_mut(|d| d.insert_persisted(id, open));
     }
     open
+}
+
+/// A section's rows, set in under its header with a guide line down their left, as a tree.
+fn nested(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let r = ui
+        .horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.vertical(add).response.rect
+        })
+        .inner;
+    let x = r.left() - 7.5;
+    if r.height() > 4.0 {
+        ui.painter().line_segment([egui::pos2(x, r.top() + 2.0), egui::pos2(x, r.bottom() - 2.0)], egui::Stroke::new(1.0, t.input_border));
+    }
+    ui.add_space(2.0);
+}
+
+/// A part's header: a band across the panel with the part's thread colour, its name and its
+/// stitch count, heading the stitch type and the sections under it.
+fn part_header(ui: &mut Ui, title: &str, thread: Option<egui::Color32>, stitches: u64) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    ui.add_space(4.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 4.0, t.input);
+    let mut x = rect.left() + 9.0;
+    if let Some(c) = thread {
+        let center = egui::pos2(x + 6.0, rect.center().y);
+        ui.painter().circle_filled(center, 6.0, c);
+        ui.painter().circle_stroke(center, 6.0, egui::Stroke::new(1.0, t.input_border));
+        x += 18.0;
+    }
+    ui.painter().text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, title, crate::theme::semibold(13.5), t.text_strong);
+    let count = crate::i18n::fmt(tl!("{n} stitches"), &[("n", &stitches.to_string())]);
+    ui.painter().text(
+        egui::pos2(rect.right() - 9.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        count,
+        egui::FontId::proportional(11.0),
+        t.text_dim,
+    );
+    ui.add_space(4.0);
 }
 
 /// `stitch.info` for the selection, recomputed only when the document or the selection changes
@@ -389,11 +458,14 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, info: &Value) {
             continue;
         }
         let values: Vec<Value> = objects.iter().map(|o| o[part].clone()).collect();
-        if part == "stroke" && !whole {
+        if part == "stroke" && whole.is_none() {
             widgets::divider(ui);
         }
-        // The part heads its sections: larger and bolder than their folding headers.
-        ui.label(egui::RichText::new(if part == "fill" { tl!("Fill") } else { tl!("Stroke") }).size(14.0).strong());
+        // The part heads its sections: a band with its thread, larger than their headers.
+        let sews = values.iter().any(|o| o["sews"] == json!(true));
+        let thread = shared(&values, &["thread"]).filter(|_| sews).map(crate::panels::sequencer::rgb);
+        let count = values.iter().filter_map(|o| o["stitches"].as_u64()).sum();
+        part_header(ui, if part == "fill" { tl!("Fill") } else { tl!("Stroke") }, thread, count);
         ui.push_id(part, |ui| part_section(app, ui, part, &values, advanced));
     }
     widgets::divider(ui);
@@ -401,10 +473,16 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, info: &Value) {
     widgets::dim_label(ui, &crate::i18n::fmt(tl!("{n} stitches"), &[("n", &stitches.to_string())]));
 }
 
-/// Whether a part's menu offers stitch type `id`: fills offer fill stitches and Satin Fill,
-/// strokes line stitches and Satin Stroke (manual stitches are the whole object, in the stroke's).
+/// Satin Fill's on-off settings, as (label, settings section, key, group, on when unset).
+fn satin_fill_toggles() -> [(&'static str, &'static str, &'static str, &'static str, bool); 2] {
+    [(tl!("Automatic spacing"), "satin", "autoSpacing", "stitches", true), (tl!("Short stitches"), "satin", "shortStitchInset", "curves", true)]
+}
+
+/// Whether a part's menu offers stitch type `id`: fills offer fill stitches, Satin Fill and Satin
+/// Rails, strokes line stitches and Satin Stroke (manual stitches are the whole object, in the
+/// stroke's).
 pub(crate) fn allowed(part: &str, id: &str) -> bool {
-    const FILLS: [&str; 7] = ["tatami", "contour", "circular", "gradient", "motif", "guided", "satinBlocks"];
+    const FILLS: [&str; 8] = ["tatami", "contour", "circular", "gradient", "motif", "guided", "satinFill", "satinBlocks"];
     matches!(id, "auto" | "none") || (part == "fill") == FILLS.contains(&id)
 }
 
@@ -426,7 +504,8 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
     } else {
         kind
     };
-    let types: Vec<(&str, &str)> = types().into_iter().filter(|t| allowed(part, t.0)).collect();
+    // Satin Rails only for objects that are already them (converting is in the Object menu).
+    let types: Vec<(&str, &str)> = types().into_iter().filter(|t| allowed(part, t.0) && (t.0 != "satinBlocks" || kind == "satinBlocks")).collect();
     let labels: Vec<&str> = types.iter().map(|t| t.1).collect();
     let current_label = types.iter().find(|t| t.0 == current).map_or("", |t| t.1);
     let mut chosen = None;
@@ -440,12 +519,7 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
         );
     });
     if let Some((id, _)) = chosen.and_then(|i| types.get(i)) {
-        if *id == "satinBlocks" && kind != "satinBlocks" {
-            // A Satin Fill sews between rails: picking it converts the shapes.
-            crate::embroidery_bar::convert(app, "stitch.convertToSatin");
-        } else {
-            set_part(app, part, if *id == "auto" { json!({"reset": true}) } else { json!({"type": id}) });
-        }
+        set_part(app, part, if *id == "auto" { json!({"reset": true}) } else { json!({"type": id}) });
         return;
     }
     if kind.is_empty() {
@@ -467,13 +541,14 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
     for (group, title) in groups() {
         let rows: Vec<&Field> = visible.iter().filter(|f| group_of(f.2) == group).collect();
         let extra = group == "stitches" && kind == "motif";
-        if rows.is_empty() && !extra {
+        let toggles: Vec<_> = satin_fill_toggles().into_iter().filter(|t| kind == "satinFill" && t.3 == group).collect();
+        if rows.is_empty() && !extra && toggles.is_empty() {
             continue;
         }
         if !group_header(ui, part, group, title) {
             continue;
         }
-        ui.indent(("stitch-group", part, group), |ui| {
+        nested(ui, |ui| {
             if extra {
                 let patterns = motif_patterns();
                 let current = shared(&settings, &["motif", "pattern"]).and_then(Value::as_str).unwrap_or("");
@@ -499,6 +574,18 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
                     set_part(app, part, json!({"settings": {section: {key: v}}}));
                 }
             }
+            for (label, section, key, _, default) in toggles {
+                // Short stitches are on when their inset is above 0.
+                let on =
+                    shared(&settings, &[section, key]).map(|v| v.as_bool().unwrap_or_else(|| v.as_f64().is_some_and(|x| x > 0.0))).or(Some(default));
+                widgets::label_row(ui, label, LABEL_W, |ui| {
+                    if widgets::check3(ui, "", on, true) {
+                        let next = on != Some(true);
+                        let v = if key == "shortStitchInset" { json!(if next { 15.0 } else { 0.0 }) } else { json!(next) };
+                        set_part(app, part, json!({"settings": {section: {key: v}}}));
+                    }
+                });
+            }
             if extra {
                 let on = shared(&settings, &["motif", "triple"]).and_then(Value::as_bool);
                 widgets::label_row(ui, tl!("Triple Run"), LABEL_W, |ui| {
@@ -509,12 +596,13 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
             }
         });
     }
-    if matches!(kind, "tatami" | "contour" | "circular" | "guided" | "satin" | "satinBlocks") && !group_header(ui, part, "underlay", tl!("Underlay"))
+    if matches!(kind, "tatami" | "contour" | "circular" | "guided" | "satin" | "satinFill" | "satinBlocks")
+        && !group_header(ui, part, "underlay", tl!("Underlay"))
     {
         return;
     }
     // Underlay.
-    ui.indent(("stitch-group", part, "underlay"), |ui| match kind {
+    nested(ui, |ui| match kind {
         "tatami" | "contour" | "circular" | "guided" => {
             let on = shared(&settings, &["fill", "underlay"]).and_then(Value::as_bool);
             widgets::label_row(ui, tl!("Sew underlay"), LABEL_W, |ui| {
@@ -535,7 +623,19 @@ fn part_section(app: &mut VectorcraftApp, ui: &mut Ui, part: &str, objects: &[Va
                 }
             }
         }
-        "satin" | "satinBlocks" => {
+        "satin" | "satinFill" | "satinBlocks" => {
+            // Satin Fill picks each column's underlay from its width unless told not to.
+            if kind == "satinFill" {
+                let auto = shared(&settings, &["satin", "autoUnderlay"]).map(|v| v.as_bool().unwrap_or(true)).or(Some(true));
+                widgets::label_row(ui, tl!("Automatic"), LABEL_W, |ui| {
+                    if widgets::check3(ui, "", auto, true) {
+                        set_part(app, part, json!({"settings": {"satin": {"autoUnderlay": auto != Some(true)}}}));
+                    }
+                });
+                if auto != Some(false) {
+                    return;
+                }
+            }
             let lists = shared(&settings, &["satin", "underlays"]).and_then(Value::as_array).cloned();
             let has = |ty: &str| lists.as_ref().map(|l| l.iter().any(|u| u["type"] == json!(ty)));
             let mut toggled = None;
@@ -651,19 +751,37 @@ mod tests {
     }
 
     #[test]
-    fn convert_to_satin_fill_shows_as_a_fill_not_a_stroke() {
+    fn convert_to_satin_rails_shows_as_a_fill_not_a_stroke() {
         let mut app = VectorcraftApp::new(Session::new(), Default::default());
         run(&mut app, "file.new", json!({"width": 200, "height": 200}));
         run(&mut app, "shape.rectangle", json!({"x": 20, "y": 20, "width": 100, "height": 12}));
         run(&mut app, "stitch.convertToSatin", json!({}));
         let texts = frame(&mut app);
-        for want in ["Fill", "Satin Fill", "Density", "Center walk"] {
+        for want in ["Fill", "Satin Rails", "Density", "Center walk"] {
             assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
         }
         assert!(!texts.iter().any(|t| t == "Stroke"), "no stroke section: {texts:?}");
-        // The fill menu offers Satin Fill; the stroke menu Satin Stroke and not Satin Fill.
+        // The fill menu offers Satin Fill and Satin Rails; the stroke menu Satin Stroke.
         assert!(allowed("fill", "satinBlocks") && !allowed("stroke", "satinBlocks"));
+        assert!(allowed("fill", "satinFill") && !allowed("stroke", "satinFill"));
         assert!(allowed("stroke", "satin") && !allowed("fill", "satin"));
+    }
+
+    #[test]
+    fn satin_fill_is_a_fill_with_automatic_spacing_and_underlay() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        run(&mut app, "file.new", json!({"width": 200, "height": 200}));
+        run(&mut app, "shape.rectangle", json!({"x": 20, "y": 20, "width": 100, "height": 12}));
+        run(&mut app, "stitch.set", json!({"part": "fill", "type": "satinFill"}));
+        let texts = frame(&mut app);
+        for want in ["Fill", "Satin Fill", "Density", "Automatic spacing", "Short stitches", "Underlay", "Automatic"] {
+            assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
+        }
+        // Underlay passes show only once automatic underlay is off; Satin Rails aren't offered.
+        assert!(!texts.iter().any(|t| t == "Center walk" || t == "Angle"), "{texts:?}");
+        run(&mut app, "stitch.set", json!({"part": "fill", "settings": {"satin": {"autoUnderlay": false}}}));
+        let texts = frame(&mut app);
+        assert!(texts.iter().any(|t| t == "Center walk"), "{texts:?}");
     }
 
     #[test]

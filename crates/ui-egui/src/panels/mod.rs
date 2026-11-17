@@ -391,7 +391,7 @@ pub(crate) fn paint_chip(app: &mut VectorcraftApp, ui: &mut Ui, stroke: bool, si
 }
 
 /// Roidery: [`paint_chip`] drawn solid with its own tooltip `tip`, for a stroke that is the colour
-/// of what fills a shape (a Satin Fill's rails).
+/// of what fills a shape (Satin Rails's rails).
 pub(crate) fn paint_chip_as(app: &mut VectorcraftApp, ui: &mut Ui, stroke: bool, size: f32, chevron: bool, tip: Option<&str>) {
     let (fill, stroke_paint) = current_paints(app);
     let mixed = mixed_paints(app, ui.ctx());

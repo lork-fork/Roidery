@@ -4451,9 +4451,6 @@ lighting	Light	광원
 	Letter height	글자 높이
 	Letter spacing	자간
 	The lettering font has no {chars}	레터링 글꼴에 {chars}이(가) 없습니다
-	Convert to Satin Fill	새틴 칠로 변환
-	Convert to Satin Fill (Centerline)	새틴 칠로 변환(중심선)
-	Convert to Satin Fill (Classic)	새틴 칠로 변환(클래식)
 	Swap Satin Sides	새틴 양쪽 바꾸기
 	Reverse Sewing Direction	수놓는 방향 반전
 	Add Lettering	레터링 추가
@@ -4636,7 +4633,6 @@ lighting	Light	광원
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	기계는 자수틀 가장자리 밖으로 닿지 않습니다. 디자인을 페이지 안으로 옮기거나 [자수틀 가운데에 배치]를 클릭하세요.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	디자인이 자수틀보다 큽니다. 더 큰 자수틀을 고르거나 디자인을 줄이세요.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	여기서 개체가 겹쳐 실이 너무 두꺼워 바늘이 부러질 수 있습니다. [겹침 제거]로 가려진 부분을 잘라 내세요.
-	A fill this thin sews as a few ragged rows. Convert it to a satin fill instead.	이렇게 가는 칠은 들쭉날쭉한 몇 줄로 수놓아집니다. 새틴 칠로 변환하세요.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	이렇게 좁은 새틴은 실이 엉켜 매듭이 됩니다. 러닝 스티치로 수놓으세요.
 	This is too small to sew cleanly. Make it bigger, or delete it.	너무 작아서 깔끔하게 수놓을 수 없습니다. 크게 만들거나 삭제하세요.
 
@@ -4659,3 +4655,12 @@ lighting	Light	광원
 	Satin Stroke	새틴 선
 	Satin Fill	새틴 칠
 	Thread color: click for swatches, Shift-click for the color mixer	실 색상: 클릭하면 견본, Shift-클릭하면 색상 혼합기
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	새틴 레일
+	Convert to Satin Rails	새틴 레일로 변환
+	Convert to Satin Rails (Centerline)	새틴 레일로 변환(중심선)
+	Convert to Satin Rails (Classic)	새틴 레일로 변환(클래식)
+	Automatic spacing	자동 간격
+	Sew as Satin Fill	새틴 채우기로 수놓기
+	Keep New Objects with Their Color	새 개체를 같은 색상과 함께
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	이렇게 얇은 채우기는 들쭉날쭉한 몇 줄로 수놓아집니다. 대신 새틴 채우기로 수놓으세요.

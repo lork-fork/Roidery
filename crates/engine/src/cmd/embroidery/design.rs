@@ -32,6 +32,10 @@ pub(crate) struct DesignSettings {
     pub chart: Option<Chart>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hoop: Option<DesignHoop>,
+    /// A new object stays on top even when its thread colour sews earlier in the design
+    /// (off: it joins that colour's block, [`super::join`]).
+    #[serde(rename = "separateColors", skip_serializing_if = "std::ops::Not::not")]
+    pub separate_colors: bool,
 }
 
 /// The hoop a design is sewn in: one from the library (by id) or a custom size.
@@ -254,6 +258,7 @@ pub(super) fn design(s: &mut Session, _p: &Value) -> Result<Value> {
         "charts": charts::BUILT_IN.iter().map(|(id, name)| json!({ "id": id, "name": name })).collect::<Vec<_>>(),
         "threads": threads,
         "hoop": field.as_ref().map(|f| f.hoop.json()).or_else(|| ds.hoop.as_ref().map(DesignHoop::json)),
+        "joinColors": !ds.separate_colors,
         "field": field.as_ref().map(HoopField::rect_json),
         "hoops": hoops::HOOPS.iter().map(|h| json!({ "id": h.id, "brand": h.brand, "name": h.name, "widthMm": h.width, "heightMm": h.height, "round": h.round })).collect::<Vec<_>>(),
     }))
@@ -301,8 +306,9 @@ pub(super) fn set_design(s: &mut Session, p: &Value) -> Result<Value> {
     let fabric = str_param(p, "fabric").map(|f| Fabric::find(f).ok_or_else(|| bad(C, format!("unknown fabric `{f}`")))).transpose()?;
     let chart = p.get("chart").map(chart_param).transpose()?;
     let hoop = p.get("hoop").map(hoop_param).transpose()?;
-    if fabric.is_none() && chart.is_none() && hoop.is_none() {
-        return Err(bad(C, "give fabric, chart or hoop"));
+    let join = p.get("joinColors").map(|v| v.as_bool().ok_or_else(|| bad(C, "`joinColors` must be true or false"))).transpose()?;
+    if fabric.is_none() && chart.is_none() && hoop.is_none() && join.is_none() {
+        return Err(bad(C, "give fabric, chart, hoop or joinColors"));
     }
     let old = DesignSettings::of(&s.doc()?.doc);
     let mut new = old.clone();
@@ -314,6 +320,9 @@ pub(super) fn set_design(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(h) = hoop.clone() {
         new.hoop = h;
+    }
+    if let Some(j) = join {
+        new.separate_colors = !j;
     }
     // The page is the hoop: a hoop chosen from here sizes the first artboard to its sewing field, about its centre.
     let field = hoop.flatten();

@@ -749,7 +749,7 @@ fn single_part_settings_read_and_write_as_before() {
     run(&mut s, "stitch.set", json!({"part": "stroke", "type": "run"}));
     let stored = s.doc().unwrap().doc.node(id).unwrap().extras().attrs.as_ref().unwrap().stitch.clone().unwrap();
     assert_eq!((stored["fill"]["type"].clone(), stored["stroke"]["type"].clone()), (json!("contour"), json!("run")));
-    // Satin Fill (`satinBlocks`) is the whole object, in the fill part: the stroke doesn't sew.
+    // Satin Rails (`satinBlocks`) is the whole object, in the fill part: the stroke doesn't sew.
     run(&mut s, "stitch.set", json!({"type": "satinBlocks"}));
     let o = &run(&mut s, "stitch.info", json!({}))["objects"][0];
     assert_eq!(
@@ -820,7 +820,7 @@ fn convert_to_satin_makes_satin_blocks_and_hides_the_shape() {
         [(bar.0, false), (ids[0], true)]
     );
     assert_eq!(objects[1]["type"], "satinBlocks");
-    assert_eq!(objects[1]["part"], "fill", "a Satin Fill sews as the fill: {}", objects[1]);
+    assert_eq!(objects[1]["part"], "fill", "Satin Rails sews as the fill: {}", objects[1]);
     assert_eq!(objects[1]["thread"], json!([42, 125, 225]));
     assert_eq!(seq["colors"].as_array().unwrap().len(), 1);
     assert_eq!(s.doc().unwrap().selection.objects, vec![NodeId(ids[0])]);
@@ -1114,9 +1114,9 @@ fn check_design_finds_thin_tiny_and_dense_objects_and_fixes_them() {
     let thin_p = ps.iter().find(|p| p["kind"] == "thinFill").unwrap();
     assert_eq!((thin_p["ids"].clone(), thin_p["level"].clone()), (json!([thin.0]), json!("warning")));
     assert!(thin_p["value"].as_f64().unwrap() < 1.0 && thin_p["x"].as_f64().unwrap() > 50.0, "{thin_p}");
-    assert_eq!(thin_p["fix"]["command"], "stitch.convertToSatin");
+    assert_eq!((thin_p["fix"]["command"].clone(), thin_p["fix"]["params"]["type"].clone()), (json!("stitch.set"), json!("satinFill")));
     assert_eq!(ps.iter().find(|p| p["kind"] == "tiny").unwrap()["ids"], json!([dot.0]));
-    // Converting the sliver to satin leaves it sewing fine.
+    // Sewing the sliver as Satin Fill leaves it sewing fine.
     let p = thin_p.clone();
     fix(&mut s, &p);
     run(&mut s, "select.none", json!({}));
@@ -1243,4 +1243,76 @@ fn test_swatches_lay_out_a_labelled_grid_in_one_step() {
     for bad in [json!({"type": "rope"}), json!({"densities": []}), json!({"pulls": [1, 2, 3, 4, 5, 6, 7]}), json!({"pulls": ["x"]})] {
         assert!(s.execute("stitch.testSwatches", &bad).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn satin_fill_sews_a_shape_across_with_no_rails_and_follows_its_changes() {
+    let mut s = session();
+    let id = NodeId(run(&mut s, "shape.rectangle", json!({"x": 20, "y": 20, "width": 140, "height": 20}))["id"].as_u64().unwrap());
+    run(&mut s, "stitch.set", json!({"ids": [id.0], "part": "fill", "type": "satinFill"}));
+    let i = run(&mut s, "stitch.info", json!({"ids": [id.0]}));
+    let o = &i["objects"][0];
+    assert_eq!((o["type"].clone(), o["whole"].clone(), o["fill"]["type"].clone()), (json!("satinFill"), json!(false), json!("satinFill")), "{o}");
+    let before = o["stitches"].as_u64().unwrap();
+    assert!(before > 100, "{o}");
+    // Stitches go across the 20 pt (7 mm) band, never past it: no rails were drawn.
+    let pv = crate::stitch_preview(&s.doc().unwrap().doc);
+    let sewn: Vec<_> = pv.stitches.iter().filter(|p| p.sew).collect();
+    assert!(sewn.iter().all(|p| p.y > 18.0 && p.y < 42.0 && p.x > 18.0 && p.x < 162.0));
+    // Made longer, it sews more: the satin follows the shape with nothing to convert.
+    run(&mut s, "object.transform", json!({"ids": [id.0], "matrix": [2.0, 0.0, 0.0, 1.0, -20.0, 0.0]}));
+    let after = run(&mut s, "stitch.info", json!({"ids": [id.0]}))["objects"][0]["stitches"].as_u64().unwrap();
+    assert!(after > before + 50, "{before} → {after}");
+    // Its own spacing and underlay can be turned off.
+    run(&mut s, "stitch.set", json!({"ids": [id.0], "part": "fill", "settings": {"satin": {"autoSpacing": false, "autoUnderlay": false}}}));
+    let o = &run(&mut s, "stitch.info", json!({"ids": [id.0]}))["objects"][0];
+    assert_eq!((o["settings"]["satin"]["autoSpacing"].clone(), o["settings"]["satin"]["autoUnderlay"].clone()), (json!(false), json!(false)), "{o}");
+}
+
+#[test]
+fn an_object_past_the_hoop_edge_is_boxed_not_every_stitch() {
+    let mut s = session();
+    run(&mut s, "stitch.setDesign", json!({"hoop": "brother-4x4"}));
+    rect(&mut s, 100.0);
+    assert!(crate::stitch_preview(&s.doc().unwrap().doc).outside.is_empty());
+    // 4 × 4 in about the 300 pt page's centre reaches x ≈ 292 pt: this one runs past it.
+    let far = rect(&mut s, 260.0);
+    let pv = crate::stitch_preview(&s.doc().unwrap().doc);
+    assert_eq!(pv.outside.len(), 1, "{:?}", pv.outside);
+    let b = pv.outside[0];
+    let vb = s.doc().unwrap().doc.node(far).unwrap().visual_bounds().unwrap();
+    assert!((b[0] - vb.x0).abs() < 4.0 && (b[2] - vb.x1).abs() < 4.0, "{b:?} vs {vb:?}");
+    // Without a hoop nothing is outside.
+    run(&mut s, "stitch.setDesign", json!({"hoop": "none"}));
+    assert!(crate::stitch_preview(&s.doc().unwrap().doc).outside.is_empty());
+}
+
+#[test]
+fn a_new_object_joins_the_block_of_its_thread_colour() {
+    let mut s = session();
+    run(&mut s, "stitch.setDesign", json!({"hoop": "brother-5x7"}));
+    assert_eq!(run(&mut s, "stitch.design", json!({}))["joinColors"], true);
+    let new = |s: &mut Session, x: f64, y: f64, color: &str| {
+        run(s, "select.none", json!({}));
+        run(s, "paint.setFill", json!({"color": color}));
+        run(s, "shape.rectangle", json!({"x": x, "y": y, "width": 60, "height": 60}))["id"].as_u64().unwrap()
+    };
+    let a = new(&mut s, 10.0, 10.0, "#ff0000");
+    let b = new(&mut s, 100.0, 10.0, "#0000ff");
+    // Red again, clear of the blue: sewn straight after the first red, one colour change.
+    let c = new(&mut s, 10.0, 100.0, "#ff0000");
+    assert_eq!(order(&mut s), [a, c, b]);
+    assert_eq!(run(&mut s, "stitch.sequence", json!({}))["colorChanges"], 1);
+    // Red over the blue stays on top of it, as drawn.
+    let d = new(&mut s, 120.0, 30.0, "#ff0000");
+    assert_eq!(order(&mut s), [a, c, b, d]);
+    // Undo takes the object and the move back in one step.
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(order(&mut s), [a, b]);
+    // Turned off, new objects stay where they are drawn.
+    run(&mut s, "stitch.setDesign", json!({"joinColors": false}));
+    assert_eq!(run(&mut s, "stitch.design", json!({}))["joinColors"], false);
+    let e = new(&mut s, 10.0, 200.0, "#ff0000");
+    assert_eq!(order(&mut s), [a, b, e]);
 }

@@ -79,7 +79,10 @@ mod tests {
     #[test]
     fn roidery_keeps_its_own_settings_folder() {
         assert_eq!(prefs_path_named_with("windows", "Roidery", "roidery", environment), Some("/roaming/Roidery/ui.json".into()));
-        assert_eq!(prefs_path_named_with("macos", "Roidery", "roidery", environment), Some("/user/Library/Application Support/Roidery/ui.json".into()));
+        assert_eq!(
+            prefs_path_named_with("macos", "Roidery", "roidery", environment),
+            Some("/user/Library/Application Support/Roidery/ui.json".into())
+        );
         assert_eq!(prefs_path_named_with("linux", "Roidery", "roidery", environment), Some("/xdg-config/roidery/ui.json".into()));
     }
 }

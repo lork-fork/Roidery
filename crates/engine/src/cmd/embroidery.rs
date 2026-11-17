@@ -7,7 +7,7 @@
 //! Text objects (the Type tools, in any installed font) are embroidery objects too: their glyph
 //! outlines sew as one fill in the text's colour, and the text stays editable.
 //!
-//! Satin Fills (stitch type `satinBlocks`) are paths with two subpaths, the left and right rails: anchor `i` of
+//! Satin Rails (stitch type `satinBlocks`) are paths with two subpaths, the left and right rails: anchor `i` of
 //! each forms rung `i`, as the Satin Blocks tool draws them.
 
 use std::collections::BTreeSet;
@@ -26,6 +26,7 @@ mod check;
 mod convert;
 pub(crate) mod design;
 mod guide;
+pub(crate) mod join;
 mod lettering;
 pub(crate) mod machine;
 mod mockup;
@@ -53,7 +54,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Settings",
             [],
             None,
-            "{part?: \"fill\"|\"stroke\" (which part to set: the fill sews fill types in the fill colour, then the stroke sews line types in the stroke colour; without part, the type's own part is set and the other part stops sewing, and settings without a type go to every part that sews), type?: \"none\"|\"run\"|\"triple\"|\"satin\" (Satin Stroke, a stroke type)|\"satinBlocks\" (Satin Fill, a fill type: the area between two rails)|\"tatami\"|\"contour\"|\"circular\"|\"gradient\"|\"motif\"|\"manual\"|\"eStitch\"|\"rope\", settings?: {run?: {length}, satin?: {width, density, pullCompensation, fractionalSpacing, shortStitchInset (% of the way across that every other crowded stitch on a curve's inside stops short, 0 off), shortStitchDistance (mm: closer than this is crowded), splitLength (mm: longer top stitches are split, staggered; 0 never), underlays: [{type: \"centerWalk\"|\"contour\"|\"zigZag\", length?, spacing?, inset?}]}, fill?: {angle, rowSpacing, stitchLength, staggers, pullCompensation, underlay, underlaySpacing, underlayInset, endSpacing (gradient: row spacing on the far side)}, circular?: {centerX, centerY (mm from the middle of the shape's bounds)}, motif?: {pattern: \"zigzag\"|\"wave\"|\"diamonds\"|\"scales\", width, height, spacing, angle, length, triple}, eStitch?: {width, spacing}, rope?: {width, spacing, slant, passes: 1-3}} (mm and degrees; merged into what the object has), reset?: bool (back to the automatic rule), ids?} set the embroidery stitch settings of the paths and compound paths in ids or the selection, as one undo step; a satin, E-stitch or rope stroke's width is its stroke weight (setting one sets the other), a running stitch set here shows at thread thickness (0.4 mm), and a part set on an object without its paint gets that paint in the object's other colour → {changed}",
+            "{part?: \"fill\"|\"stroke\" (which part to set: the fill sews fill types in the fill colour, then the stroke sews line types in the stroke colour; without part, the type's own part is set and the other part stops sewing, and settings without a type go to every part that sews), type?: \"none\"|\"run\"|\"triple\"|\"satin\" (Satin Stroke, a stroke type)|\"satinFill\" (Satin Fill, a fill type: satin across a closed shape, turning with it, with no rails; StitchFoundry's engine)|\"satinBlocks\" (Satin Rails, a fill type: the area between two rails)|\"tatami\"|\"contour\"|\"circular\"|\"gradient\"|\"motif\"|\"manual\"|\"eStitch\"|\"rope\", settings?: {run?: {length}, satin?: {width, density, pullCompensation, fractionalSpacing, shortStitchInset (% of the way across that every other crowded stitch on a curve's inside stops short, 0 off), shortStitchDistance (mm: closer than this is crowded), splitLength (mm: longer top stitches are split, staggered; 0 never), autoSpacing and autoUnderlay (Satin Fill: spacing opened up on narrow columns, and underlay chosen from each column's width instead of underlays; both on unless false), underlays: [{type: \"centerWalk\"|\"contour\"|\"zigZag\", length?, spacing?, inset?}]}, fill?: {angle, rowSpacing, stitchLength, staggers, pullCompensation, underlay, underlaySpacing, underlayInset, endSpacing (gradient: row spacing on the far side)}, circular?: {centerX, centerY (mm from the middle of the shape's bounds)}, motif?: {pattern: \"zigzag\"|\"wave\"|\"diamonds\"|\"scales\", width, height, spacing, angle, length, triple}, eStitch?: {width, spacing}, rope?: {width, spacing, slant, passes: 1-3}} (mm and degrees; merged into what the object has), reset?: bool (back to the automatic rule), ids?} set the embroidery stitch settings of the paths and compound paths in ids or the selection, as one undo step; a satin, E-stitch or rope stroke's width is its stroke weight (setting one sets the other), a running stitch set here shows at thread thickness (0.4 mm), and a part set on an object without its paint gets that paint in the object's other colour → {changed}",
             has_doc,
             set
         ),
@@ -62,7 +63,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Info",
             [],
             None,
-            "{ids?} the embroidery objects in ids or the selection (every one when nothing is selected) in sewing order, with their stitch settings (auto: from the automatic rule) and stitch counts, and the design's totals; type, auto, settings and thread are the first part that sews → {objects: [{id, type, auto, settings, stitches, thread: [r, g, b], whole (Satin Fill, manual or lettering: one part is the whole object), wholePart (\"fill\" for a Satin Fill, \"stroke\" for manual stitches and lettering, else null), fill: {type, auto, sews, settings, stitches, thread}, stroke: {…}}], stitches, trims, colorChanges, widthMm, heightMm, sewMinutes (on a home machine: 650 stitches a minute, 5 s a trim, 30 s a colour change), threadMeters: [top thread for each colour block, m], bobbinMeters (estimates: stitch lengths, 0.8 mm take-up a stitch, 15 mm tails, bobbin a third of the top), hoop?: {id, brand, name, widthMm, heightMm, round, fit: \"fits\"|\"outside\"|\"rotate\"|\"tooLarge\", overWidthMm?, overHeightMm?, outsideMm?} when the design has a hoop (the page is the hoop: the fit is checked where the design sits on the first artboard; outside: small enough but partly off the page, by outsideMm), lettering: [{id, lettering: {text, font, height, spacing, lineSpacing, path?}, digitized, fontName, sizeMin?, sizeMax?, multicolor?, error?}] for the lettering objects among ids or the selection (a letter stands for its lettering)}",
+            "{ids?} the embroidery objects in ids or the selection (every one when nothing is selected) in sewing order, with their stitch settings (auto: from the automatic rule) and stitch counts, and the design's totals; type, auto, settings and thread are the first part that sews → {objects: [{id, type, auto, settings, stitches, thread: [r, g, b], whole (Satin Rails, manual or lettering: one part is the whole object), wholePart (\"fill\" for Satin Rails, \"stroke\" for manual stitches and lettering, else null), fill: {type, auto, sews, settings, stitches, thread}, stroke: {…}}], stitches, trims, colorChanges, widthMm, heightMm, sewMinutes (on a home machine: 650 stitches a minute, 5 s a trim, 30 s a colour change), threadMeters: [top thread for each colour block, m], bobbinMeters (estimates: stitch lengths, 0.8 mm take-up a stitch, 15 mm tails, bobbin a third of the top), hoop?: {id, brand, name, widthMm, heightMm, round, fit: \"fits\"|\"outside\"|\"rotate\"|\"tooLarge\", overWidthMm?, overHeightMm?, outsideMm?} when the design has a hoop (the page is the hoop: the fit is checked where the design sits on the first artboard; outside: small enough but partly off the page, by outsideMm), lettering: [{id, lettering: {text, font, height, spacing, lineSpacing, path?}, digitized, fontName, sizeMin?, sizeMax?, multicolor?, error?}] for the lettering objects among ids or the selection (a letter stands for its lettering)}",
             has_doc,
             info
         ),
@@ -104,10 +105,10 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "stitch.createSatinBlocks",
-            "Satin Fill",
+            "Satin Rails",
             [],
             None,
-            "{left: [[x, y]…], right: [[x, y]…] (pt; point i of each rail forms rung i; a point may be {p: [x, y], in?: [x, y], out?: [x, y]}, whose handles curve the rail and the stitches with it), settings?: as stitch.set's} create a Satin Fill (the Satin Blocks tool's object): a path whose two subpaths are the rails, filled between them in the current fill colour (else the stroke colour), the colour it sews in → {id}",
+            "{left: [[x, y]…], right: [[x, y]…] (pt; point i of each rail forms rung i; a point may be {p: [x, y], in?: [x, y], out?: [x, y]}, whose handles curve the rail and the stitches with it), settings?: as stitch.set's} create Satin Rails (the Satin Blocks tool's object): a path whose two subpaths are the rails, filled between them in the current fill colour (else the stroke colour), the colour it sews in → {id}",
             has_doc,
             create_satin_blocks
         ),
@@ -152,7 +153,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Embroidery Design",
             [],
             None,
-            "{} the design's fabric and thread chart, the choices for each, and the design's thread colours (first sewn first) with the chart thread each is, or is nearest to → {fabric, fabricLabel, fabrics: [{id, label}], chart: {name, threads: count} | null, charts: [{id, name}], threads: [{rgb, name, code, inChart, nearest: {rgb, name, code, deltaE} | null, objects: [id…]}], hoop: {id, brand, name, widthMm, heightMm, round} | null (the page is the hoop: a first artboard resized by hand makes it a custom hoop of the page's size), field: {x, y, width, height} | null (the sewing field, the first artboard, in document units), hoops: [{id, brand, name, widthMm, heightMm, round}] (sewing fields by machine brand)}",
+            "{} the design's fabric and thread chart, the choices for each, and the design's thread colours (first sewn first) with the chart thread each is, or is nearest to → {fabric, fabricLabel, joinColors (a new object joins its thread colour's block: stitch.setDesign), fabrics: [{id, label}], chart: {name, threads: count} | null, charts: [{id, name}], threads: [{rgb, name, code, inChart, nearest: {rgb, name, code, deltaE} | null, objects: [id…]}], hoop: {id, brand, name, widthMm, heightMm, round} | null (the page is the hoop: a first artboard resized by hand makes it a custom hoop of the page's size), field: {x, y, width, height} | null (the sewing field, the first artboard, in document units), hoops: [{id, brand, name, widthMm, heightMm, round}] (sewing fields by machine brand)}",
             has_doc,
             design::design
         ),
@@ -161,7 +162,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Embroidery Design",
             [],
             None,
-            "{fabric?: \"woven\"|\"knit\"|\"pique\"|\"terry\"|\"fleece\"|\"denim\"|\"twill\"|\"leather\" (sets the density, pull compensation and underlay of automatic objects, and, unless applyToObjects is false, of objects with settings of their own), chart?: \"brother\"|\"janome\"|\"none\"|{name?, threads: [{rgb: [r, g, b], name, code}]}|{name?, text: GIMP palette or CSV}|{name?, path}, applyToObjects?: bool, hoop?: hoop id (see stitch.design)|\"none\"|{width, height, name?, round?} (mm)} (the first artboard is the hoop: it takes the hoop's sewing field, about its centre, with its centre mark) set the design's fabric, thread chart (machine files name threads whose colour is in the chart) and hoop (Stitch Settings and stitch.export say whether the design fits it); one undo step → {fabric, chart, hoop, changed}",
+            "{fabric?: \"woven\"|\"knit\"|\"pique\"|\"terry\"|\"fleece\"|\"denim\"|\"twill\"|\"leather\" (sets the density, pull compensation and underlay of automatic objects, and, unless applyToObjects is false, of objects with settings of their own), chart?: \"brother\"|\"janome\"|\"none\"|{name?, threads: [{rgb: [r, g, b], name, code}]}|{name?, text: GIMP palette or CSV}|{name?, path}, applyToObjects?: bool, joinColors?: bool (on unless false: one new object drawn, pasted or duplicated in a thread colour the design already sews is put straight after the last object of that colour, so the colour isn't threaded twice, unless something sewn in between overlaps it; designs with a hoop only), hoop?: hoop id (see stitch.design)|\"none\"|{width, height, name?, round?} (mm)} (the first artboard is the hoop: it takes the hoop's sewing field, about its centre, with its centre mark) set the design's fabric, thread chart (machine files name threads whose colour is in the chart) and hoop (Stitch Settings and stitch.export say whether the design fits it); one undo step → {fabric, chart, hoop, changed}",
             has_doc,
             design::set_design
         ),
@@ -215,7 +216,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Move Rung",
             [],
             None,
-            "{id: a Satin Fill, index: rung (0 is where sewing starts), left?: [x, y], right?: [x, y] pt} move the ends of one rung (their curve handles move with them); one undo step → {changed}",
+            "{id: Satin Rails, index: rung (0 is where sewing starts), left?: [x, y], right?: [x, y] pt} move the ends of one rung (their curve handles move with them); one undo step → {changed}",
             has_doc,
             satin_edit::move_rung
         ),
@@ -224,7 +225,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Rung",
             [],
             None,
-            "{id: a Satin Fill, index: the rung to insert after, t?: 0 to 1 along the way to the next rung by length (default 0.5)} add a rung between two others, on both rails (a curved rail keeps its shape); one undo step → {changed, index: the new rung}",
+            "{id: Satin Rails, index: the rung to insert after, t?: 0 to 1 along the way to the next rung by length (default 0.5)} add a rung between two others, on both rails (a curved rail keeps its shape); one undo step → {changed, index: the new rung}",
             has_doc,
             satin_edit::insert_rung
         ),
@@ -233,7 +234,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Delete Rung",
             [],
             None,
-            "{id: a Satin Fill, index: rung} remove one rung from both rails (two always stay); one undo step → {changed}",
+            "{id: Satin Rails, index: rung} remove one rung from both rails (two always stay); one undo step → {changed}",
             has_doc,
             satin_edit::delete_rung
         ),
@@ -248,16 +249,16 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "stitch.convertToSatin",
-            "Convert to Satin Fill (Centerline)",
+            "Convert to Satin Rails (Centerline)",
             [],
             None,
-            "{ids?} turn each closed shape in ids or the selection into a Satin Fill along its spine (its exact medial axis from a Voronoi diagram of the outline: the longest path through the shape's skeleton, a loop for a ring), rungs square to the spine out to the outline and fanned round tight bends; each arm the spine leaves (a Y, a star) becomes another column; the columns sew in the shape's colour just after it and are selected, and the shape is hidden (show it to go back); one undo step → {ids: the new objects, skipped: [ids that aren't closed shapes], widestMm, warning?: when a column is over 10 mm wide}",
+            "{ids?} turn each closed shape in ids or the selection into Satin Rails along its spine (its exact medial axis from a Voronoi diagram of the outline: the longest path through the shape's skeleton, a loop for a ring), rungs square to the spine out to the outline and fanned round tight bends; each arm the spine leaves (a Y, a star) becomes another column; the columns sew in the shape's colour just after it and are selected, and the shape is hidden (show it to go back); one undo step → {ids: the new objects, skipped: [ids that aren't closed shapes], widestMm, warning?: when a column is over 10 mm wide}",
             has_doc,
             convert::convert
         ),
         cmd!(
             "stitch.convertToSatinClassic",
-            "Convert to Satin Fill (Classic)",
+            "Convert to Satin Rails (Classic)",
             [],
             None,
             "{ids?} as stitch.convertToSatin, the way Roidery first did it, kept to compare: the shape is drawn into a grid and thinned (Zhang–Suen) to its skeleton, and rungs are only those cast along the spine (no extra rungs to the outline's corners or an end's tip) → {ids, skipped, widestMm, warning?}",
@@ -269,7 +270,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Swap Satin Sides",
             [],
             None,
-            "{ids?} swap the left and right rails of the Satin Fills in ids or the selection, so each stitch starts from the other side; one undo step → {changed}",
+            "{ids?} swap the left and right rails of the Satin Rails in ids or the selection, so each stitch starts from the other side; one undo step → {changed}",
             has_doc,
             satin_edit::swap_sides
         ),
@@ -413,7 +414,7 @@ fn bezpath(n: &Node) -> Option<BezPath> {
     }
 }
 
-/// The anchors of each subpath, in millimetres (Satin Fill rails and manual stitches).
+/// The anchors of each subpath, in millimetres (the rails of Satin Rails, and manual stitches).
 fn anchors_mm(n: &Node) -> Vec<Polyline> {
     let mut subs = vec![];
     let mut add = |pd: &vectorcraft_geom::PathData| {
@@ -429,7 +430,7 @@ fn anchors_mm(n: &Node) -> Vec<Polyline> {
     subs
 }
 
-/// A Satin Fill's rails as curves between rungs, in millimetres, when either rail curves
+/// The rails of Satin Rails as curves between rungs, in millimetres, when either rail curves
 /// anywhere (`None` when both are straight from rung to rung).
 fn rail_curves_mm(n: &Node) -> Option<Shape> {
     let NodeKind::Path { path, .. } = &n.kind else { return None };
@@ -467,7 +468,7 @@ fn settings_of(n: &Node, ds: &DesignSettings) -> (StitchSettings, bool) {
 
 /// The colour `part` of an object sews in, and whether it is the fill's: fills sew in the fill
 /// colour, lines in the stroke colour (each in the other when the object has only that one). A
-/// Satin Fill is a fill: it sews in the fill colour (one from before it was, with only its rails'
+/// Satin Rails are a fill: they sew in the fill colour (ones from before they were, with only its rails'
 /// stroke, in that).
 fn part_rgb(n: &Node, part: Part) -> Option<([u8; 3], bool)> {
     let fill = fill_rgb(n).map(|c| (c, true));
@@ -912,6 +913,9 @@ pub struct StitchPreview {
     /// Layers of thread across the design (View → Density Map), in millimetres: divide by
     /// [`MM_PER_PT`] for document units.
     pub density: review::DensityMap,
+    /// The bounds of each object that sews past the hoop's edge, `[x0, y0, x1, y1]` in document
+    /// units (the canvas outlines them in red); empty without a hoop.
+    pub outside: Vec<[f64; 4]>,
 }
 
 /// The stitch preview of every visible object, in document units (stitch plan applied, not
@@ -919,7 +923,9 @@ pub struct StitchPreview {
 pub fn stitch_preview(d: &Document) -> StitchPreview {
     use roidery_formats::Command;
     let ps = PlanSettings { center: false, ..PlanSettings::default() };
-    let objs: Vec<PlanObject> = sewn_parts(d, &all_objects(d)).into_iter().map(|o| o.obj).collect();
+    let sewn = sewn_parts(d, &all_objects(d));
+    let outside = outside_boxes(d, &sewn);
+    let objs: Vec<PlanObject> = sewn.into_iter().map(|o| o.obj).collect();
     let (design, kinds) = roidery_plan::plan_kinds(&objs, &ps, "");
     let mut thread = 0;
     let mut trim = false;
@@ -940,7 +946,40 @@ pub fn stitch_preview(d: &Document) -> StitchPreview {
         }
     }
     let density = review::density(&design, review::DENSITY_CELL_MM);
-    StitchPreview { stitches, threads: design.threads.iter().map(|t| t.rgb).collect(), density }
+    StitchPreview { stitches, threads: design.threads.iter().map(|t| t.rgb).collect(), density, outside }
+}
+
+/// A stitch may end this far past the hoop's edge, mm (a machine file's rounding).
+const OUTSIDE_SLACK_MM: f64 = 0.15;
+
+/// The bounds of each object in `sewn` (its parts together) with a stitch past the hoop's edge,
+/// in document units, in sewing order.
+fn outside_boxes(d: &Document, sewn: &[Sewn]) -> Vec<[f64; 4]> {
+    let Some(field) = HoopField::of(d) else { return vec![] };
+    let c = field.rect.center();
+    let (cx, cy) = (c.x * MM_PER_PT, c.y * MM_PER_PT);
+    let (hw, hh) = (field.hoop.width / 2.0 + OUTSIDE_SLACK_MM, field.hoop.height / 2.0 + OUTSIDE_SLACK_MM);
+    let round = field.hoop.round;
+    let out = |x: f64, y: f64| {
+        let (dx, dy) = (x - cx, y - cy);
+        if round { dx.hypot(dy) > hw } else { dx.abs() > hw || dy.abs() > hh }
+    };
+    let mut boxes: Vec<(NodeId, [f64; 4], bool)> = vec![];
+    for o in sewn {
+        let i = match boxes.iter().position(|b| b.0 == o.id) {
+            Some(i) => i,
+            None => {
+                boxes.push((o.id, [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], false));
+                boxes.len() - 1
+            }
+        };
+        let Some(b) = boxes.get_mut(i) else { continue };
+        for st in o.obj.stitches.iter().filter(|st| st.x.is_finite() && st.y.is_finite()) {
+            b.1 = [b.1[0].min(st.x), b.1[1].min(st.y), b.1[2].max(st.x), b.1[3].max(st.y)];
+            b.2 |= st.kind != roidery_stitch::StitchKind::Jump && out(st.x, st.y);
+        }
+    }
+    boxes.into_iter().filter(|b| b.2).map(|(_, b, _)| b.map(|v| v / MM_PER_PT)).collect()
 }
 
 /// A rail: points as [x, y], or as anchors {p, in?, out?} whose handles curve the rail.
@@ -979,5 +1018,5 @@ fn create_satin_blocks(s: &mut Session, p: &Value) -> Result<Value> {
     let color = s.paint.fill.color().or_else(|| s.paint.stroke.color()).unwrap_or(vectorcraft_color::Color::BLACK);
     let look = s.new_art_look(Paint::solid(color), Paint::None, 1.0);
     let attrs = vectorcraft_doc::ObjectAttributes { stitch: Some(stitch), ..Default::default() };
-    super::create::add_look_with(s, "Satin Fill", super::create::path_kind(path, None), look, None, Some(Box::new(attrs)))
+    super::create::add_look_with(s, "Satin Rails", super::create::path_kind(path, None), look, None, Some(Box::new(attrs)))
 }
