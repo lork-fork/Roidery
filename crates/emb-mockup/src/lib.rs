@@ -70,7 +70,7 @@ impl Canvas {
 
     /// Lay the image over a solid `rgb` background (every pixel opaque after).
     pub fn flatten(&mut self, rgb: [u8; 3]) {
-        for p in self.rgba.chunks_exact_mut(4) {
+        for p in self.rgba.as_chunks_mut::<4>().0.iter_mut() {
             let a = u32::from(p[3]);
             for k in 0..3 {
                 p[k] = ((u32::from(p[k]) * a + u32::from(rgb[k]) * (255 - a) + 127) / 255) as u8;
@@ -209,7 +209,7 @@ pub fn texture(c: &mut Canvas, t: Texture, ppm: f64) {
         return;
     }
     let w = c.width as usize;
-    for (i, p) in c.rgba.chunks_exact_mut(4).enumerate() {
+    for (i, p) in c.rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         if p[3] == 0 {
             continue;
         }
@@ -231,7 +231,7 @@ pub fn light(c: &mut Canvas, strength: f64) {
     let (lx, ly) = (w * 0.25, h * 0.15);
     let reach = w.hypot(h);
     let cols = c.width as usize;
-    for (i, p) in c.rgba.chunks_exact_mut(4).enumerate() {
+    for (i, p) in c.rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         if p[3] == 0 {
             continue;
         }

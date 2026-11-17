@@ -105,8 +105,8 @@ pub fn read(bytes: &[u8]) -> Result<Design, FormatError> {
         return Err(FormatError::Invalid { format: FORMAT, why: "shorter than the 256-byte header".into() });
     }
     let mut r = Reader::new();
-    for rec in bytes.get(HEADER_LEN..).unwrap_or_default().chunks_exact(3) {
-        let &[ctrl, by, bx] = rec else { break };
+    for rec in bytes.get(HEADER_LEN..).unwrap_or_default().as_chunks::<3>().0.iter() {
+        let &[ctrl, by, bx] = rec;
         let dy = if ctrl & 0x40 != 0 { i32::from(by) } else { -i32::from(by) };
         let dx = if ctrl & 0x20 != 0 { -i32::from(bx) } else { i32::from(bx) };
         let moved = dx != 0 || dy != 0;

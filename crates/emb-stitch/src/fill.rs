@@ -212,7 +212,9 @@ fn fill(rings: &[Polyline], r: &Rows, out: &mut Vec<Stitch>) {
         let mut xs: Vec<f64> = active.iter().filter(|(a, b)| a.1 <= v && v < b.1).map(|(a, b)| a.0 + (v - a.1) * (b.0 - a.0) / (b.1 - a.1)).collect();
         xs.sort_by(f64::total_cmp);
         let segs = xs
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .filter_map(|c| {
                 let (a, b) = (c[0], c[1]);
                 if b - a < 1e-9 {

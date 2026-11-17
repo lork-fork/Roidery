@@ -260,7 +260,7 @@ pub(crate) fn read_records(body: &[u8], name: String) -> Result<Design, FormatEr
         }
     };
     let mut ended = false;
-    for (i, chunk) in body.chunks_exact(3).enumerate() {
+    for (i, chunk) in body.as_chunks::<3>().0.iter().enumerate() {
         if i >= MAX_RECORDS {
             return Err(invalid("more records than any real design has"));
         }
