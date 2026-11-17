@@ -237,12 +237,16 @@ fn part_problems(d: &Document, o: &Sewn) -> Vec<Problem> {
         return vec![problem("tiny", size, None)];
     }
     let kind = o.settings.kind;
-    if kind.is_fill() {
+    if kind.is_fill() && kind != StitchType::SatinFill {
         let width = d.node(o.id).and_then(mm_polylines).map_or(f64::INFINITY, |rings| mean_width(&rings));
         if width < THIN_FILL_MM {
-            return vec![problem("thinFill", width, Some(json!({ "command": "stitch.convertToSatin", "params": { "ids": [o.id] } })))];
+            return vec![problem(
+                "thinFill",
+                width,
+                Some(json!({ "command": "stitch.set", "params": { "ids": [o.id], "part": "fill", "type": "satinFill" } })),
+            )];
         }
-    } else if matches!(kind, StitchType::Satin | StitchType::SatinBlocks) {
+    } else if matches!(kind, StitchType::Satin | StitchType::SatinBlocks | StitchType::SatinFill) {
         // The satin's width is how far each top stitch crosses it.
         let mut spans: Vec<f64> = o
             .obj

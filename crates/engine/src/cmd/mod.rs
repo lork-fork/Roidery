@@ -19,7 +19,7 @@ pub(crate) mod docsetup;
 mod draw2;
 mod edit;
 mod effectcmd;
-mod embroidery;
+pub(crate) mod embroidery;
 pub mod expand;
 pub(crate) mod fileinfo;
 pub mod fileio;

@@ -43,6 +43,8 @@ roidery-plan = { path = "crates/emb-plan" }
 roidery-mockup = { path = "crates/emb-mockup" }
 roidery-update = { path = "crates/emb-update", default-features = false }
 roidery-fonts = { path = "crates/emb-fonts" }
+# StitchFoundry's embroidery core, vendored (crates/sf-core/VENDORED.md).
+sf-core = { path = "crates/sf-core" }
 vectorcraft-affinity = { path = "crates/affinity" }
 vectorcraft-scriptcheck = { path = "crates/scriptcheck" }
 

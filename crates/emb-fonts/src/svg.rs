@@ -215,7 +215,7 @@ fn outline(n: roxmltree::Node) -> Option<BezPath> {
         }
         "polyline" | "polygon" => {
             let pts: Vec<f64> = n.attribute("points")?.split([' ', ',', '\n', '\t', '\r']).filter_map(|s| s.parse().ok()).collect();
-            for (i, p) in pts.chunks_exact(2).enumerate() {
+            for (i, p) in pts.as_chunks::<2>().0.iter().enumerate() {
                 let (Some(x), Some(y)) = (p.first(), p.get(1)) else { continue };
                 if i == 0 {
                     bp.move_to((*x, *y));

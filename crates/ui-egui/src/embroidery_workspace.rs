@@ -208,12 +208,14 @@ pub fn workspace(base: &Workspace) -> Workspace {
     }
 }
 
-/// Roidery's first run: the Embroidery workspace, and millimetres as the General unit (what
-/// hoops and stitch settings are measured in). Saved preferences replace both afterwards.
+/// Roidery's first run: the Embroidery workspace, the Realistic stitch view, and millimetres as
+/// the General unit (what hoops and stitch settings are measured in). Saved preferences replace
+/// them afterwards. The web keeps no preferences, so it starts this way every time.
 pub fn first_run(app: &mut VectorcraftApp) {
     if let Some(w) = crate::workspaces::find(&app.ui, NAME) {
         crate::workspaces::apply(&mut app.ui, &w);
     }
+    app.ui.view.stitches = 2;
     // Best effort: points stay the unit if the preference is refused.
     let _ = app.run("prefs.set", serde_json::json!({"key": "unitsGeneral", "value": "Millimeters"}));
 }
@@ -331,6 +333,7 @@ mod tests {
         assert_eq!(app.ui.open_panel.as_deref(), Some(crate::panels::stitch_settings::ID));
         assert_eq!(crate::workspaces::names(&app.ui)[0], NAME, "first in Window › Workspace");
         assert_eq!(app.session.prefs.units_general, "millimeters");
+        assert_eq!(crate::stitchview::VIEWS[usize::from(app.ui.view.stitches)], "realistic", "designs show as realistic thread");
     }
 
     #[test]

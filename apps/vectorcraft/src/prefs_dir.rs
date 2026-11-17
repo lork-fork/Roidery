@@ -11,8 +11,7 @@ mod profile;
 /// Support (macOS) or %APPDATA% (Windows), or `lower` in $XDG_CONFIG_HOME or ~/.config (Linux and
 /// BSD).
 pub fn prefs_path_for(name: &str, lower: &str) -> Option<PathBuf> {
-    let legacy = name == "DrawCraft" || lower == "drawcraft";
-    profile::prefs_path(legacy)
+    profile::prefs_path_named(name, lower)
 }
 
 /// Have the font scans read VectorCraft's own Fonts folder, next to the settings, which

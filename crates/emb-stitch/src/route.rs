@@ -26,6 +26,8 @@ pub fn generate_from(shape: &Shape, settings: &StitchSettings, from: Option<Poin
             let dist = |v: &[Stitch]| v.first().map_or(f64::INFINITY, |s| s.point().distance(from));
             if dist(&b) + 1e-6 < dist(&a) { b } else { a }
         }
+        // StitchFoundry's engine starts at the end of each column nearest the needle.
+        (StitchType::SatinFill, Shape::Area(ps) | Shape::Paths(ps)) => crate::foundry::satin_fill(ps, &settings.sanitized().satin, Some(from)),
         _ => generate(shape, settings),
     }
 }

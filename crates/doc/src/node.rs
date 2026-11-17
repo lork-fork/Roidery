@@ -592,6 +592,45 @@ impl PartialEq for Extras {
 }
 
 impl Node {
+    /// Roidery: whether this is Satin Rails (stitch type `satinBlocks`, as the one setting or in
+    /// either part).
+    pub fn is_satin_fill(&self) -> bool {
+        let Some(v) = self.extras().attrs.as_ref().and_then(|a| a.stitch.as_ref()) else { return false };
+        let is = |v: Option<&serde_json::Value>| v.and_then(|t| t.get("type")).and_then(serde_json::Value::as_str) == Some("satinBlocks");
+        is(Some(v)) || is(v.get("fill")) || is(v.get("stroke"))
+    }
+
+    /// Roidery: the area the fill of Satin Rails covers, between its two rails (the left one, then
+    /// the right one backwards, closed), or `None` when it isn't Satin Rails of two open rails.
+    pub fn satin_band(&self) -> Option<BezPath> {
+        let NodeKind::Path { path, .. } = &self.kind else { return None };
+        let [l, r] = path.subpaths.as_slice() else { return None };
+        if l.closed || r.closed || l.anchors.len() < 2 || r.anchors.len() < 2 || !self.is_satin_fill() {
+            return None;
+        }
+        let mut right = r.clone();
+        right.reverse();
+        let mut anchors = l.anchors.clone();
+        // Straight across at both ends.
+        if let Some(a) = anchors.first_mut() {
+            a.h_in = a.p;
+        }
+        if let Some(a) = anchors.last_mut() {
+            a.h_out = a.p;
+        }
+        let start = anchors.len();
+        anchors.extend(right.anchors);
+        if let Some(a) = anchors.get_mut(start) {
+            a.h_in = a.p;
+        }
+        if let Some(a) = anchors.last_mut() {
+            a.h_out = a.p;
+        }
+        Some(PathData::new(vec![vectorcraft_geom::SubPath::new(anchors, true)]).to_bezpath())
+    }
+}
+
+impl Node {
     /// The rarely set parts of this node (all unset when it has none).
     #[inline]
     pub fn extras(&self) -> &NodeExtras {

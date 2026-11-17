@@ -3,16 +3,28 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+#[allow(dead_code)]
 pub fn prefs_path(legacy: bool) -> Option<PathBuf> {
     prefs_path_with(std::env::consts::OS, legacy, |key| std::env::var_os(key))
 }
 
+/// Roidery: the settings of the app `name` (`lower` on Linux), so Roidery keeps its own apart
+/// from a VectorCraft on the same machine. DrawCraft is the legacy profile.
+pub fn prefs_path_named(name: &str, lower: &str) -> Option<PathBuf> {
+    prefs_path_named_with(std::env::consts::OS, name, lower, |key| std::env::var_os(key))
+}
+
 fn prefs_path_with(os: &str, legacy: bool, env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let (name, lower) = if legacy { ("DrawCraft", "drawcraft") } else { ("VectorCraft", "vectorcraft") };
+    prefs_path_named_with(os, name, lower, env)
+}
+
+fn prefs_path_named_with(os: &str, name: &str, lower: &str, env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let legacy = name == "DrawCraft" || lower == "drawcraft";
     if let Some(root) = env("VECTORCRAFT_CONFIG_DIR") {
         // Never fall back to DrawCraft's real profile when the isolated file does not exist.
         return (!legacy && !root.is_empty()).then(|| PathBuf::from(root).join("ui.json"));
     }
-    let (name, lower) = if legacy { ("DrawCraft", "drawcraft") } else { ("VectorCraft", "vectorcraft") };
     let base = match os {
         "macos" => env("HOME").map(|p| PathBuf::from(p).join("Library/Application Support").join(name)),
         "windows" => env("APPDATA").map(|p| PathBuf::from(p).join(name)),
@@ -62,5 +74,15 @@ mod tests {
             prefs_path_with("linux", true, |key| if key == "HOME" { environment(key) } else { None }),
             Some("/user/.config/drawcraft/ui.json".into())
         );
+    }
+
+    #[test]
+    fn roidery_keeps_its_own_settings_folder() {
+        assert_eq!(prefs_path_named_with("windows", "Roidery", "roidery", environment), Some("/roaming/Roidery/ui.json".into()));
+        assert_eq!(
+            prefs_path_named_with("macos", "Roidery", "roidery", environment),
+            Some("/user/Library/Application Support/Roidery/ui.json".into())
+        );
+        assert_eq!(prefs_path_named_with("linux", "Roidery", "roidery", environment), Some("/xdg-config/roidery/ui.json".into()));
     }
 }

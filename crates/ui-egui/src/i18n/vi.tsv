@@ -4399,7 +4399,6 @@ theme	Appearance	Giao diện
 	Install	Cài đặt
 	Satin Blocks Tool	Công cụ Khối satin
 	Export Machine File…	Xuất tệp máy thêu…
-	Satin Blocks	Khối satin
 	Stitch Info	Thông tin mũi thêu
 	Stitch Settings	Cài đặt mũi thêu
 	Sew-Out Player	Trình phát mô phỏng thêu
@@ -4470,9 +4469,6 @@ theme	Appearance	Giao diện
 	Letter height	Chiều cao chữ
 	Letter spacing	Khoảng cách chữ
 	The lettering font has no {chars}	Phông chữ thêu không có {chars}
-	Convert to Satin	Chuyển thành satin
-	Convert to Satin (Centerline)	Chuyển thành satin (đường tâm)
-	Convert to Satin (Classic)	Chuyển thành satin (cổ điển)
 	Swap Satin Sides	Đảo hai cạnh satin
 	Reverse Sewing Direction	Đảo hướng thêu
 	Add Lettering	Thêm chữ thêu
@@ -4567,7 +4563,7 @@ theme	Appearance	Giao diện
 	Pull comp.	Bù co kéo
 	Put on Path	Đặt lên đường dẫn
 	Remove Overlaps: cut fills where later ones cover them	Loại bỏ chồng lấn: cắt vùng tô ở chỗ bị vùng tô thêu sau che phủ
-	Satin this wide can snag and pull: split the column or sew it as a fill	Satin rộng thế này dễ bị móc và kéo chỉ: hãy chia nhỏ cột hoặc thêu dưới dạng tô
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Satin rộng thế này dễ bị móc và kéo chỉ: hãy chia nhỏ cột hoặc thêu dưới dạng tô tatami
 	Select a path with it to put it on the path	Chọn thêm một đường dẫn để đặt nó lên đường dẫn đó
 	Sews as fill	Thêu dưới dạng tô
 	Show Jumps and Trims	Hiện mũi nhảy và cắt chỉ
@@ -4655,7 +4651,6 @@ theme	Appearance	Giao diện
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Máy không với tới ngoài mép khung thêu. Hãy dời mẫu vào trang, hoặc bấm Căn giữa trong khung thêu.
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Mẫu thêu lớn hơn khung. Hãy chọn khung lớn hơn hoặc thu nhỏ mẫu.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Các đối tượng chồng lên nhau ở đây, chỉ dày như vậy có thể làm gãy kim. Loại bỏ chồng lấn sẽ cắt bỏ các phần bị che.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Phần tô mảnh như vậy sẽ thêu thành vài hàng lởm chởm. Hãy chuyển nó thành satin.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Satin hẹp như vậy sẽ rối thành nút. Hãy thêu bằng mũi chạy.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Quá nhỏ để thêu gọn. Hãy làm to hơn hoặc xóa đi.
 
@@ -4664,7 +4659,7 @@ theme	Appearance	Giao diện
 	Short stitch distance	Khoảng cách mũi ngắn
 	Split satin over	Chia satin khi dài hơn
 	Split Satin	Chia satin
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Mũi satin dài như vậy sẽ lỏng và dễ vướng. Chia satin sẽ tách chúng thành các mũi ngắn hơn, hoặc hãy thêu nó dạng tô.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	Mũi satin dài như vậy sẽ lỏng và dễ vướng. Chia satin sẽ tách chúng thành các mũi ngắn hơn, hoặc hãy thêu nó dạng tô tatami.
 
 # Roidery: test swatches.
 	Test Swatches	Mẫu thử
@@ -4674,3 +4669,16 @@ theme	Appearance	Giao diện
 	Compensation	Bù trừ
 	Curves and Splits	Đường cong và chia
 	Sew underlay	Thêu mũi lót
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Nét satin
+	Satin Fill	Tô satin
+	Thread color: click for swatches, Shift-click for the color mixer	Màu chỉ: bấm để xem mẫu màu, Shift-bấm để trộn màu
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Ray satin
+	Convert to Satin Rails	Chuyển thành ray satin
+	Convert to Satin Rails (Centerline)	Chuyển thành ray satin (đường tâm)
+	Convert to Satin Rails (Classic)	Chuyển thành ray satin (cổ điển)
+	Automatic spacing	Khoảng cách tự động
+	Sew as Satin Fill	Thêu dạng tô satin
+	Keep New Objects with Their Color	Đối tượng mới theo màu của nó
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Vùng tô mảnh như vậy sẽ thêu thành vài hàng lởm chởm. Hãy thêu nó dạng tô satin.

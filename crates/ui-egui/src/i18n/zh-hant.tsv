@@ -3771,7 +3771,6 @@ lighting	Light	光源
 	Install	安裝
 	Satin Blocks Tool	緞紋塊工具
 	Export Machine File…	轉存機器檔案…
-	Satin Blocks	緞紋塊
 	Stitch Info	針跡資訊
 	Stitch Settings	針跡設定
 	Sew-Out Player	刺繡播放器
@@ -3842,9 +3841,6 @@ lighting	Light	光源
 	Letter height	字母高度
 	Letter spacing	字母間距
 	The lettering font has no {chars}	刺繡字型中沒有 {chars}
-	Convert to Satin	轉換為緞紋
-	Convert to Satin (Centerline)	轉換為緞紋（中心線）
-	Convert to Satin (Classic)	轉換為緞紋（經典）
 	Swap Satin Sides	交換緞紋兩側
 	Reverse Sewing Direction	反轉縫製方向
 	Add Lettering	新增文字
@@ -3941,7 +3937,7 @@ lighting	Light	光源
 	Pull comp.	拉力補償
 	Put on Path	沿路徑排列
 	Remove Overlaps: cut fills where later ones cover them	移除重疊：剪掉被後繡填色覆蓋的部分
-	Satin this wide can snag and pull: split the column or sew it as a fill	這麼寬的緞紋容易勾線起皺：分割該列或改為填色
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	這麼寬的緞紋容易勾線起皺：分割該列或改為榻榻米填色
 	Select a path with it to put it on the path	同時選取一條路徑即可沿路徑排列
 	Sews as fill	以填色刺繡
 	Show Jumps and Trims	顯示跳針和剪線
@@ -4001,7 +3997,6 @@ lighting	Light	光源
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	繡花機搆不到繡框邊緣以外。請把設計移到頁面內，或按一下「在繡框中置中」。
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	設計比繡框大。請選擇更大的繡框，或縮小設計。
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	這裡的物件互相疊壓，線太厚可能折斷機針。「移除重疊」會剪掉被覆蓋的部分。
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	這麼細的填色會繡成幾行參差不齊的線。請改為轉換為緞紋。
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	這麼窄的緞紋會纏成線結。請改用平針繡。
 	This is too small to sew cleanly. Make it bigger, or delete it.	太小，無法繡得整齊。請放大或刪除。
 
@@ -4010,7 +4005,7 @@ lighting	Light	光源
 	Short stitch distance	短針距離
 	Split satin over	緞紋拆分長度
 	Split Satin	拆分緞紋
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	這麼長的緞紋針腳鬆散，容易勾線。「拆分緞紋」會把它們拆成較短的針腳，或改用填色。
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	這麼長的緞紋針腳鬆散，容易勾線。「拆分緞紋」會把它們拆成較短的針腳，或改用榻榻米填色。
 
 # Roidery: test swatches.
 	Test Swatches	測試樣片
@@ -4020,3 +4015,16 @@ lighting	Light	光源
 	Compensation	補償
 	Curves and Splits	彎曲與拆分
 	Sew underlay	繡打底
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	緞紋筆畫
+	Satin Fill	緞紋填色
+	Thread color: click for swatches, Shift-click for the color mixer	線色：按一下開啟色票，按住 Shift 按一下開啟混色器
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	緞紋導軌
+	Convert to Satin Rails	轉換為緞紋導軌
+	Convert to Satin Rails (Centerline)	轉換為緞紋導軌（中心線）
+	Convert to Satin Rails (Classic)	轉換為緞紋導軌（經典）
+	Automatic spacing	自動間距
+	Sew as Satin Fill	以緞紋填充繡製
+	Keep New Objects with Their Color	新物件歸入同色
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	這麼細的填充會繡成幾行參差不齊的線。請改為以緞紋填充繡製。

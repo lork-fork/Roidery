@@ -4397,7 +4397,6 @@ lighting	Light	Світло
 	Install	Встановити
 	Satin Blocks Tool	Інструмент «Блоки гладі»
 	Export Machine File…	Експортувати файл для машини…
-	Satin Blocks	Блоки гладі
 	Stitch Info	Інформація про стібки
 	Stitch Settings	Параметри стібків
 	Sew-Out Player	Програвач вишивання
@@ -4468,9 +4467,6 @@ lighting	Light	Світло
 	Letter height	Висота літер
 	Letter spacing	Інтервал між літерами
 	The lettering font has no {chars}	У шрифті напису немає {chars}
-	Convert to Satin	Перетворити на гладь
-	Convert to Satin (Centerline)	Перетворити на гладь (за центральною лінією)
-	Convert to Satin (Classic)	Перетворити на гладь (класично)
 	Swap Satin Sides	Поміняти сторони гладі місцями
 	Reverse Sewing Direction	Змінити напрямок вишивання на протилежний
 	Add Lettering	Додати напис
@@ -4565,7 +4561,7 @@ lighting	Light	Світло
 	Pull comp.	Компенс. стягування
 	Put on Path	Розмістити на контурі
 	Remove Overlaps: cut fills where later ones cover them	Прибрати перекриття: обрізати заливки там, де їх перекривають пізніші
-	Satin this wide can snag and pull: split the column or sew it as a fill	Така широка гладь може зачіплюватися й стягувати тканину: розділіть стовпчик або вишийте його як заливку
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	Така широка гладь може зачіплюватися й стягувати тканину: розділіть стовпчик або вишийте його як заливку татамі
 	Select a path with it to put it on the path	Виділіть разом із ним контур, щоб розмістити його на контурі
 	Sews as fill	Вишивається як заливка
 	Show Jumps and Trims	Показати стрибки й обрізки
@@ -4653,7 +4649,6 @@ lighting	Light	Світло
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	Машина не дістає за край п’ялець. Перемістіть дизайн на сторінку або натисніть «Відцентрувати в п’яльцях».
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	Дизайн більший за п’яльці. Виберіть більші п’яльці або зменште дизайн.
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	Тут об’єкти лежать один на одному, і такий товстий шар нитки може зламати голку. «Прибрати перекриття» виріже закриті частини.
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	Така вузька заливка вишиється кількома рваними рядами. Краще перетворіть її на гладь.
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	Така вузька гладь збивається у вузол. Краще вишийте її прямим стібком.
 	This is too small to sew cleanly. Make it bigger, or delete it.	Це замале для акуратного вишивання. Збільште або видаліть.
 
@@ -4662,7 +4657,7 @@ lighting	Light	Світло
 	Short stitch distance	Відстань для коротких стібків
 	Split satin over	Ділити гладь довшу за
 	Split Satin	Розділити гладь
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	Такі довгі стібки гладі лежать вільно й чіпляються. «Розділити гладь» розіб’є їх на коротші стібки, або вишийте це заливкою.
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	Такі довгі стібки гладі лежать вільно й чіпляються. «Розділити гладь» розіб’є їх на коротші стібки, або вишийте це заливкою татамі.
 
 # Roidery: test swatches.
 	Test Swatches	Пробні зразки
@@ -4672,3 +4667,16 @@ lighting	Light	Світло
 	Compensation	Компенсація
 	Curves and Splits	Вигини й поділ
 	Sew underlay	Шити підкладку
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	Гладь по обведенню
+	Satin Fill	Гладь-заливка
+	Thread color: click for swatches, Shift-click for the color mixer	Колір нитки: клацніть для зразків, Shift+клацання — для змішувача кольорів
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	Атласні напрямні
+	Convert to Satin Rails	Перетворити на атласні напрямні
+	Convert to Satin Rails (Centerline)	Перетворити на атласні напрямні (осьова лінія)
+	Convert to Satin Rails (Classic)	Перетворити на атласні напрямні (класично)
+	Automatic spacing	Автоматичний інтервал
+	Sew as Satin Fill	Вишивати атласною заливкою
+	Keep New Objects with Their Color	Нові об’єкти до їхнього кольору
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	Така тонка заливка вишиється кількома рваними рядами. Вишийте її краще атласною заливкою.

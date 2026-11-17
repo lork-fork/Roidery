@@ -116,6 +116,17 @@ pub fn to_satin_by(rings: &[Polyline], method: Method) -> Vec<Column> {
                 // The first pass's spines run to the outline at both ends; an arm only at the end
                 // away from the column it leaves.
                 let (first, last) = if first_pass { (None, None) } else { arm_gaps(&spine, &out) };
+                if !classic {
+                    // A tip's turn into a corner of a flat end comes off, so it runs straight out.
+                    if last.is_none() {
+                        spine = straight_end(spine, &outline);
+                    }
+                    if first.is_none() {
+                        spine.reverse();
+                        spine = straight_end(spine, &outline);
+                        spine.reverse();
+                    }
+                }
                 (spine, carried) = extend(&spine, &outline, &out, first, last, classic);
             }
             if let Some(c) = cast(&spine, carried, closed, &outline, classic) {
@@ -187,6 +198,39 @@ impl Outline {
             }
         }
         best.filter(|b| b.0 < 0.05).map(|b| (b.1, b.2))
+    }
+
+    /// The straight stretch of outline, corner to corner, that the rung from `a` to `b` lies
+    /// along (a column's flat end, which the rung only partly covers), the end nearer `a` first;
+    /// `None` when the rung doesn't lie along the outline (within [`TOLERANCE`]).
+    fn flat_edge(&self, a: Point, b: Point) -> Option<(Point, Point)> {
+        let u = b - a;
+        let len = u.hypot();
+        if len < 0.3 {
+            return None;
+        }
+        let off = |p: Point| ((p - a).cross(u) / len).abs();
+        for pts in &self.rings {
+            let n = pts.len();
+            let at = |i: usize| pts[i % n];
+            let on = |i: usize, p: Point| seg_distance(at(i), at(i + 1), p) < 0.05 && off(at(i)) < TOLERANCE && off(at(i + 1)) < TOLERANCE;
+            let Some(i) = (0..n).find(|&i| on(i, a) || on(i, b)) else {
+                continue;
+            };
+            let (mut lo, mut hi) = (i + n, i + 1);
+            while off(at(lo - 1)) < TOLERANCE && hi + n - lo < n {
+                lo -= 1;
+            }
+            while off(at(hi + 1)) < TOLERANCE && hi + n - lo < n {
+                hi += 1;
+            }
+            let (p, q) = (at(lo), at(hi));
+            if seg_distance(p, q, a) > TOLERANCE || seg_distance(p, q, b) > TOLERANCE {
+                return None;
+            }
+            return Some(if p.distance(a) + q.distance(b) <= q.distance(a) + p.distance(b) { (p, q) } else { (q, p) });
+        }
+        None
     }
 
     /// Whether `p` is inside (even-odd).
@@ -424,7 +468,7 @@ impl Grid {
                 }
             }
             xs.sort_by(f64::total_cmp);
-            for pair in xs.chunks_exact(2) {
+            for pair in xs.as_chunks::<2>().0 {
                 let c0 = ((pair[0] - origin.x) / h - 0.5).ceil().max(0.0) as usize;
                 let c1 = ((pair[1] - origin.x) / h - 0.5).floor();
                 if c1 < 0.0 {
@@ -816,6 +860,37 @@ fn resample(pts: &[Point], step: f64, closed: bool) -> Vec<Point> {
     out
 }
 
+/// An open spine's last stretch, where it turns off into a corner of a flat (or blunt) end,
+/// taken off. The medial axis forks to an end's two corners about as far from the end as the
+/// column is wide, and the spine follows one fork, so the satin would swing round to that corner
+/// instead of running straight out to the edge. The stretch is as long as the column is wide
+/// (no longer than twice the widest circle where it starts) and comes off only where it turns
+/// away from the spine before it; [`extend`] then carries the spine on straight to the outline.
+fn straight_end(spine: Vec<Point>, outline: &Outline) -> Vec<Point> {
+    let n = spine.len();
+    let back = (1.5 / STEP).round() as usize;
+    if n < 2 * back + 3 {
+        return spine;
+    }
+    let mut len = 0.0;
+    let mut cut = None;
+    for j in (0..n - 1).rev() {
+        len += spine[j].distance(spine[j + 1]);
+        if len > 2.0 * outline.distance(spine[j]) {
+            break;
+        }
+        cut = Some(j);
+    }
+    // Keep enough of the spine before the cut to say which way it runs.
+    let Some(j) = cut.filter(|&j| j >= back && n - j >= 3) else { return spine };
+    let (tail, before) = (spine[n - 1] - spine[j], spine[j] - spine[j - back]);
+    let (lt, lb) = (tail.hypot(), before.hypot());
+    if lt < 1e-9 || lb < 1e-9 || tail.dot(before) / (lt * lb) > 20f64.to_radians().cos() {
+        return spine;
+    }
+    spine[..=j].to_vec()
+}
+
 /// How far each end of an arm's spine is from the columns already made (their rails), or
 /// `None` for a tip: the end that is farther away.
 fn arm_gaps(spine: &[Point], columns: &[Column]) -> (Option<f64>, Option<f64>) {
@@ -886,6 +961,58 @@ fn extend(
         };
         let n = (t / STEP).ceil() as usize;
         (1..=n).map(|k| end + d * (t * k as f64 / n as f64)).collect()
+    };
+    // A tip, along the middle of the column: each step centred between the sides, so a column
+    // that curves on to its end keeps curving (straight on, it would meet the end slantwise).
+    // Where the sides close in (a slanted or pointed end), straight on. `None` where it doesn't
+    // reach the outline within twice the column's width, or turns a right angle on the way (in a
+    // round blob, it would go round and round): straight on from the end, as before.
+    let march = |end: Point, inner: Point| -> Option<Vec<Point>> {
+        let d = end - inner;
+        let len = d.hypot();
+        let width = 2.0 * outline.distance(end);
+        if len < 1e-9 || width < 1e-6 {
+            return None;
+        }
+        let (start, mut d, mut p, mut span) = (d / len, d / len, end, width);
+        let mut pts = vec![];
+        for _ in 0..((2.0 * width + 1.0) / STEP).ceil().min(4000.0) as usize {
+            if d.dot(start) < 0.0 {
+                return None;
+            }
+            match outline.cast(p, d, 2.0 * width + 1.0) {
+                Some((t, ..)) if t <= STEP => {
+                    let t = (t - 0.02).max(0.0);
+                    if t > 1e-6 {
+                        pts.push(p + d * t);
+                    }
+                    return Some(pts);
+                }
+                None => return None,
+                _ => {}
+            }
+            let q = p + d * STEP;
+            let normal = Vec2::new(-d.y, d.x);
+            let sides = (outline.cast(q, normal, 2.0 * width + 1.0), outline.cast(q, -normal, 2.0 * width + 1.0));
+            let next = match sides {
+                (Some((tl, ..)), Some((tr, ..))) if tl + tr >= 0.8 * span && tl + tr <= 1.25 * span => {
+                    span = tl + tr;
+                    q + normal * ((tl - tr) / 2.0)
+                }
+                _ => q,
+            };
+            let step = next - p;
+            if step.hypot() > 1e-9 {
+                d = step / step.hypot();
+            }
+            p = next;
+            pts.push(p);
+        }
+        None
+    };
+    let reach = |end: Point, inner: Point, gap: Option<f64>| -> Vec<Point> {
+        let marched = if gap.is_none() && !classic { march(end, inner) } else { None };
+        marched.unwrap_or_else(|| reach(end, inner, gap))
     };
     if let (Some(&end), Some(&inner)) = (out.last(), out.get(out.len().saturating_sub(1 + back))) {
         let more = reach(end, inner, last);
@@ -993,6 +1120,7 @@ fn cast(spine: &[Point], carried: (usize, usize), closed: bool, outline: &Outlin
         (right, left) = fill_corners(right, left, outline);
         if !closed {
             (left, right) = cap_ends(left, right, outline);
+            (left, right) = ease_ends(left, right, outline);
         }
     }
     let keep = thin_rungs(&left, &right);
@@ -1079,6 +1207,17 @@ fn cap_ends(mut left: Vec<Point>, mut right: Vec<Point>, outline: &Outline) -> (
             }
             corners.sort_by(|x, y| x.0.total_cmp(&y.0));
             let k = corners.len();
+            // One corner just beyond one end of the rung, the other end at the far corner: a flat
+            // end, whose edge is the last rung.
+            if let [(_, v)] = corners[..] {
+                let (dl, dr) = (v.distance(l), v.distance(r));
+                if dl < 0.35 * dr {
+                    return vec![(v, r)];
+                }
+                if dr < 0.35 * dl {
+                    return vec![(l, v)];
+                }
+            }
             // Innermost pair first, out to the tip.
             return (0..k.div_ceil(2)).filter_map(|i| Some((corners.get(i)?.1, corners.get(k - 1 - i)?.1))).collect();
         }
@@ -1099,6 +1238,77 @@ fn cap_ends(mut left: Vec<Point>, mut right: Vec<Point>, outline: &Outline) -> (
         right.splice(0..0, head.iter().map(|h| h.1));
     }
     (left, right)
+}
+
+/// A blunt or flat end, turned into gradually: the rungs within a column's width of an end rung
+/// are spread evenly along both rails between the rung there and the end rung, so they turn
+/// from square to the column to along the end's edge a little at a time instead of fanning
+/// round a corner. A pointed end (the last rung's ends meet) is left as it is.
+fn ease_ends(mut left: Vec<Point>, mut right: Vec<Point>, outline: &Outline) -> (Vec<Point>, Vec<Point>) {
+    fn ease(left: &mut Vec<Point>, right: &mut Vec<Point>, outline: &Outline) {
+        // An end rung lying along part of a flat end: the whole edge is the end rung instead,
+        // and the rungs that ran along it go.
+        if let (Some(&a), Some(&b)) = (left.last(), right.last())
+            && let Some((ea, eb)) = outline.flat_edge(a, b)
+        {
+            while left.len() > 2
+                && left.last().zip(right.last()).is_some_and(|(l, r)| seg_distance(ea, eb, *l) < TOLERANCE || seg_distance(ea, eb, *r) < TOLERANCE)
+            {
+                left.pop();
+                right.pop();
+            }
+            left.push(ea);
+            right.push(eb);
+        }
+        let n = left.len().min(right.len());
+        let (Some(&a), Some(&b)) = (left.get(n.wrapping_sub(1)), right.get(n.wrapping_sub(1))) else { return };
+        let w = a.distance(b);
+        if n < 3 || w < 0.5 {
+            return;
+        }
+        // The rung a column's width back along the middle.
+        let mut along = 0.0;
+        let mut m = n - 1;
+        while m > 0 && along < w {
+            along += left[m].midpoint(right[m]).distance(left[m - 1].midpoint(right[m - 1]));
+            m -= 1;
+        }
+        if n - 1 - m < 2 {
+            return;
+        }
+        let spread = |rail: &[Point], count: usize| -> Vec<Point> {
+            let total: f64 = rail.windows(2).map(|q| q[0].distance(q[1])).sum();
+            (0..=count).map(|k| at_length(rail, total * k as f64 / count as f64)).collect()
+        };
+        let (lr, rr) = (&left[m..n], &right[m..n]);
+        let longest = |r: &[Point]| r.windows(2).map(|q| q[0].distance(q[1])).sum::<f64>();
+        let count = ((longest(lr).max(longest(rr)) / STEP).ceil() as usize).clamp(2, 2000);
+        let (nl, nr) = (spread(lr, count), spread(rr, count));
+        left.truncate(m);
+        right.truncate(m);
+        left.extend(nl);
+        right.extend(nr);
+    }
+    ease(&mut left, &mut right, outline);
+    left.reverse();
+    right.reverse();
+    ease(&mut left, &mut right, outline);
+    left.reverse();
+    right.reverse();
+    (left, right)
+}
+
+/// The point `d` along `pts`.
+fn at_length(pts: &[Point], d: f64) -> Point {
+    let mut left = d;
+    for q in pts.windows(2) {
+        let l = q[0].distance(q[1]);
+        if left <= l && l > 1e-12 {
+            return q[0].lerp(q[1], left / l);
+        }
+        left -= l;
+    }
+    pts.last().copied().unwrap_or_default()
 }
 
 /// One rail's ends, kept moving one way round the outline: an end that would go back (the
@@ -1193,6 +1403,34 @@ mod tests {
         assert!(lo < 0.1 && hi > 39.9, "{lo} {hi}");
         assert!(c.left.len() <= 6, "{}", c.left.len());
         assert!(!c.closed);
+    }
+
+    #[test]
+    fn an_arch_with_flat_ends_runs_straight_out_to_them() {
+        // A band bent into an arch (outer radius 30, inner 21), cut square across at both ends:
+        // every rung, the end ones too, crosses it from the centre outwards, with none fanned
+        // round into an end's corner.
+        let (c, mut pts) = (Point::new(0.0, 40.0), vec![]);
+        for i in 0..=60 {
+            let a = (210.0 + 120.0 * i as f64 / 60.0_f64).to_radians();
+            pts.push((c.x + 30.0 * a.cos(), c.y + 30.0 * a.sin()));
+        }
+        for i in (0..=60).rev() {
+            let a = (210.0 + 120.0 * i as f64 / 60.0_f64).to_radians();
+            pts.push((c.x + 21.0 * a.cos(), c.y + 21.0 * a.sin()));
+        }
+        let cols = to_satin(&[poly(&pts)]);
+        assert_eq!(cols.len(), 1, "{cols:?}");
+        let col = &cols[0];
+        for (l, r) in col.left.iter().zip(&col.right) {
+            let (rung, out) = (*r - *l, l.midpoint(*r) - c);
+            let cos = (rung.dot(out) / (rung.hypot() * out.hypot())).abs();
+            assert!(cos > 15f64.to_radians().cos(), "a rung {:.0}° off square: {l:?} {r:?}", cos.acos().to_degrees());
+        }
+        // The end rungs are the end edges.
+        for (l, r) in [(col.left[0], col.right[0]), (*col.left.last().unwrap(), *col.right.last().unwrap())] {
+            assert!((l.distance(r) - 9.0).abs() < 0.5, "{l:?} {r:?}");
+        }
     }
 
     #[test]

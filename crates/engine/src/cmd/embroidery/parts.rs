@@ -1,8 +1,12 @@
 //! Roidery: an object's two stitch parts. The fill sews with a fill stitch (tatami, contour,
-//! circular, gradient, motif, guided) in the fill colour; the stroke sews with a line stitch (run,
-//! triple, satin, E-stitch, rope) in the stroke colour, after the fill, as its border. Satin Blocks,
-//! manual stitches and lettering are the whole object: they sit in the stroke part and the fill
-//! part doesn't sew.
+//! circular, gradient, motif, guided, Satin Fill) in the fill colour; the stroke sews with a line
+//! stitch (run, triple, Satin Stroke, E-stitch, rope) in the stroke colour, after the fill, as its
+//! border. Satin Fill (stitch type `satinFill`) is a fill like the others: satin across the
+//! shape, turning with it. Satin Rails (stitch type `satinBlocks`), manual stitches, lettering
+//! are the whole object: Satin Rails sit in the fill part, the others in the stroke part, and the other part doesn't sew. Satin Rails sew in their
+//! fill colour, which fills the area between the rails. Documents from before Satin Rails were a
+//! fill keep them in the stroke part: they are read into the fill, and written back in the same
+//! one-setting form as before.
 //!
 //! `ObjectAttributes::stitch` stores them as `{fill?, stroke?}`, each a `StitchSettings`; a part
 //! left out follows the automatic rule (tatami where there is a fill, a running stitch where there
@@ -52,7 +56,7 @@ impl Part {
 
     /// The part a stitch type belongs to.
     pub fn of(kind: StitchType) -> Part {
-        if kind.is_fill() { Part::Fill } else { Part::Stroke }
+        if kind.sews_fill() { Part::Fill } else { Part::Stroke }
     }
 
     /// Whether `kind` can sew this part (not stitching always can).
@@ -106,13 +110,18 @@ impl Slots {
             // One part (older documents and single-part settings).
             return match parse(v) {
                 Some(s) if s.kind == StitchType::None => Slots::only(Slot::off(), Slot::off()),
-                Some(s) if s.kind.is_fill() => Slots::only(Slot::Set(s), Slot::off()),
+                Some(s) if s.kind.sews_fill() => Slots::only(Slot::Set(s), Slot::off()),
                 Some(s) => Slots::only(Slot::off(), Slot::Set(s)),
                 None => Slots::AUTO,
             };
         }
         let slot = |k: &str| v.get(k).and_then(parse).map_or(Slot::Auto, Slot::Set);
-        Slots { fill: slot("fill"), stroke: slot("stroke"), stroke_first: v.get("strokeFirst").and_then(Value::as_bool).unwrap_or(false) }
+        let (fill, stroke) = match slot("stroke") {
+            // Satin Rails kept in the stroke part (before they were a fill): they are the whole object.
+            Slot::Set(s) if s.kind == StitchType::SatinBlocks => (Slot::Set(s), Slot::off()),
+            stroke => (slot("fill"), stroke),
+        };
+        Slots { fill, stroke, stroke_first: v.get("strokeFirst").and_then(Value::as_bool).unwrap_or(false) }
     }
 
     /// What `ObjectAttributes::stitch` stores (`None`: both automatic).
@@ -123,8 +132,8 @@ impl Slots {
             // Both off: one setting that says so.
             (f, s) if f.is_off() && s.is_off() => Some(v(&StitchSettings::of(StitchType::None))),
             // One part, the other off: one setting, as older documents have.
-            (Slot::Set(f), s) if s.is_off() && f.kind.is_fill() => Some(v(f)),
-            (f, Slot::Set(s)) if f.is_off() && !s.kind.is_fill() => Some(v(s)),
+            (Slot::Set(f), s) if s.is_off() && f.kind.sews_fill() => Some(v(f)),
+            (f, Slot::Set(s)) if f.is_off() && !s.kind.sews_fill() => Some(v(s)),
             (f, s) => {
                 let mut o = serde_json::Map::new();
                 for (k, slot) in [("fill", f), ("stroke", s)] {
@@ -154,13 +163,19 @@ impl Slots {
         }
     }
 
-    /// Whether the stroke part is the whole object (Satin Blocks, manual stitches, lettering).
+    /// Whether one part is the whole object (Satin Rails, manual stitches, lettering).
     pub fn whole(&self) -> bool {
-        matches!(&self.stroke, Slot::Set(s) if whole(s))
+        self.whole_part().is_some()
+    }
+
+    /// The part that is the whole object: the fill for Satin Rails, the stroke for manual
+    /// stitches and lettering.
+    pub fn whole_part(&self) -> Option<Part> {
+        Part::BOTH.into_iter().find(|p| matches!(self.get(*p), Slot::Set(s) if whole(s)))
     }
 }
 
-/// Satin Blocks, manual stitches and lettering are the whole object.
+/// Satin Rails, manual stitches and lettering are the whole object.
 pub fn whole(s: &StitchSettings) -> bool {
     matches!(s.kind, StitchType::SatinBlocks | StitchType::Manual) || s.lettering.is_some()
 }
@@ -223,9 +238,14 @@ pub fn sewn(n: &Node, ds: &DesignSettings) -> Vec<(Part, StitchSettings, bool)> 
         Slot::Auto => has(part),
         Slot::Set(s) => s.kind != StitchType::None,
     };
-    let stroke = wanted(Part::Stroke);
-    let fill = wanted(Part::Fill) && !slots.whole() && (has(Part::Fill) || !stroke);
-    let stroke = stroke && (has(Part::Stroke) || !fill);
+    let (fill, stroke) = match slots.whole_part() {
+        Some(part) => (part == Part::Fill, part == Part::Stroke),
+        None => {
+            let stroke = wanted(Part::Stroke);
+            let fill = wanted(Part::Fill) && (has(Part::Fill) || !stroke);
+            (fill, stroke && (has(Part::Stroke) || !fill))
+        }
+    };
     let mut out = vec![];
     let order = if slots.stroke_first { [(Part::Stroke, stroke), (Part::Fill, fill)] } else { [(Part::Fill, fill), (Part::Stroke, stroke)] };
     for (part, on) in order {
@@ -268,4 +288,29 @@ pub fn part_json(n: &Node, ds: &DesignSettings, part: Part, sews: bool) -> Value
     let (s, auto) = part_settings(n, ds, part);
     let kind = if !sews && auto { StitchType::None } else { s.kind };
     json!({ "type": kind.id(), "auto": auto, "sews": sews, "settings": s })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn satin_fill_is_the_fill_part_in_old_and_new_documents() {
+        let satin = |s: &Slot| matches!(s, Slot::Set(st) if st.kind == StitchType::SatinBlocks);
+        // One setting, as Convert to Satin has always stored it.
+        let one = Slots::read(Some(&json!({"type": "satinBlocks"})));
+        assert!(satin(&one.fill) && one.stroke.is_off());
+        assert_eq!(one.whole_part(), Some(Part::Fill));
+        assert_eq!(one.to_value().unwrap()["type"], "satinBlocks");
+        // In the stroke part, as digitized lettering stored it before Satin Rails were a fill: read
+        // into the fill, and written back as one setting.
+        let old = Slots::read(Some(&json!({"fill": {"type": "none"}, "stroke": {"type": "satinBlocks", "satin": {"density": 0.3}}})));
+        assert!(satin(&old.fill) && old.stroke.is_off());
+        let v = old.to_value().unwrap();
+        assert_eq!((v["type"].clone(), v["satin"]["density"].clone()), (json!("satinBlocks"), json!(0.3)));
+        // Manual stitches stay the stroke's.
+        assert_eq!(Slots::read(Some(&json!({"type": "manual"}))).whole_part(), Some(Part::Stroke));
+        assert_eq!(Part::of(StitchType::SatinBlocks), Part::Fill);
+        assert_eq!(Part::of(StitchType::Satin), Part::Stroke);
+    }
 }

@@ -3987,7 +3987,6 @@ lighting	Light	光源
 	Install	安装
 	Satin Blocks Tool	缎纹块工具
 	Export Machine File…	导出机器文件…
-	Satin Blocks	缎纹块
 	Stitch Info	针迹信息
 	Stitch Settings	针迹设置
 	Sew-Out Player	刺绣播放器
@@ -4058,9 +4057,6 @@ lighting	Light	光源
 	Letter height	字母高度
 	Letter spacing	字母间距
 	The lettering font has no {chars}	刺绣字体中没有 {chars}
-	Convert to Satin	转换为缎纹
-	Convert to Satin (Centerline)	转换为缎纹（中心线）
-	Convert to Satin (Classic)	转换为缎纹（经典）
 	Swap Satin Sides	交换缎纹两侧
 	Reverse Sewing Direction	反转缝制方向
 	Add Lettering	添加文字
@@ -4157,7 +4153,7 @@ lighting	Light	光源
 	Pull comp.	拉力补偿
 	Put on Path	沿路径排列
 	Remove Overlaps: cut fills where later ones cover them	移除重叠：剪掉被后绣填充覆盖的部分
-	Satin this wide can snag and pull: split the column or sew it as a fill	这么宽的缎纹容易勾线起皱：拆分该列或改为填充
+	Satin this wide can snag and pull: split the column or sew it as a tatami fill	这么宽的缎纹容易勾线起皱：拆分该列或改为榻榻米填充
 	Select a path with it to put it on the path	同时选择一条路径即可沿路径排列
 	Sews as fill	按填充刺绣
 	Show Jumps and Trims	显示跳针和剪线
@@ -4217,7 +4213,6 @@ lighting	Light	光源
 	The machine can't reach past the hoop's edge. Move the design onto the page, or click Center in Hoop.	绣花机够不到绣框边缘以外。请把设计移到页面内，或点按“在绷框中居中”。
 	The design is bigger than the hoop. Pick a bigger hoop, or scale the design down.	设计比绣框大。请选择更大的绣框，或缩小设计。
 	Objects stack here, and thread this thick can break the needle. Remove Overlaps cuts away the parts that are covered.	这里的对象互相叠压，线太厚可能折断机针。“移除重叠”会剪掉被覆盖的部分。
-	A fill this thin sews as a few ragged rows. Convert it to satin instead.	这么细的填色会绣成几行参差不齐的线。请改为转换为缎纹。
 	A satin this narrow bunches up into a knot. Sew it as a running stitch instead.	这么窄的缎纹会缠成线结。请改用平针绣。
 	This is too small to sew cleanly. Make it bigger, or delete it.	太小，无法绣得整齐。请放大或删除。
 
@@ -4226,7 +4221,7 @@ lighting	Light	光源
 	Short stitch distance	短针距离
 	Split satin over	缎纹拆分长度
 	Split Satin	拆分缎纹
-	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a fill.	这么长的缎纹针脚松散，容易勾线。“拆分缎纹”会把它们拆成较短的针脚，或改用填色。
+	Satin stitches this long lie loose and snag. Split Satin breaks them into shorter stitches, or sew it as a tatami fill.	这么长的缎纹针脚松散，容易勾线。“拆分缎纹”会把它们拆成较短的针脚，或改用榻榻米填充。
 
 # Roidery: test swatches.
 	Test Swatches	测试样片
@@ -4236,3 +4231,16 @@ lighting	Light	光源
 	Compensation	补偿
 	Curves and Splits	弯曲与拆分
 	Sew underlay	绣打底
+# Roidery: Satin Fill (Convert to Satin's columns, a fill) and Satin Stroke (satin along a stroke).
+	Satin Stroke	缎纹描边
+	Satin Fill	缎纹填色
+	Thread color: click for swatches, Shift-click for the color mixer	线色：单击开启色板，按住 Shift 单击开启混色器
+# Roidery: Satin Fill from StitchFoundry's engine; Satin Rails (the rail-based satin, converted in the Object menu); new objects join their colour.
+	Satin Rails	缎纹导轨
+	Convert to Satin Rails	转换为缎纹导轨
+	Convert to Satin Rails (Centerline)	转换为缎纹导轨（中心线）
+	Convert to Satin Rails (Classic)	转换为缎纹导轨（经典）
+	Automatic spacing	自动间距
+	Sew as Satin Fill	按缎纹填充绣制
+	Keep New Objects with Their Color	新对象归入同色
+	A fill this thin sews as a few ragged rows. Sew it as a Satin Fill instead.	这么细的填充会绣成几行参差不齐的线。请改为按缎纹填充绣制。

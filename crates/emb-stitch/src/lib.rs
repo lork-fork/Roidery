@@ -21,6 +21,8 @@
 //! - [`lettering`]: text as satin columns in the built-in centre-line font, Roidery Sans.
 //! - [`route`]: automatic start points, so each object starts near where the needle is.
 //! - [`fabric`]: fabric presets (density, pull compensation and underlay for each fabric).
+//! - [`foundry`]: the bridge to StitchFoundry's engine (`sf-core`): Satin Fill, satin across a
+//!   closed shape that turns with it and needs no rails.
 //!
 //! Algorithms follow the published behaviour of stitchjs (MIT, Matt Jacobson; the library behind
 //! Ember) and common digitizing practice. No GPL code is used.
@@ -31,6 +33,7 @@ pub mod contour;
 pub mod edge;
 pub mod fabric;
 pub mod fill;
+pub mod foundry;
 pub mod geometry;
 pub mod guided;
 pub mod lettering;
@@ -47,6 +50,8 @@ pub use kurbo::Point;
 pub use lettering::Lettering;
 pub use route::generate_from;
 pub use settings::{EStitchSettings, FillSettings, GuidedSettings, RopeSettings, RunSettings, SatinSettings, StitchSettings, StitchType, Underlay};
+/// StitchFoundry's embroidery core (vendored), for the crates that read its records.
+pub use sf_core;
 
 use serde::{Deserialize, Serialize};
 
@@ -152,6 +157,7 @@ pub fn generate(shape: &Shape, settings: &StitchSettings) -> Vec<Stitch> {
             [p] => satin::along_path(p, &settings.satin),
             [] => vec![],
         },
+        (StitchType::SatinFill, Shape::Area(ps) | Shape::Paths(ps)) => foundry::satin_fill(ps, &settings.satin, None),
         (StitchType::Tatami, Shape::Area(ps) | Shape::Paths(ps)) => fill::tatami(ps, &settings.fill),
         (StitchType::Gradient, Shape::Area(ps) | Shape::Paths(ps)) => fill::gradient(ps, &settings.fill),
         (StitchType::Contour, Shape::Area(ps) | Shape::Paths(ps)) => contour::contour(ps, &settings.fill),
@@ -170,6 +176,7 @@ pub fn generate(shape: &Shape, settings: &StitchSettings) -> Vec<Stitch> {
             | StitchType::Gradient
             | StitchType::Motif
             | StitchType::Guided
+            | StitchType::SatinFill
             | StitchType::EStitch
             | StitchType::Rope,
             Shape::Rails { .. } | Shape::RailCurves { .. },

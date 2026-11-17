@@ -1,4 +1,4 @@
-//! Roidery: editing Satin Blocks after they are drawn, as Ember allows: move a rung's ends, insert
+//! Roidery: editing Satin Rails (Satin Blocks) after they are drawn, as Ember allows: move a rung's ends, insert
 //! a rung between two others, delete one, and swap the rails (which side each stitch starts
 //! from). Reversing the sewing direction is `path.reverse`, which flips both rails.
 
@@ -24,10 +24,10 @@ fn is_satin_blocks(d: &Document, id: NodeId) -> bool {
 
 /// The Satin Blocks object `p.id` and its index `p.index` (a rung).
 fn rung_target(s: &Session, p: &Value, c: &'static str) -> Result<(NodeId, usize)> {
-    let id = p.get("id").and_then(Value::as_u64).map(NodeId).ok_or_else(|| bad(c, "missing `id`: a Satin Blocks object"))?;
+    let id = p.get("id").and_then(Value::as_u64).map(NodeId).ok_or_else(|| bad(c, "missing `id`: Satin Rails"))?;
     let d = &s.doc()?.doc;
     if !is_satin_blocks(d, id) {
-        return Err(bad(c, format!("{} is not a Satin Blocks object", id.0)));
+        return Err(bad(c, format!("{} is not Satin Rails", id.0)));
     }
     let index = p.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(c, "missing `index`: a rung"))?;
     Ok((id, index))
@@ -119,7 +119,7 @@ pub(super) fn delete_rung(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(C, format!("no rung {index}")));
         }
         if n <= 2 {
-            return Err(bad(C, "a Satin Blocks object keeps at least two rungs"));
+            return Err(bad(C, "Satin Rails keep at least two rungs"));
         }
         for sp in path.subpaths.iter_mut().take(2) {
             if index < sp.anchors.len() {
@@ -137,7 +137,7 @@ pub(super) fn swap_sides(s: &mut Session, p: &Value) -> Result<Value> {
     let d = &s.doc()?.doc;
     let ids: Vec<NodeId> = objects_in(d, &targets(s, p)?).into_iter().filter(|id| is_satin_blocks(d, *id)).collect();
     if ids.is_empty() {
-        return Err(bad(C, "select Satin Blocks objects"));
+        return Err(bad(C, "select Satin Rails"));
     }
     let changed = edit_counted(s, "Swap Satin Sides", |d| {
         let mut count = 0;

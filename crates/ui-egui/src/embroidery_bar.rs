@@ -1,7 +1,6 @@
 //! Roidery: the embroidery bar, across the top of the Embroidery workspace in place of the
 //! Control bar (Window › Embroidery Bar). Its left side follows the selection: what is selected
-//! and the likeliest next steps for it (a fill's stitch type, angle and density and Convert to
-//! Satin; a line's stitch and width; lettering's text, font and height; for several objects their
+//! and the likeliest next steps for it (a fill's stitch type, angle and density; a line's stitch and width; lettering's text, font and height; for several objects their
 //! stitch type, alignment and sewing order). Its right side is always there: the stitch views, the
 //! view toggles (snapping, grid, guides, rulers, outline and the stitch overlays), the hoop and
 //! how the design fits it, the design's stitch count and sew time, the sew-out player and Export.
@@ -22,7 +21,7 @@ pub const HEIGHT: f32 = 40.0;
 const BUTTON_H: f32 = 26.0;
 const ICON: f32 = 26.0;
 const FIELD_W: f32 = 62.0;
-/// Satin Blocks wider than this many mm get the warning chip (as Convert to Satin warns).
+/// Satin Rails wider than this many mm get the warning chip (as Convert to Satin Rails warns).
 const WIDE_SATIN_MM: f64 = 10.0;
 
 /// What the bar shows on its left, by what is selected.
@@ -34,7 +33,7 @@ pub enum Context {
     Fill,
     /// An open path: its line stitch.
     Line,
-    /// Satin Blocks.
+    /// Satin Rails (the Satin Blocks tool's object).
     Satin,
     /// Lettering (with an open path selected too: `path`).
     Lettering { path: Option<u64> },
@@ -398,7 +397,7 @@ fn left_side(app: &mut VectorcraftApp, ui: &mut Ui) {
         Context::Design => tl!("Design").to_string(),
         Context::Fill => fill_title(&objects),
         Context::Line => line_title(&objects),
-        Context::Satin => tl!("Satin Blocks").to_string(),
+        Context::Satin => tl!("Satin Rails").to_string(),
         Context::Lettering { .. } => tl!("Lettering").to_string(),
         Context::Text => tl!("Text").to_string(),
         Context::Manual => tl!("Stitches").to_string(),
@@ -458,7 +457,9 @@ fn type_dropdown(ui: &mut Ui, id: &str, part: Option<&str>, objects: &[Value], w
     } else {
         kind
     };
-    let types: Vec<(&str, &str)> = ss::types().into_iter().filter(|t| part.is_none_or(|p| ss::allowed(p, t.0))).collect();
+    // Satin Rails only for objects that are already them (converting is in the Object menu).
+    let types: Vec<(&str, &str)> =
+        ss::types().into_iter().filter(|t| part.is_none_or(|p| ss::allowed(p, t.0)) && (t.0 != "satinBlocks" || kind == "satinBlocks")).collect();
     let labels: Vec<&str> = types.iter().map(|t| t.1).collect();
     let shown = types.iter().find(|t| t.0 == current).map_or(tl!("Mixed"), |t| t.1);
     let i = widgets::dropdown(ui, id, shown, &labels, width)?;
@@ -548,34 +549,10 @@ fn trace_image(app: &mut VectorcraftApp, preset: &str) {
     }
 }
 
-/// Convert to Satin, with a chevron for the classic way (kept side by side while they are
-/// compared).
-fn convert_to_satin(app: &mut VectorcraftApp, ui: &mut Ui) {
-    if text_button(ui, Some("rd-satin-blocks"), tl!("Convert to Satin"), tl!("Convert to Satin (Centerline)")).clicked() {
-        convert(app, "stitch.convertToSatin");
-    }
-    let t = Tokens::get(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(16.0, BUTTON_H), Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
-    }
-    crate::icons::paint(ui, "chevron-down", Rect::from_center_size(r.center(), vec2(10.0, 10.0)), t.text_dim);
-    egui::Popup::menu(&resp).show(|ui| {
-        if widgets::menu_item(ui, "Convert to Satin (Centerline)", true, false) {
-            convert(app, "stitch.convertToSatin");
-        }
-        if widgets::menu_item(ui, "Convert to Satin (Classic)", true, false) {
-            convert(app, "stitch.convertToSatinClassic");
-        }
-    });
-}
-
-fn convert(app: &mut VectorcraftApp, cmd: &str) {
-    if let Some(r) = run(app, cmd, json!({}))
-        && let Some(w) = r["warning"].as_str()
-    {
-        app.status(w.to_string());
-    }
+/// Set the stitch type a dropdown chose (`stitch.set` params). Satin Fill needs no rails, so it
+/// is set like any other fill; shapes become Satin Rails only through the Object menu.
+fn set_type(app: &mut VectorcraftApp, p: Value, _objects: &[Value]) {
+    run(app, "stitch.set", p);
 }
 
 /// The fill angle: a field, and the Fill Angle tool to drag it.
@@ -624,10 +601,9 @@ fn fill(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
     let fills: Vec<Value> = objects.iter().map(|o| o["fill"].clone()).collect();
     small_label(ui, tl!("Fill"));
     if let Some(p) = type_dropdown(ui, "bar-fill-type", Some("fill"), objects, 118.0) {
-        run(app, "stitch.set", p);
+        set_type(app, p, objects);
         return;
     }
-    convert_to_satin(app, ui);
     let kind = ss::shared(&fills, &["type"]).and_then(Value::as_str).unwrap_or("");
     let sews = fills.iter().any(|o| o["sews"] == json!(true));
     let settings: Vec<Value> = fills.iter().map(|o| o["settings"].clone()).collect();
@@ -688,7 +664,7 @@ fn line(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
     more_menu(app, ui, &[("Match to Thread Chart", "stitch.matchThreads")]);
 }
 
-/// The widest rung of the selected Satin Blocks, mm.
+/// The widest rung of the selected Satin Rails, mm.
 fn widest_rung_mm(app: &VectorcraftApp) -> Option<f64> {
     let st = app.session.active()?;
     let mut widest: Option<f64> = None;
@@ -703,12 +679,13 @@ fn widest_rung_mm(app: &VectorcraftApp) -> Option<f64> {
     widest
 }
 
+/// Satin Rails: the fill part, sewn in its fill colour.
 fn satin(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
     let t = Tokens::get(ui.ctx());
-    let strokes: Vec<Value> = objects.iter().map(|o| o["stroke"].clone()).collect();
-    let settings: Vec<Value> = strokes.iter().map(|o| o["settings"].clone()).collect();
-    setting_field(app, ui, "stroke", &strokes, (tl!("Density"), "satin", "density", " mm", 2, false));
-    setting_field(app, ui, "stroke", &strokes, (tl!("Pull comp."), "satin", "pullCompensation", " mm", 2, false));
+    let fills: Vec<Value> = objects.iter().map(|o| o["fill"].clone()).collect();
+    let settings: Vec<Value> = fills.iter().map(|o| o["settings"].clone()).collect();
+    setting_field(app, ui, "fill", &fills, (tl!("Density"), "satin", "density", " mm", 2, false));
+    setting_field(app, ui, "fill", &fills, (tl!("Pull comp."), "satin", "pullCompensation", " mm", 2, false));
     // The underlay passes, in a menu.
     let lists = ss::shared(&settings, &["satin", "underlays"]).and_then(Value::as_array).cloned();
     let count = lists.as_ref().map_or(0, Vec::len);
@@ -725,7 +702,7 @@ fn satin(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
                         |(_, x)| if *x == ty { (!on).then(|| json!({"type": x})) } else { current.iter().find(|u| u["type"] == json!(x)).cloned() },
                     )
                     .collect();
-                run(app, "stitch.set", json!({"part": "stroke", "settings": {"satin": {"underlays": next}}}));
+                run(app, "stitch.set", json!({"part": "fill", "settings": {"satin": {"underlays": next}}}));
             }
         }
     });
@@ -741,11 +718,12 @@ fn satin(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
     if widgets::icon_button(ui, "dc-reverse", tl!("Reverse Sewing Direction"), false, ICON).clicked() {
         run(app, "path.reverse", json!({}));
     }
-    color_chip(app, ui, true);
+    // Satin Rails sew in their fill colour.
+    crate::panels::paint_chip_as(app, ui, false, 22.0, false, Some(tl!("Thread color: click for swatches, Shift-click for the color mixer")));
     if let Some(w) = widest_rung_mm(app).filter(|w| *w > WIDE_SATIN_MM) {
         let text = crate::i18n::fmt(tl!("{w} mm wide"), &[("w", &format!("{w:.1}"))]);
         ui.label(egui::RichText::new(format!("⚠ {text}")).size(12.0).color(t.warning))
-            .on_hover_text(tl!("Satin this wide can snag and pull: split the column or sew it as a fill"));
+            .on_hover_text(tl!("Satin this wide can snag and pull: split the column or sew it as a tatami fill"));
     }
     more_menu(app, ui, &[("Match to Thread Chart", "stitch.matchThreads")]);
 }
@@ -915,7 +893,7 @@ fn pair_actions(app: &VectorcraftApp, info: &Value) -> Vec<(&'static str, &'stat
     let Some(st) = app.session.active() else { return vec![] };
     let sel = &st.selection.objects;
     let node = |id: &NodeId| st.doc.node(*id);
-    // Plain open paths: not lettering or Satin Blocks, whose paths are open too.
+    // Plain open paths: not lettering or Satin Rails, whose paths are open too.
     let special: Vec<u64> = info["lettering"]
         .as_array()
         .into_iter()
@@ -949,7 +927,7 @@ fn pair_actions(app: &VectorcraftApp, info: &Value) -> Vec<(&'static str, &'stat
 fn multi(app: &mut VectorcraftApp, ui: &mut Ui, info: &Value, objects: &[Value]) {
     small_label(ui, tl!("Stitch"));
     if let Some(p) = type_dropdown(ui, "bar-multi-type", None, objects, 118.0) {
-        run(app, "stitch.set", p);
+        set_type(app, p, objects);
         return;
     }
     for (label, icon, tip, cmd, p) in pair_actions(app, info) {
@@ -1038,7 +1016,7 @@ mod tests {
         assert_eq!(context_now(&mut app), Context::Multi);
         select(&mut app, &[a]);
         app.session.execute("stitch.convertToSatin", &json!({})).unwrap();
-        assert_eq!(context_now(&mut app), Context::Satin, "the new Satin Blocks are selected");
+        assert_eq!(context_now(&mut app), Context::Satin, "the new Satin Rails are selected");
         let lt = app.session.execute("stitch.createLettering", &json!({"text": "Hi", "height": 12})).unwrap();
         let lid = lt["id"].as_u64().or_else(|| lt["ids"][0].as_u64()).unwrap();
         select(&mut app, &[lid]);
@@ -1058,10 +1036,11 @@ mod tests {
         }
         select(&mut app, &[a]);
         let text = painted(&mut app);
-        for want in ["Tatami", "Convert to Satin", "Angle", "Border", "Export"] {
+        for want in ["Tatami", "Angle", "Border", "Export"] {
             assert!(text.contains(want), "{want:?} in {text}");
         }
-        assert!(!text.contains("Add Lettering"), "{text}");
+        // Satin Fill needs no converting: the header has no Convert button (it is in Object).
+        assert!(!text.contains("Add Lettering") && !text.contains("Convert to Satin"), "{text}");
     }
 
     #[test]

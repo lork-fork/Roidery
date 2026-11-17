@@ -15,6 +15,11 @@ list (author, source, license) is in ASSETS.md.
 - Roidery's thread chart data (crates/emb-formats/src/jef.rs, pes.rs, charts.rs): the Janome and
   Brother colour tables and Janome catalogue numbers as pyembroidery (MIT License, Copyright (c)
   2018 Tatarize) lists them.
+- StitchFoundry's embroidery core (crates/sf-core), vendored from
+  https://github.com/StitchFoundry/StitchFoundry — Copyright (c) 2026 Bruce Wattendorf (SiteSentrix) and
+  the StitchFoundry contributors, MIT License or Apache License 2.0 at your option (the same
+  licences as Roidery's, LICENSE-MIT and LICENSE-APACHE). Roidery's changes are listed in
+  crates/sf-core/VENDORED.md.
 - Lucide icons (assets/icons/*.svg except dc-*.svg) — ISC License; the icons Lucide derived from Feather are also under the MIT License (Cole Bemis). See assets/icons/LICENSE-lucide.txt.
 - Source Sans 3 and Source Serif 4 (assets/fonts/Source*) — SIL Open Font License 1.1. See assets/fonts/OFL-SourceSans3.txt, OFL-SourceSerif4.txt.
 - Inter (assets/fonts/Inter-*.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-Inter.txt.

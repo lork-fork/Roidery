@@ -2559,8 +2559,8 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                     "Embroidery",
                     vec![
                         cp("Stitch Settings", "window.panel", json!({"panel": crate::panels::stitch_settings::ID})),
-                        c("Convert to Satin (Centerline)", "stitch.convertToSatin"),
-                        c("Convert to Satin (Classic)", "stitch.convertToSatinClassic"),
+                        c("Convert to Satin Rails (Centerline)", "stitch.convertToSatin"),
+                        c("Convert to Satin Rails (Classic)", "stitch.convertToSatinClassic"),
                         c("Swap Satin Sides", "stitch.swapSides"),
                         c("Reverse Sewing Direction", "path.reverse"),
                         c("Remove Overlaps", "stitch.removeOverlaps"),
@@ -2573,7 +2573,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                         sub(
                             "Test Swatches",
                             vec![
-                                cp("Satin", "stitch.testSwatches", json!({"type": "satin"})),
+                                cp("Satin Stroke", "stitch.testSwatches", json!({"type": "satin"})),
                                 cp("Fill", "stitch.testSwatches", json!({"type": "fill"})),
                             ],
                         ),
